@@ -1,0 +1,1626 @@
+================================================================================
+ROADMAP FASE (8): ADMIN EMERGENCY & RECONCILIATION TOOLS (F006) — E-Tix Flash
+================================================================================
+
+Version:         1.1-FINAL
+Last Updated:    2026-09-11
+Author:          M. Arif Aulia
+Status:          ⏳ NOT STARTED (Ready to Execute)
+Blueprint Ref:   BLUEPRINT ROADMAP v1.0-FINAL, FASE 8
+Depends On:      FASE 0-7 (all LOCKED)
+
+================================================================================
+📌 BISMILLAH — ROADMAP FASE 8 FINAL VERSION (POST-GEMINI REVIEW #1)
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. FASE IDENTITY
+2. SCOPE & OBJECTIVES
+3. FOUNDATION DISTILLATION
+4. TASK BREAKDOWN
+5. DELIVERABLES
+6. ACCEPTANCE CRITERIA
+7. RISKS & MITIGATIONS
+8. SECURITY CONSIDERATIONS
+9. DEFINITION OF DONE (DoD)
+10. NOTES & REFERENCES
+
+================================================================================
+SECTION 1 — FASE IDENTITY
+================================================================================
+
+Fase ID:           FASE 8
+Nama Fase:         Admin Emergency & Reconciliation Tools (F006)
+Fitur Utama:       F006 — Admin Emergency Tools + Manual Reconciliation + User Mgmt
+Estimasi Durasi:   Week 8 (1 minggu, ~45 jam kerja)
+Dependencies:      FASE 0 (Redis, DB, RabbitMQ)
+                   FASE 1 (auth middleware + RBAC)
+                   FASE 3-7 (all business features untuk scope)
+Status:            ⏳ Not Started
+
+Ringkasan:
+  FASE P0 TERAKHIR. Implementasi admin tools untuk situasi darurat 
+  (bulk cancel), manual reconciliation (refund via Payment Gateway), 
+  user management (suspend/unsuspend), blacklist management, dan force 
+  seat release.
+
+  ⚠️ FITUR PALING SENSITIF: semua endpoint butuh X-Admin-2FA-Token 
+  (financial mutations) + audit logging ke admin_actions.
+
+  DELIVERABLE UTAMA:
+    - POST /admin/events/{id}/bulk-cancel    — Emergency bulk cancel
+    - GET  /admin/ledger                     — Ledger audit (event-sourced view)
+    - POST /admin/ledger/reverse             — Manual refund via Payment GW
+    - GET  /admin/stuck-locks                — List stuck booking locks
+    - POST /admin/force-release              — Force release seat
+    - GET  /admin/users                      — User list
+    - GET/POST/DELETE /admin/blacklist       — Blacklist CRUD
+    - PATCH /admin/users/{id}/suspend        — Suspend user
+    - PATCH /admin/users/{id}/unsuspend      — Unsuspend user
+    - Admin2FAMiddleware                     — Verify X-Admin-2FA-Token (TOTP)
+    - BulkCancelWorker                       — Async refund orchestration
+
+  ⚠️ 3 FLAGS APPROVED (Zero-Drift):
+    - FLAG #1 (CRITICAL): Admin 2FA via TOTP + Redis (no schema amendment)
+    - FLAG #2: Bulk cancel scope exclude USED/RESOLD/CANCELLED
+    - FLAG #3: /admin/ledger UNION ALL + pagination (default 50, max 100)
+
+================================================================================
+SECTION 2 — SCOPE & OBJECTIVES
+================================================================================
+
+2.1 SCOPE — IN
+────────────────────────────────────────────────────────────────────────────────
+
+✅ Endpoints (11 total — API_CONTRACT v1.2 §14):
+   1. POST   /admin/events/{id}/bulk-cancel   — Auth + 2FA, 3 attempts lockout
+   2. GET    /admin/ledger                    — Auth, 30 req/min, paginated
+   3. POST   /admin/ledger/reverse            — Auth + 2FA, 30 req/min
+   4. GET    /admin/stuck-locks               — Auth, 30 req/min
+   5. POST   /admin/force-release             — Auth + 2FA, 30 req/min
+   6. GET    /admin/users                     — Auth, 30 req/min, paginated
+   7. GET    /admin/blacklist                 — Auth, 30 req/min
+   8. POST   /admin/blacklist                 — Auth, 30 req/min
+   9. DELETE /admin/blacklist/{id}            — Auth, 30 req/min
+   10. PATCH /admin/users/{id}/suspend        — Auth + 2FA, 30 req/min
+   11. PATCH /admin/users/{id}/unsuspend      — Auth + 2FA, 30 req/min
+
+✅ Admin 2FA (FLAG #1):
+   - Method: TOTP (RFC 6238) via pquerna/otp
+   - Secret storage: Redis (admin_2fa:{user_id}) PERSISTENT
+   - Enrollment: CLI/one-time provisioning script (bukan API endpoint)
+   - Token: 6-digit TOTP, 30s validity
+   - Header: X-Admin-2FA-Token (required for financial mutations)
+   - Lockout: 3 failed attempts dalam 15 min → lock 15 min 
+     (Redis: admin_2fa_lockout:{user_id} TTL 900)
+   - Zero schema amendment
+
+✅ Bulk Cancel (FLAG #2):
+   - Scope: tickets.status IN ('CONFIRMED', 'LOCKED', 'PENDING_SPLIT_PAY', 
+                               'RESALE_PENDING')
+   - Skip: USED, RESOLD, CANCELLED
+   - Flow:
+     1. INSERT admin_actions (reason from body)
+     2. Async BulkCancelWorker:
+        - UPDATE tickets SET status = 'CANCELLED'
+        - Refund paid obligations via Payment Gateway
+        - Release Redis bitmask (granular SETBIT)
+        - Publish user notifications via RabbitMQ (ASYNC — FLAG #3)
+     3. Return 202 Accepted (async processing)
+
+✅ Ledger Audit (FLAG #3):
+   - Event-sourced view (UNION ALL):
+     * payment_obligations (event_type = PAYMENT_*)
+     * resale_transactions (event_type = RESALE_*)
+     * admin_actions (event_type = ADMIN_*)
+   - Filters: date_from, date_to, status
+   - Pagination: default 50, max 100
+   - ORDER BY created_at DESC
+   - Summary: total_paid, total_pending, total_refunded, unreconciled_count
+
+✅ Manual Reverse (Refund):
+   - Request: transaction_id (payment_obligation_id), reason
+   - Flow:
+     1. Validate payment_obligation exists + status PAID
+     2. Call Payment Gateway refund via external_transaction_id
+     3. UPDATE payment_obligations SET status = 'REFUNDED', 
+        refunded_at = NOW(), refund_transaction_id = gateway_id
+     4. Trigger handle_ticket_cancellation_on_refund → tickets CANCELLED
+     5. INSERT admin_actions (MANUAL_REFUND)
+
+✅ Stuck Locks + Force Release:
+   - GET /admin/stuck-locks:
+     * SELECT bookings WHERE payment_status='PENDING' 
+       AND expires_at < NOW() - INTERVAL '10 minutes'
+   - POST /admin/force-release:
+     * Validate booking exists + status PENDING
+     * Release Redis bitmask (granular SETBIT 0)
+     * UPDATE bookings SET payment_status = 'CANCELLED'
+     * INSERT admin_actions (FORCE_RELEASE_SEAT)
+
+✅ User Management:
+   - GET /admin/users: paginated list (filter role, status, search)
+   - PATCH /suspend: UPDATE users SET status = 'SUSPENDED' + reason
+   - PATCH /unsuspend: UPDATE users SET status = 'ACTIVE'
+
+✅ Blacklist Management:
+   - GET: list entries (paginated)
+   - POST: add entry (type=ip|device_fingerprint, value, reason, expires_at)
+   - DELETE: remove entry
+   - Audit logging pada POST/DELETE (FLAG #2 fix)
+
+✅ Audit Logging:
+   - ALL financial mutations INSERT admin_actions
+   - Fields: admin_id, action_type, target_*, reason, changes_before/after, 
+             ip_address, user_agent
+
+✅ Rate Limiting:
+   - Bulk cancel: 3 attempts → 15 min lockout (via 2FA lockout)
+   - Admin ops: 30 req/min per admin
+
+2.2 SCOPE — OUT
+────────────────────────────────────────────────────────────────────────────────
+
+❌ Admin 2FA enrollment endpoint → CLI script (FLAG #1)
+❌ Materialized view for ledger → v1.1+ (FLAG #3)
+❌ Wallet/ledger internal → NEVER (PRD Out of Scope)
+❌ Real-time ledger streaming → static query
+❌ Multi-admin coordination → out of scope
+❌ Frontend implementation → FASE 9 (skeleton)
+❌ Bulk operations beyond documented → only bulk-cancel
+❌ 2FA backup codes → v1.1+ (out of MVP)
+
+2.3 OBJECTIVES (MEASURABLE)
+────────────────────────────────────────────────────────────────────────────────
+
+1. 11 endpoints return expected status codes
+2. Admin 2FA (TOTP) verified server-side
+3. Lockout: 3 fails → 15 min lock
+4. Bulk cancel async (202) + refunds processed + notifications async
+5. Ledger view merges 3 sources via UNION ALL
+6. Manual reverse triggers Payment Gateway refund
+7. Force release: Redis bits cleared + booking CANCELLED
+8. User suspend/unsuspend works
+9. Blacklist CRUD works + audit logging
+10. All actions logged to admin_actions (with IP + UA)
+11. Unit + Integration coverage ≥ 85%
+
+2.4 SUCCESS CRITERIA
+────────────────────────────────────────────────────────────────────────────────
+
+- [x] 11 endpoints terimplementasi
+- [x] Admin 2FA (TOTP via Redis secret)
+- [x] Lockout mechanism (3 fails / 15 min)
+- [x] Bulk cancel scope: excludes USED/RESOLD/CANCELLED
+- [x] Bulk cancel notifications async (RabbitMQ)
+- [x] Ledger view: UNION ALL + pagination
+- [x] Manual reverse: Payment Gateway refund + trigger
+- [x] Force release: Redis SETBIT 0 + booking CANCELLED
+- [x] User suspend/unsuspend with audit
+- [x] Blacklist CRUD + audit logging
+- [x] admin_actions with ip_address + user_agent
+- [x] No wallet/ledger internal
+
+================================================================================
+SECTION 3 — FOUNDATION DISTILLATION
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+3.1 FROM PRD v6.0 §F006 — ADMIN EMERGENCY SPEC
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION:
+  Menyediakan tools bagi admin (EO) untuk menangani situasi darurat dan 
+  memastikan sistem tetap terkendali.
+
+A. Bulk Cancellation:
+  1. Admin akses Emergency Dashboard, pilih event
+  2. Klik "Cancel All Tickets", isi alasan
+  3. Konfirmasi: "Anda akan membatalkan X tiket dan refund total Rp Y"
+  4. Setelah konfirmasi:
+     - Status semua tiket → CANCELLED
+     - Refund request ke Payment Gateway
+     - Notifikasi ke pembeli
+     - Reset bitmask ke 0
+  5. Semua aksi dicatat di admin_actions
+
+B. Manual Reconciliation:
+  1. Admin lihat daftar transaksi PENDING_PAYOUT / suspicious
+  2. Verifikasi via Payment Gateway dashboard
+  3. Force update status / refund
+  4. Catatan manual untuk audit
+
+C. System Health Monitoring (read-only):
+  - Request per detik, cache health, queue depth, error rate
+
+EDGE CASES:
+  - Bulk cancellation mid-flash-sale: async background worker
+  - Refund API gagal: retry exponential backoff; jika gagal → PENDING_REFUND
+
+────────────────────────────────────────────────────────────────────────────────
+3.2 FROM DATABASE_SCHEMA v2.9 — ADMIN_ACTIONS + BLACKLIST + SUPPORT
+────────────────────────────────────────────────────────────────────────────────
+
+ENUMs (relevan):
+  admin_action_type_enum : BULK_CANCEL | MANUAL_PAID | MANUAL_REFUND | 
+                           FORCE_RELEASE_SEAT | UPDATE_EVENT_PRICE | 
+                           SUSPEND_USER | UNSUSPEND_USER | 
+                           BLACKLIST_IP | REMOVE_BLACKLIST_IP
+
+  ⚠️ FLAG #2 (post-Gemini): Enum TIDAK punya BLACKLIST_DEVICE. 
+     Workaround: gunakan enum BLACKLIST_IP untuk semua blacklist add, 
+     dan simpan actual type ('ip' | 'device_fingerprint') di:
+       - description TEXT
+       - changes_after JSONB { type: 'ip'|'device_fingerprint', value: '...' }
+     Zero schema amendment.
+
+ADMIN_ACTIONS TABLE (full):
+  - id UUID (PK)
+  - admin_id UUID (FK users)
+  - action_type admin_action_type_enum NOT NULL
+  - target_user_id UUID (nullable)
+  - target_resource_type VARCHAR(50)
+  - target_resource_id UUID
+  - description TEXT
+  - reason TEXT NOT NULL
+  - changes_before JSONB (nullable)
+  - changes_after JSONB (nullable)
+  - ip_address INET (nullable)
+  - user_agent TEXT (nullable)
+  - created_at TIMESTAMPTZ DEFAULT NOW()
+
+  Indexes: idx_admin_actions_admin, idx_admin_actions_type,
+           idx_admin_actions_target, idx_admin_actions_created (DESC)
+
+BLACKLIST TABLE:
+  - id UUID (PK)
+  - type VARCHAR(20) (ip|device_fingerprint)
+  - value VARCHAR(255) NOT NULL
+  - reason TEXT (nullable)
+  - detected_by_insight_id UUID (FK insights, nullable)
+  - added_by UUID (FK users, nullable)
+  - added_at TIMESTAMPTZ DEFAULT NOW()
+  - expires_at TIMESTAMPTZ (nullable)
+  - UNIQUE(type, value)
+
+  Indexes: idx_blacklist_type_value, idx_blacklist_expires (partial)
+
+USERS (relevant untuk suspend):
+  - id, email, phone, name, role, status (user_status_enum)
+  - status values: ACTIVE | SUSPENDED | FROZEN | DELETED
+
+BOOKINGS (relevant untuk force release):
+  - id, event_id, section_id, seat_positions JSONB, payment_status
+  - expires_at
+
+PAYMENT_OBLIGATIONS (relevant untuk ledger):
+  - id, booking_id, user_id, amount, status, external_transaction_id,
+    refunded_at, refund_transaction_id, created_at
+
+RESALE_TRANSACTIONS (relevant untuk ledger):
+  - id, ticket_id, seller_user_id, buyer_user_id, resale_price, 
+    seller_payout, status, created_at, completed_at
+
+RLS POLICIES:
+  - admin_actions: admin SELECT/INSERT only
+  - blacklist: admin ALL; system SELECT
+  - users: admin ALL (manage all users)
+  - bookings: admin SELECT (all)
+  - payment_obligations: admin SELECT
+
+────────────────────────────────────────────────────────────────────────────────
+3.3 FROM LOGIC_FLOW v1.4 §8 — FLOW SUMMARY (PSEUDOCODE ONLY)
+────────────────────────────────────────────────────────────────────────────────
+
+BULK CANCELLATION FLOW:
+
+  Function BulkCancel(ctx, eventID, reason):
+    Step 1: Auth middleware (admin OR event_organizer)
+    Step 2: Admin2FAMiddleware (verify X-Admin-2FA-Token)
+    Step 3: Validate event exists
+    Step 4: Count tickets + refund amount (preview):
+              - SELECT COUNT(*) FROM tickets WHERE event_id = X
+                AND status IN ('CONFIRMED', 'LOCKED', 'PENDING_SPLIT_PAY', 
+                               'RESALE_PENDING')
+              - Compute refund_total = SUM(payment_obligations.amount 
+                WHERE status = 'PAID' AND booking.event_id = X)
+    Step 5: INSERT admin_actions:
+              action_type = 'BULK_CANCEL',
+              target_resource_type = 'event',
+              target_resource_id = eventID,
+              reason = reason,
+              changes_before = { event_status: ..., total_tickets: N }
+    Step 6: Enqueue bulk_cancel job to MQ (async)
+    Step 7: Return 202 Accepted:
+              {
+                event_id, cancelled_tickets: N, refund_total: "X",
+                status: "PROCESSING"
+              }
+
+  BulkCancelWorker (async):
+    Step 1: Consume job
+    Step 2: BEGIN tx
+    Step 3: SELECT tickets FOR UPDATE WHERE event_id = X
+            AND status IN ('CONFIRMED', 'LOCKED', 'PENDING_SPLIT_PAY', 
+                           'RESALE_PENDING')
+    Step 4: UPDATE tickets SET status = 'CANCELLED'
+    Step 5: SELECT payment_obligations WHERE status = 'PAID' 
+            AND booking.event_id = X
+    Step 6: FOR EACH obligation:
+              a. Call PaymentGateway.Refund(external_transaction_id, amount)
+              b. Retry 3x exponential backoff
+              c. Success → UPDATE obligation status = 'REFUNDED'
+              d. Fail → log PENDING_REFUND for admin followup
+    Step 7: Release Redis bitmask per seat (granular SETBIT 0)
+    Step 8: COMMIT
+    Step 9: Publish user notification via RabbitMQ (ASYNC — FLAG #3):
+              - Publish to notification_queue: { users: [...], 
+                                                  template: 'BULK_CANCEL', 
+                                                  event_name: ... }
+              - NotificationWorker consumes → FCM/Email/SMS
+              - Worker TIDAK blocking (fire-and-forget)
+    Step 10: INSERT admin_actions (status update: PROCESSING → COMPLETED)
+
+MANUAL REVERSE FLOW (Refund):
+
+  Function ManualReverse(ctx, txID, reason):
+    Step 1: Auth middleware (admin)
+    Step 2: Admin2FAMiddleware
+    Step 3: SELECT payment_obligation WHERE id = txID
+              - If not found → 404
+              - If status != 'PAID' → 409 (already refunded/not paid)
+    Step 4: Call PaymentGateway.Refund(external_transaction_id, amount)
+    Step 5: UPDATE payment_obligations SET status='REFUNDED', 
+            refunded_at=NOW(), refund_transaction_id=gateway_refund_id
+    Step 6: Trigger handle_ticket_cancellation_on_refund fires 
+            → tickets.status = 'CANCELLED'
+    Step 7: INSERT admin_actions:
+              action_type = 'MANUAL_REFUND',
+              target_resource_type = 'payment_obligation',
+              target_resource_id = txID,
+              reason = reason,
+              changes_before = { status: 'PAID' },
+              changes_after = { status: 'REFUNDED' }
+    Step 8: Return 200:
+              { payment_obligation_id, status: 'REFUNDED', 
+                gateway_refund_transaction_id, admin_action_id, refunded_at }
+
+LEDGER VIEW FLOW (FLAG #3):
+
+  Function GetLedger(ctx, filters):
+    Step 1: Auth (admin)
+    Step 2: Parse filters (date_from, date_to, status, page, limit)
+    Step 3: Limit validation: max 100
+    Step 4: Query UNION ALL:
+              (SELECT 
+                 po.id as event_id,
+                 CASE 
+                   WHEN po.status='PAID' THEN 'PAYMENT_PAID'
+                   WHEN po.status='PENDING' THEN 'PAYMENT_PENDING'
+                   WHEN po.status='REFUNDED' THEN 'PAYMENT_REFUNDED'
+                   ELSE 'PAYMENT_' || po.status
+                 END as event_type,
+                 'payment_obligation' as reference_type,
+                 po.id as reference_id,
+                 po.booking_id,
+                 po.user_id,
+                 po.amount,
+                 po.status,
+                 po.external_transaction_id as gateway_transaction_id,
+                 po.created_at
+               FROM payment_obligations po
+               WHERE po.created_at BETWEEN date_from AND date_to)
+              UNION ALL
+              (SELECT 
+                 rt.id, 'RESALE_COMPLETED' as event_type,
+                 'resale_transaction' as reference_type, rt.id, ...,
+                 rt.seller_payout as amount, rt.status, ..., rt.created_at
+               FROM resale_transactions rt
+               WHERE ...)
+              UNION ALL
+              (SELECT 
+                 aa.id, 
+                 CASE aa.action_type 
+                   WHEN 'MANUAL_REFUND' THEN 'ADMIN_MANUAL_REFUND'
+                   WHEN 'BULK_CANCEL' THEN 'ADMIN_BULK_CANCEL'
+                   ELSE 'ADMIN_' || aa.action_type
+                 END as event_type,
+                 'admin_action' as reference_type, aa.id, ..., 
+                 aa.amount_from_changes as amount, ...
+               FROM admin_actions aa
+               WHERE aa.action_type IN ('MANUAL_REFUND', 'MANUAL_PAID', 
+                                       'BULK_CANCEL'))
+              ORDER BY created_at DESC
+              LIMIT $limit OFFSET $offset
+    Step 5: Compute summary:
+              total_paid = SUM(amount) WHERE event_type LIKE 'PAYMENT_PAID%'
+              total_pending = SUM(amount) WHERE event_type = 'PAYMENT_PENDING'
+              total_refunded = SUM(amount) WHERE event_type LIKE '%REFUNDED%'
+              unreconciled_count = COUNT(*) WHERE status = 'PENDING' 
+                                    AND created_at < NOW() - INTERVAL '15 min'
+    Step 6: Return paginated response
+
+FORCE RELEASE FLOW:
+
+  Function ForceRelease(ctx, bookingID, reason):
+    Step 1: Auth (admin)
+    Step 2: Admin2FAMiddleware
+    Step 3: SELECT booking FOR UPDATE
+              - If not found → 404
+              - If status != 'PENDING' → 409
+    Step 4: BEGIN tx
+    Step 5: Release Redis bitmask per seat:
+              FOR seat_pos IN booking.seat_positions:
+                bit_index = seat_pos - 1
+                SETBIT(key, bit_index, 0)
+    Step 6: UPDATE bookings SET payment_status = 'CANCELLED'
+    Step 7: INSERT admin_actions (FORCE_RELEASE_SEAT)
+    Step 8: COMMIT
+    Step 9: Return 200
+
+STUCK LOCKS:
+
+  Function GetStuckLocks(ctx):
+    Step 1: Auth (admin)
+    Step 2: SELECT bookings WHERE payment_status = 'PENDING'
+            AND expires_at < NOW() - INTERVAL '10 minutes'
+    Step 3: Group by section, compute duration_minutes
+    Step 4: Return list
+
+USER SUSPEND/UNSUSPEND:
+
+  Function SuspendUser(ctx, userID, reason):
+    Step 1: Auth + 2FA
+    Step 2: UPDATE users SET status='SUSPENDED', updated_at=NOW()
+    Step 3: INSERT admin_actions:
+              action_type = 'SUSPEND_USER',
+              changes_before = { status: 'ACTIVE' },
+              changes_after = { status: 'SUSPENDED' },
+              reason = reason
+    Step 4: Return 200
+
+BLACKLIST CRUD (FLAG #2 post-Gemini):
+
+  GET /admin/blacklist → SELECT * FROM blacklist ORDER BY added_at DESC
+
+  POST /admin/blacklist:
+    Step 1: Auth (admin)
+    Step 2: Validate type (ip|device_fingerprint)
+    Step 3: INSERT INTO blacklist (type, value, reason, expires_at, added_by)
+    Step 4: INSERT INTO admin_actions (FLAG #2 fix):
+              action_type = 'BLACKLIST_IP' (enum — no BLACKLIST_DEVICE)
+              target_resource_type = 'blacklist'
+              target_resource_id = new_blacklist_id
+              description = 'Added ' || type || ' to blacklist: ' || value
+              changes_before = NULL
+              changes_after = { 
+                type: type,  // 'ip' | 'device_fingerprint' (ACTUAL TYPE)
+                value: value,
+                reason: reason,
+                expires_at: expires_at
+              }
+              reason = 'Blacklist entry created'
+              ip_address, user_agent (from request)
+    Step 5: Return 201
+
+  DELETE /admin/blacklist/{id}:
+    Step 1: Auth (admin)
+    Step 2: SELECT entry (untuk changes_before)
+    Step 3: DELETE entry
+    Step 4: INSERT admin_actions:
+              action_type = 'REMOVE_BLACKLIST_IP'
+              target_resource_type = 'blacklist'
+              target_resource_id = id
+              changes_before = { type: ..., value: ..., reason: ... }
+              changes_after = NULL
+              reason = 'Blacklist entry removed'
+              ip_address, user_agent
+    Step 5: Return 200
+
+────────────────────────────────────────────────────────────────────────────────
+3.4 FROM TDD v1.10 §6.7 — ADMIN 2FA IMPLEMENTATION (FLAG #1)
+────────────────────────────────────────────────────────────────────────────────
+
+ADMIN 2FA MIDDLEWARE:
+
+  Function Admin2FAMiddleware():
+    Step 1: Extract X-Admin-2FA-Token dari header
+              - If missing → 401 UNAUTHORIZED (or 401 ADMIN_2FA_REQUIRED)
+    Step 2: Get admin_user_id dari context (set by AuthMiddleware)
+    Step 3: Check lockout:
+              - redis EXISTS admin_2fa_lockout:{user_id}
+              - If exists → 429 (locked, return remaining TTL)
+    Step 4: Get TOTP secret dari Redis:
+              - secret = GET admin_2fa:{user_id}
+              - If not found → 422 ADMIN_2FA_NOT_ENROLLED
+    Step 5: Verify TOTP:
+              - valid = totp.Validate(token, secret)
+              - If !valid:
+                  * INCR admin_2fa_fails:{user_id} with TTL 900
+                  * If fails >= 3:
+                      - SET admin_2fa_lockout:{user_id} 1 EX 900
+                      - Log CRITICAL alert
+                  * return 401 INVALID_2FA_TOKEN
+    Step 6: Reset fails counter:
+              - DEL admin_2fa_fails:{user_id}
+    Step 7: c.Next()
+
+TOTP ENROLLMENT (CLI SCRIPT):
+
+  Function EnrollAdmin2FA(userID):
+    Step 1: Generate TOTP secret (pquerna/otp)
+    Step 2: Generate QR code untuk Google Auth/Authy
+    Step 3: STORE secret di Redis: SET admin_2fa:{user_id} {secret}
+              (PERSISTENT — no TTL, atau TTL indefinite)
+    Step 4: Display QR + secret (one-time display)
+    Step 5: Admin scan QR code → Google Auth/Authy
+    Step 6: Verify enrollment: admin input 6-digit token → validate
+
+  Note: Enrollment is OUT OF API SCOPE (CLI/provisioning script only).
+  Tidak ada POST /admin/2fa/enroll endpoint.
+
+BULK CANCEL HANDLER:
+
+  Function BulkCancelHandler:
+    Step 1: Auth + RBAC (admin OR event_organizer)
+    Step 2: Admin2FAMiddleware
+    Step 3: Validate event exists
+    Step 4: Compute preview (count + refund_total)
+    Step 5: INSERT admin_actions
+    Step 6: Publish bulk_cancel job to MQ
+    Step 7: Return 202 Accepted (async)
+
+  BulkCancelWorker:
+    - Async process (refund + status update + notifications async)
+
+NOTIFICATION PUBLISHER (FLAG #3 fix):
+
+  Function PublishNotification(payload):
+    Step 1: Publish ke RabbitMQ queue: notification_queue
+    Step 2: Payload: { 
+              user_ids: [...],
+              template: 'BULK_CANCEL',
+              data: { event_name, refund_amount, ... }
+            }
+    Step 3: Fire-and-forget (non-blocking)
+    Step 4: NotificationWorker consumes → FCM/Email/SMS dispatch
+
+  ⚠️ Worker TIDAK blocking menunggu notifikasi terkirim. Fire-and-forget 
+     via MQ untuk performa.
+
+────────────────────────────────────────────────────────────────────────────────
+3.5 FROM API_CONTRACT v1.2 §14 — ENDPOINTS SPEC
+────────────────────────────────────────────────────────────────────────────────
+
+(Full spec dari API_CONTRACT v1.2 §14.1-14.11 — 11 endpoints)
+
+ENDPOINT 1 — POST /admin/events/{event_id}/bulk-cancel
+  Auth: Required (JWT admin OR event_organizer) + 2FA
+  Rate: 3 attempts → 15 min lockout (via 2FA)
+  Idempotency: REQUIRED
+  Request: { "reason": "Price error..." }
+  Success (202): { event_id, cancelled_tickets, refund_total, status: 'PROCESSING' }
+  Errors: 401, 403, 429
+
+ENDPOINT 2 — GET /admin/ledger
+  Auth: Required (admin)
+  Rate: 30 req/min
+  Query: date_from, date_to, status, page, limit (max 100)
+  Success (200): { entries: [...], summary: {...} } + meta pagination
+  Errors: 403, 500
+
+ENDPOINT 3 — POST /admin/ledger/reverse
+  Auth: Required (admin) + 2FA
+  Rate: 30 req/min
+  Request: { "transaction_id": "uuid", "reason": "..." }
+  Success (200): { payment_obligation_id, status: 'REFUNDED', 
+                   gateway_refund_transaction_id, admin_action_id, refunded_at }
+  Errors: 401, 403, 404, 409
+
+ENDPOINT 4 — GET /admin/stuck-locks
+  Auth: Required (admin)
+  Rate: 30 req/min
+  Success (200): { stuck_locks: [...] }
+
+ENDPOINT 5 — POST /admin/force-release
+  Auth: Required (admin) + 2FA
+  Rate: 30 req/min
+  Request: { "booking_id": "...", "reason": "..." }
+  Success (200): { booking_id, released_seats, new_status: 'CANCELLED', 
+                   released_at }
+  Errors: 401, 403, 404, 409
+
+ENDPOINT 6 — GET /admin/users
+  Auth: Required (admin)
+  Rate: 30 req/min
+  Query: role, status, search, page, limit (max 100)
+  Success (200): { users: [...] } + meta pagination
+
+ENDPOINT 7 — GET /admin/blacklist
+  Auth: Required (admin)
+  Rate: 30 req/min
+  Success (200): { entries: [...] }
+
+ENDPOINT 8 — POST /admin/blacklist
+  Auth: Required (admin)
+  Rate: 30 req/min
+  Request: { type, value, reason, expires_at }
+  Success (201): { id, type, value, added_at }
+  Errors: 400, 409 (duplicate)
+  Side-effect: INSERT admin_actions (BLACKLIST_IP enum with actual type in 
+               description + changes_after) — FLAG #2 fix
+
+ENDPOINT 9 — DELETE /admin/blacklist/{id}
+  Auth: Required (admin)
+  Rate: 30 req/min
+  Success (200): { id, removed_at }
+  Errors: 404
+  Side-effect: INSERT admin_actions (REMOVE_BLACKLIST_IP enum)
+
+ENDPOINT 10 — PATCH /admin/users/{user_id}/suspend
+  Auth: Required (admin) + 2FA
+  Rate: 30 req/min
+  Request: { "reason": "..." }
+  Success (200): { user_id, status: 'SUSPENDED', previous_status, 
+                   suspended_reason, updated_at }
+
+ENDPOINT 11 — PATCH /admin/users/{user_id}/unsuspend
+  Auth: Required (admin) + 2FA
+  Rate: 30 req/min
+  Success (200): { user_id, status: 'ACTIVE', previous_status, updated_at }
+
+────────────────────────────────────────────────────────────────────────────────
+3.6 FROM SECURITY_SPEC v1.4 §2, §6.3, §9.1 — ADMIN SECURITY
+────────────────────────────────────────────────────────────────────────────────
+
+ADMIN 2FA (FLAG #1):
+  - Method: TOTP (RFC 6238)
+  - Enroll: one-time CLI/provisioning (no API endpoint)
+  - Storage: Redis (admin_2fa:{user_id}) — persistent
+  - Verify: server-side TOTP validation
+  - Lockout: 3 fails in 15 min → lock 15 min
+  - Header: X-Admin-2FA-Token
+
+AUDIT LOGGING (SECURITY_SPEC §9.1):
+  - ALL financial mutations logged to admin_actions
+  - Fields: admin_id, action_type, target_*, reason, changes_before/after, 
+            ip_address, user_agent
+  - Never log: password_hash, full tokens, PII
+
+FINANCIAL SECURITY (SECURITY_SPEC §6.3):
+  - Admin reversal → Payment Gateway refund via external_transaction_id
+  - No internal ledger — Payment Gateway source of truth
+  - 2FA mandatory for all admin financial mutations
+  - Lockout after 3 failed 2FA attempts
+
+HEADER SANITIZATION:
+  - X-Admin-2FA-Token → [REDACTED]
+  - Authorization → [REDACTED]
+
+────────────────────────────────────────────────────────────────────────────────
+3.7 FROM HALAMAN v1.1 §10.1, §12.1-12.3 — WIREFRAMES
+────────────────────────────────────────────────────────────────────────────────
+
+SCREEN 10.1 — EMERGENCY BULK CANCEL:
+  - Event info
+  - Warning: "IRREVERSIBLE"
+  - Preview: X tickets to cancel, refund total
+  - Reason input
+  - CONFIRM CANCELLATION (2FA Required) button
+  - GO BACK button
+
+SCREEN 12.1 — LEDGER AUDIT:
+  - Filters: Date, Status, Search
+  - Table: Transaction ID | User | Type | Amount | Status | Reference
+  - Balance check indicator
+  - Actions: Manual Reconciliation, Force Refund, Export CSV
+
+SCREEN 12.2 — USER & BLACKLIST MANAGEMENT:
+  - User table: User ID | Name | Role | Status | Tickets | Actions
+  - Blacklist table: Type | Value | Reason | Added By | Expires
+  - Actions: Add IP/Device, Remove, Suspend/Unsuspend
+
+SCREEN 12.3 — FORCE SEAT RELEASE:
+  - Warning: "Use only when locks are stuck"
+  - Stuck locks table: Booking ID | Section | Seats | Locked Since | Status
+  - Release form: Booking ID + Reason
+  - RELEASE SEATS (2FA Required) button
+
+────────────────────────────────────────────────────────────────────────────────
+3.8 FROM STP v1.1 §3.2 — TEST CASES
+────────────────────────────────────────────────────────────────────────────────
+
+UNIT TEST CASES (FASE 8 scope):
+
+| Test ID        | Description                                              |
+|----------------|----------------------------------------------------------|
+| UT-ADMIN-001   | TwoFALockout_3Failures_Locks15Min                        |
+| UT-ADMIN-002   | BulkCancel_CreatesAdminActionsAudit_WithIPAndUserAgent   |
+| UT-ADMIN-003   | ForceRelease_RecordsAdminActionWithIPAndUserAgent        |
+| UT-ADMIN-004   | BulkCancelScope_ExcludesUsedResoldCancelled              |
+| UT-ADMIN-005   | Ledger_Pagination_LimitMax100                            |
+| UT-ADMIN-006   | SuspendUser_UpdatesStatusAndAuditLog                     |
+| UT-ADMIN-007   | BlacklistCRUD_UniqueConstraint                           |
+| UT-ADMIN-008   | BlacklistAdd_RecordsAdminActionsWithActualType           |
+
+INTEGRATION TEST CASES (FASE 8 scope):
+
+| Test ID        | Description                                              |
+|----------------|----------------------------------------------------------|
+| IT-ADMIN-001   | BulkCancel → async worker → refunds + cancelled + notif  |
+| IT-ADMIN-002   | ManualReverse → Payment Gateway refund + trigger         |
+| IT-ADMIN-003   | ForceRelease → Redis SETBIT + booking CANCELLED          |
+| IT-ADMIN-004   | Ledger UNION 3 sources + pagination                      |
+| IT-ADMIN-005   | StuckLocks query returns expired bookings                |
+| IT-ADMIN-006   | SuspendUser → audit with ip_address + user_agent         |
+| IT-ADMIN-007   | 2FA: valid token → 200; invalid → 401; lockout → 429     |
+| IT-ADMIN-008   | BulkCancel notification published async (RabbitMQ)       |
+| IT-ADMIN-009   | Blacklist device_fingerprint → audit logs actual type    |
+
+API TEST CASES (Postman):
+  - 11 endpoints × (happy + error) = ~25 test cases
+
+================================================================================
+SECTION 4 — TASK BREAKDOWN
+================================================================================
+
+10 EPICS, 30 TASKS. Estimasi total ~45 jam (~1 minggu).
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E1: MODULE SKELETON
+────────────────────────────────────────────────────────────────────────────────
+
+E1-S1-T1 [30 min] — Create folders
+   Deliverable:
+     - internal/admin/{handler,service,repository,model,middleware}.go
+     - internal/admin/twofa.go
+     - internal/worker/bulk_cancel.go
+   DoD: empty files with package declaration
+
+E1-S1-T2 [1 jam] — Define model.go
+   Deliverable:
+     - BulkCancelRequest, LedgerEntry, LedgerResponse
+     - ForceReleaseRequest, SuspendUserRequest
+     - BlacklistEntry, AdminActionRecord
+   DoD: structs per API_CONTRACT §14
+
+E1-S1-T3 [30 min] — Repository skeleton
+   Deliverable:
+     - AdminActionRepository (Insert, List)
+     - LedgerRepository (UNION query)
+     - BlacklistRepository (CRUD)
+     - BookingRepository extension (StuckLocks, ForceRelease)
+   DoD: method signatures
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E2: ADMIN 2FA MIDDLEWARE (FLAG #1) — CRITICAL
+────────────────────────────────────────────────────────────────────────────────
+
+E2-S1-T4 [2 jam] — TOTP service
+   Deliverable: internal/admin/twofa.go
+   Sub-tasks:
+     a. GenerateTOTPSecret (pquerna/otp)
+     b. ValidateTOTP(secret, token) → bool
+     c. QR code generation for enrollment
+   DoD: unit test valid/invalid TOTP
+
+E2-S1-T5 [2 jam] — Admin2FAMiddleware
+   Deliverable: internal/admin/middleware.go
+   Sub-tasks:
+     a. Extract X-Admin-2FA-Token
+     b. Check lockout (Redis admin_2fa_lockout:{user_id})
+     c. Get secret dari Redis (admin_2fa:{user_id})
+     d. Validate TOTP
+     e. On fail: INCR admin_2fa_fails + lockout at 3
+     f. On success: DEL admin_2fa_fails
+   DoD:
+     - Missing token → 401
+     - Invalid → 401 + INCR fails
+     - Lockout at 3 → 429 for 15 min
+     - Valid → c.Next()
+
+E2-S1-T6 [1 jam] — CLI enrollment script
+   Deliverable: cmd/admin-2fa-enroll/main.go
+   Sub-tasks:
+     a. Accept user_id argument
+     b. Generate secret + QR display
+     c. Store secret di Redis (PERSISTENT)
+   DoD: 
+     - Script runs
+     - Secret stored correctly
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E3: BULK CANCEL (FLAG #2 + #3)
+────────────────────────────────────────────────────────────────────────────────
+
+E3-S1-T7 [1.5 jam] — Handler: POST /admin/events/{id}/bulk-cancel
+   Deliverable: AdminHandler.BulkCancel
+   Sub-tasks:
+     a. Auth + RBAC (admin OR event_organizer)
+     b. Admin2FAMiddleware
+     c. Bind JSON (reason required)
+     d. Compute preview (tickets count + refund total)
+   DoD: handler wired
+
+E3-S1-T8 [2 jam] — Service: bulk cancel flow
+   Deliverable: AdminService.BulkCancel
+   Sub-tasks:
+     a. Validate event exists
+     b. Compute scope (status IN: CONFIRMED, LOCKED, PENDING_SPLIT_PAY, 
+        RESALE_PENDING)
+     c. INSERT admin_actions (BULK_CANCEL)
+     d. Publish bulk_cancel job to MQ
+     e. Return 202 Accepted
+   DoD:
+     - 202 response
+     - admin_actions inserted
+     - Job enqueued
+
+E3-S1-T9 [2.5 jam] — BulkCancelWorker (async with async notification)
+   Deliverable: internal/worker/bulk_cancel.go
+   Sub-tasks:
+     a. Consume job
+     b. BEGIN tx
+     c. SELECT tickets FOR UPDATE (scope filter)
+     d. UPDATE tickets SET status='CANCELLED'
+     e. SELECT paid obligations → Refund with retry 3x
+     f. Fail → log PENDING_REFUND (audit)
+     g. Release Redis bitmask per seat (SETBIT 0)
+     h. COMMIT
+     i. PUBLISH user notifications via RabbitMQ (ASYNC — FLAG #3):
+        - Queue: notification_queue
+        - Payload: { user_ids: [...], template: 'BULK_CANCEL', 
+                     data: { event_name, refund_amount } }
+        - Fire-and-forget (non-blocking)
+     j. INSERT admin_actions (status: PROCESSING → COMPLETED)
+   DoD:
+     - Async processing works
+     - Refund via Gateway
+     - Bitmask cleared
+     - Notification published async (verify via RabbitMQ admin)
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E4: LEDGER VIEW (FLAG #3)
+────────────────────────────────────────────────────────────────────────────────
+
+E4-S1-T10 [2 jam] — Handler: GET /admin/ledger
+   Deliverable: AdminHandler.GetLedger
+   Sub-tasks:
+     a. Auth (admin)
+     b. Parse filters (date_from, date_to, status, page, limit max 100)
+     c. Query UNION ALL 3 sources
+     d. Compute summary
+   DoD: paginated response
+
+E4-S1-T11 [1.5 jam] — Repository: UNION query builder
+   Deliverable: LedgerRepository.GetPaginated
+   Sub-tasks:
+     a. UNION ALL (payment_obligations + resale_transactions + admin_actions)
+     b. Map event_type (semantic naming)
+     c. ORDER BY created_at DESC
+     d. LIMIT + OFFSET
+   DoD: unit test query
+
+E4-S1-T12 [1 jam] — Summary computation
+   Deliverable: ComputeSummary(entries) → { total_paid, total_pending, 
+                                            total_refunded, unreconciled_count }
+   DoD: correct aggregation
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E5: MANUAL REVERSE (REFUND)
+────────────────────────────────────────────────────────────────────────────────
+
+E5-S1-T13 [1.5 jam] — Handler: POST /admin/ledger/reverse
+   Deliverable: AdminHandler.ManualReverse
+   Sub-tasks: Auth + 2FA + Bind JSON + Validate
+   DoD: handler wired
+
+E5-S1-T14 [2 jam] — Service: manual reverse flow
+   Deliverable: AdminService.ManualReverse
+   Sub-tasks:
+     a. SELECT obligation WHERE id AND status='PAID' FOR UPDATE
+     b. Call PaymentGateway.Refund(external_transaction_id, amount)
+     c. UPDATE obligation status='REFUNDED', refunded_at=NOW(),
+        refund_transaction_id
+     d. Trigger handle_ticket_cancellation_on_refund fires → tickets CANCELLED
+     e. INSERT admin_actions (MANUAL_REFUND)
+   DoD: full refund flow works
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E6: FORCE RELEASE + STUCK LOCKS
+────────────────────────────────────────────────────────────────────────────────
+
+E6-S1-T15 [1 jam] — Handler: GET /admin/stuck-locks
+   Deliverable: AdminHandler.GetStuckLocks
+   DoD: 
+     - Query bookings PENDING + expired >10min
+     - Return list
+
+E6-S1-T16 [1.5 jam] — Handler: POST /admin/force-release
+   Deliverable: AdminHandler.ForceRelease
+   Sub-tasks:
+     a. Auth + 2FA
+     b. Validate booking exists + status PENDING
+     c. Release Redis bitmask per seat
+     d. UPDATE booking status='CANCELLED'
+     e. INSERT admin_actions
+   DoD:
+     - 200 response
+     - Bitmask cleared
+     - Audit logged
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E7: USER MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+E7-S1-T17 [1.5 jam] — Handler: GET /admin/users
+   Deliverable: AdminHandler.ListUsers
+   Sub-tasks:
+     a. Parse query (role, status, search, page, limit)
+     b. SELECT users + pagination
+   DoD: paginated response
+
+E7-S1-T18 [1.5 jam] — Handler + Service: PATCH /admin/users/{id}/suspend
+   Deliverable: AdminHandler.SuspendUser
+   Sub-tasks:
+     a. Auth + 2FA
+     b. UPDATE users SET status='SUSPENDED'
+     c. INSERT admin_actions (SUSPEND_USER)
+   DoD: 200 + audit log
+
+E7-S1-T19 [1 jam] — Handler + Service: PATCH /admin/users/{id}/unsuspend
+   Deliverable: AdminHandler.UnsuspendUser
+   Sub-tasks:
+     a. Auth + 2FA
+     b. UPDATE users SET status='ACTIVE'
+     c. INSERT admin_actions (UNSUSPEND_USER)
+   DoD: 200 + audit log
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E8: BLACKLIST MANAGEMENT (FLAG #2 POST-GEMINI FIX)
+────────────────────────────────────────────────────────────────────────────────
+
+E8-S1-T20 [1 jam] — Handler: GET /admin/blacklist
+   Deliverable: AdminHandler.ListBlacklist
+   DoD: 
+     - Paginated list
+     - Include added_by join
+
+E8-S1-T21 [1.5 jam] — Handler: POST /admin/blacklist (with admin_actions INSERT)
+   Deliverable: AdminHandler.AddBlacklist
+   Sub-tasks:
+     a. Auth (admin)
+     b. Validate type (ip|device_fingerprint)
+     c. INSERT blacklist
+     d. Handle UNIQUE constraint
+     e. INSERT admin_actions (FLAG #2 fix):
+        - action_type = 'BLACKLIST_IP' (enum — no BLACKLIST_DEVICE)
+        - description = 'Added ' || type || ' to blacklist: ' || value
+        - changes_after = { 
+            type: type,  // ACTUAL TYPE ('ip' | 'device_fingerprint')
+            value: value,
+            reason: reason,
+            expires_at: expires_at
+          }
+        - reason = 'Blacklist entry created'
+        - ip_address (from request)
+        - user_agent (from header)
+   DoD:
+     - 201 Created
+     - Duplicate → 409
+     - admin_actions INSERT dengan actual type di changes_after
+
+E8-S1-T22 [1 jam] — Handler: DELETE /admin/blacklist/{id}
+   Deliverable: AdminHandler.RemoveBlacklist
+   Sub-tasks:
+     a. Auth
+     b. SELECT entry (untuk changes_before)
+     c. DELETE entry
+     d. INSERT admin_actions:
+        - action_type = 'REMOVE_BLACKLIST_IP'
+        - changes_before = { type: ..., value: ..., reason: ... }
+        - ip_address, user_agent
+   DoD: 200
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E9: RATE LIMITING & MIDDLEWARE
+────────────────────────────────────────────────────────────────────────────────
+
+E9-S1-T23 [1 jam] — Rate limit admin endpoints (30 req/min per admin)
+E9-S1-T24 [30 min] — Wire all admin routes di main.go
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E10: TESTS
+────────────────────────────────────────────────────────────────────────────────
+
+E10-S1-T25 [3 jam] — Unit tests (8 tests)
+   Deliverable: tests/unit/admin/*.go
+   Sub-tasks: UT-ADMIN-001..008
+   DoD: coverage ≥ 85%
+
+E10-S1-T26 [4 jam] — Integration tests (9 tests)
+   Deliverable: tests/integration/admin_flow_test.go
+   Sub-tasks: IT-ADMIN-001..009
+   DoD: all pass
+
+E10-S2-T27 [2 jam] — API tests (Postman)
+   Deliverable: postman_collection.json
+   DoD: Newman pass ~25 cases
+
+E10-S2-T28 [1 jam] — 2FA lockout test
+   Deliverable: tests/security/admin_2fa_lockout_test.go
+   Sub-tasks:
+     a. 3 fails → lockout
+     b. Wait 15 min → unlock
+     c. Verify TTL in Redis
+   DoD: deterministic
+
+E10-S2-T29 [2 jam] — BulkCancel worker test (async + notification)
+   Deliverable: tests/integration/bulk_cancel_worker_test.go
+   Sub-tasks:
+     a. Enqueue job
+     b. Worker consumes
+     c. Refunds issued + tickets CANCELLED
+     d. Bitmask cleared
+     e. Notification published to notification_queue (verify via RabbitMQ)
+   DoD: async flow verified (including notification async)
+
+E10-S2-T30 [1 jam] — Audit log completeness test (with blacklist enum fix)
+   Deliverable: tests/integration/admin_audit_test.go
+   Sub-tasks:
+     a. All admin endpoints create admin_actions
+     b. Each action has ip_address + user_agent
+     c. Blacklist device_fingerprint → admin_actions shows 
+        action_type='BLACKLIST_IP' + changes_after.type='device_fingerprint'
+   DoD: audit trail verified
+
+────────────────────────────────────────────────────────────────────────────────
+TASK SUMMARY
+────────────────────────────────────────────────────────────────────────────────
+
+| Epic | Tasks | Est. Duration |
+|------|-------|---------------|
+| E1   | 3     | ~2 jam        |
+| E2   | 3     | ~5 jam        |
+| E3   | 3     | ~6 jam        |
+| E4   | 3     | ~4.5 jam      |
+| E5   | 2     | ~3.5 jam      |
+| E6   | 2     | ~2.5 jam      |
+| E7   | 3     | ~4 jam        |
+| E8   | 3     | ~3.5 jam      |
+| E9   | 2     | ~1.5 jam      |
+| E10  | 6     | ~13 jam       |
+|------|-------|---------------|
+| Total| 30    | ~45.5 jam (~1 minggu) |
+
+================================================================================
+SECTION 5 — DELIVERABLES
+================================================================================
+
+5.1 CODE ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+Backend — Admin Module:
+  ✅ internal/admin/handler.go          (11 endpoints)
+  ✅ internal/admin/service.go
+  ✅ internal/admin/repository.go
+  ✅ internal/admin/model.go
+  ✅ internal/admin/middleware.go       (Admin2FAMiddleware)
+  ✅ internal/admin/twofa.go            (TOTP service)
+
+Backend — Worker:
+  ✅ internal/worker/bulk_cancel.go     (async bulk cancel + notification 
+                                          publish)
+
+CLI Tool:
+  ✅ cmd/admin-2fa-enroll/main.go       (one-time provisioning)
+
+Router:
+  ✅ cmd/api/main.go — 11 admin endpoints
+
+Worker Registration:
+  ✅ BulkCancelWorker registered (consumer)
+  ✅ NotificationWorker (FASE 4 pattern) handles notification_queue
+
+5.2 DOCUMENTATION
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ docs/ADMIN_2FA.md              — TOTP enrollment + verify
+  ✅ docs/BULK_CANCEL.md            — async flow + scope + notification
+  ✅ docs/LEDGER_VIEW.md            — UNION ALL + pagination
+  ✅ docs/ADMIN_TOOLS.md            — 11 endpoints overview
+  ✅ docs/BLACKLIST_ENUM.md         — FLAG #2 workaround explanation
+
+5.3 TEST ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ tests/unit/admin/*.go                       (UT-ADMIN-001..008)
+  ✅ tests/integration/admin_flow_test.go        (IT-ADMIN-001..009)
+  ✅ tests/integration/bulk_cancel_worker_test.go
+  ✅ tests/security/admin_2fa_lockout_test.go
+  ✅ tests/integration/admin_audit_test.go
+  ✅ postman_collection.json (updated)
+
+5.4 FRONTEND ARTIFACTS (Skeleton Only — full impl di FASE 9)
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ app/admin/ledger/page.tsx — placeholder
+  ✅ app/admin/users/page.tsx — placeholder
+  ✅ app/admin/blacklist/page.tsx — placeholder
+  ✅ app/admin/force-release/page.tsx — placeholder
+  ✅ components/admin/AdminLayout.tsx — skeleton
+  ✅ components/admin/Admin2FAModal.tsx — skeleton (TOTP input)
+  ✅ lib/api/admin.ts
+
+================================================================================
+SECTION 6 — ACCEPTANCE CRITERIA
+================================================================================
+
+6.1 FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] POST /admin/events/{id}/bulk-cancel → 202 (valid + 2FA)
+  [ ] POST /admin/events/{id}/bulk-cancel → 401 (no 2FA)
+  [ ] Bulk cancel scope excludes USED/RESOLD/CANCELLED
+  [ ] Bulk cancel notification published async (RabbitMQ)
+  [ ] GET /admin/ledger → 200 (paginated UNION view)
+  [ ] GET /admin/ledger → 400 if limit > 100
+  [ ] POST /admin/ledger/reverse → 200 (refund via Gateway)
+  [ ] POST /admin/ledger/reverse → 409 (already refunded)
+  [ ] GET /admin/stuck-locks → 200
+  [ ] POST /admin/force-release → 200 (bitmask cleared + booking CANCELLED)
+  [ ] GET /admin/users → 200 (paginated + filter)
+  [ ] POST /admin/blacklist → 201 (new entry)
+  [ ] POST /admin/blacklist → 409 (duplicate)
+  [ ] POST /admin/blacklist → admin_actions INSERT (BLACKLIST_IP enum + 
+      actual type in changes_after)
+  [ ] DELETE /admin/blacklist/{id} → 200 + admin_actions INSERT
+  [ ] PATCH /admin/users/{id}/suspend → 200 (status + audit)
+  [ ] PATCH /admin/users/{id}/unsuspend → 200 (status + audit)
+  [ ] Admin 2FA: 3 failed attempts → 15 min lockout
+  [ ] Admin 2FA: valid TOTP → pass
+  [ ] All financial mutations logged to admin_actions
+  [ ] admin_actions includes ip_address + user_agent
+  [ ] No wallet/ledger drift
+
+6.2 NON-FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] CI pipeline green
+  [ ] Unit test coverage ≥ 85% (8 tests)
+  [ ] Integration tests pass: 9/9
+  [ ] API tests pass: ~25 cases
+  [ ] 2FA lockout deterministic
+  [ ] BulkCancel async worker verified (with async notification)
+  [ ] Audit log completeness verified
+  [ ] 11 endpoints 1:1 dengan API_CONTRACT v1.2 §14
+
+6.3 TEST COVERAGE TARGET
+────────────────────────────────────────────────────────────────────────────────
+
+  Unit: ≥ 85% untuk admin module
+  Integration: 9 tests
+  API: 11 endpoints
+  Security: 2FA lockout + audit trail + blacklist enum fix
+
+================================================================================
+SECTION 7 — RISKS & MITIGATIONS
+================================================================================
+
+| Risk                                          | Likelihood | Impact | Mitigation                                          |
+|-----------------------------------------------|------------|--------|-----------------------------------------------------|
+| Admin 2FA bypass                              | Low        | Critical| TOTP verify + lockout 3 fails                        |
+| 2FA secret leak (Redis)                       | Low        | Critical| Redis encrypted at rest + TLS                        |
+| Bulk cancel too aggressive                    | Low        | High   | Scope exclude USED/RESOLD + reason required          |
+| Bulk cancel refund fails                      | Medium     | High   | Retry 3x + log PENDING_REFUND                        |
+| Ledger query slow (large data)                | Medium     | Med    | Pagination + index on created_at DESC                |
+| Manual reverse wrong transaction              | Low        | High   | FOR UPDATE + status check + 2FA                       |
+| Force release data loss                       | Low        | High   | FOR UPDATE + 2FA + audit log                          |
+| Suspend abuse                                  | Low        | Med    | 2FA + audit log                                       |
+| Blacklist abuse                                | Medium     | Med    | 2FA for mutations + audit log                         |
+| Blacklist enum mismatch (device)              | Medium     | Low    | FLAG #2 workaround (changes_after)                    |
+| Admin lockout (2FA fails)                     | Medium     | Low    | 15 min auto-unlock                                    |
+| Audit log missing fields                      | Low        | High   | Integration test asserts ip_address + user_agent     |
+| Concurrent force release (race)               | Low        | Med    | FOR UPDATE                                            |
+| Notification blocking worker                  | Medium     | Med    | Async publish (RabbitMQ) — FLAG #3 fix                |
+
+RESPONSE PER SCENARIO (DRP v1.2):
+- Redis down → Playbook #2 (2FA unavailable — locked, safe)
+- DB down → Playbook #1
+- Payment Gateway down → Playbook #5
+
+================================================================================
+SECTION 8 — SECURITY CONSIDERATIONS
+================================================================================
+
+8.1 THREATS RELEVANT TO FASE 8
+────────────────────────────────────────────────────────────────────────────────
+
+| Threat                    | Mitigation di FASE 8                                |
+|---------------------------|-----------------------------------------------------|
+| Admin Account Compromise  | 2FA TOTP mandatory for financial                     |
+| 2FA Brute Force           | Lockout 3 fails / 15 min                             |
+| Insider Threat            | Audit log (ip_address, user_agent, changes)          |
+| Unauthorized Bulk Cancel  | RBAC + 2FA + reason required                         |
+| Refund Fraud              | 2FA + audit + Payment Gateway verification           |
+| Force Release Abuse       | 2FA + audit + FOR UPDATE                             |
+| Suspend Abuse             | 2FA + audit                                          |
+| Blacklist Abuse           | Audit                                                |
+| Ledger Data Leak          | Admin-only + pagination                              |
+| 2FA Enroll Hijack         | CLI-only (no API endpoint)                           |
+
+8.2 HEADERS
+────────────────────────────────────────────────────────────────────────────────
+
+  | Endpoint Category                  | Headers Required                          |
+  |-------------------------------------|-------------------------------------------|
+  | Financial mutations                 | Authorization + X-Admin-2FA-Token         |
+  | Read-only admin                     | Authorization                             |
+  | Financial mutations (audit fields)  | X-Request-ID (auto)                       |
+
+8.3 ADMIN 2FA (FLAG #1 — CRITICAL)
+────────────────────────────────────────────────────────────────────────────────
+
+  - Method: TOTP (RFC 6238)
+  - Enroll: CLI script (no API endpoint — zero ghost)
+  - Storage: Redis key admin_2fa:{user_id} PERSISTENT
+  - Verify: server-side TOTP validate (pquerna/otp)
+  - Lockout: 3 fails in 15 min → lock 15 min 
+             (Redis admin_2fa_lockout:{user_id} EX 900)
+  - Fails counter: admin_2fa_fails:{user_id} EX 900
+  - No schema amendment (zero drift)
+
+8.4 BULK CANCEL SCOPE (FLAG #2)
+────────────────────────────────────────────────────────────────────────────────
+
+  Scope: status IN ('CONFIRMED', 'LOCKED', 'PENDING_SPLIT_PAY', 'RESALE_PENDING')
+  Skip: 'USED', 'RESOLD', 'CANCELLED'
+
+  Reasoning:
+    - USED: sudah di-scan gate (refund tidak applicable)
+    - RESOLD: sudah pindah tangan (new owner terpisah)
+    - CANCELLED: sudah cancelled
+
+8.5 LEDGER VIEW (FLAG #3)
+────────────────────────────────────────────────────────────────────────────────
+
+  - UNION ALL 3 sources (payment_obligations, resale_transactions, admin_actions)
+  - Pagination: default 50, max 100
+  - Index: created_at DESC (already exists)
+  - Materialized view: v1.1+ (out of scope)
+
+8.6 BLACKLIST ENUM WORKAROUND (FLAG #2 POST-GEMINI)
+────────────────────────────────────────────────────────────────────────────────
+
+  Problem: 
+    - blacklist.type supports 'ip' | 'device_fingerprint'
+    - admin_action_type_enum only has 'BLACKLIST_IP' and 'REMOVE_BLACKLIST_IP'
+    - Tidak ada 'BLACKLIST_DEVICE' di enum
+
+  Workaround (Zero Schema Amendment):
+    - INSERT admin_actions dengan action_type = 'BLACKLIST_IP' (menggunakan 
+      enum existing)
+    - Actual type ('ip' | 'device_fingerprint') disimpan di:
+      * description TEXT: "Added {type} to blacklist: {value}"
+      * changes_after JSONB: { type: 'ip'|'device_fingerprint', value, ... }
+    - Audit trail tetap lengkap tanpa enum violation
+
+8.7 RATE LIMITING
+────────────────────────────────────────────────────────────────────────────────
+
+  | Category                          | Limit         | Scope   |
+  |-----------------------------------|---------------|---------|
+  | All admin endpoints               | 30 req/min    | Admin   |
+  | Bulk cancel (2FA lockout)         | 3 fails → 15m | Admin   |
+
+8.8 HEADER SANITIZATION
+────────────────────────────────────────────────────────────────────────────────
+
+  - Authorization → [REDACTED]
+  - X-Admin-2FA-Token → [REDACTED]
+  - Verify via grep: log tidak mengandung "eyJ"
+
+8.9 AUDIT LOGGING (MANDATORY)
+────────────────────────────────────────────────────────────────────────────────
+
+  Every mutation INSERT admin_actions with:
+    - admin_id (from JWT)
+    - action_type (from enum)
+    - target_user_id / target_resource_type / target_resource_id
+    - reason (from request body)
+    - changes_before + changes_after (JSONB)
+    - ip_address (from request)
+    - user_agent (from header)
+    - created_at (auto)
+
+8.10 ASYNC NOTIFICATION (FLAG #3 POST-GEMINI)
+────────────────────────────────────────────────────────────────────────────────
+
+  BulkCancelWorker publishes notifications via RabbitMQ (notification_queue):
+    - Fire-and-forget (non-blocking)
+    - NotificationWorker (separate consumer) handles delivery
+    - Worker tidak tertahan oleh API notifikasi sinkron
+    - Retry + DLQ jika notifikasi gagal
+
+================================================================================
+SECTION 9 — DEFINITION OF DONE (DoD)
+================================================================================
+
+9.1 CHECKLIST KELULUSAN FASE
+────────────────────────────────────────────────────────────────────────────────
+
+Code:
+  [ ] internal/admin/ folder lengkap (6 files)
+  [ ] internal/worker/bulk_cancel.go (with async notification)
+  [ ] cmd/admin-2fa-enroll/main.go
+  [ ] Router wiring: 11 endpoints
+  [ ] Admin2FAMiddleware implemented
+  [ ] TOTP service (pquerna/otp)
+  [ ] Bulk cancel scope excludes USED/RESOLD/CANCELLED
+  [ ] Bulk cancel notification async (RabbitMQ)
+  [ ] Ledger view UNION ALL + pagination
+  [ ] Manual reverse triggers Payment Gateway
+  [ ] Force release clears bitmask
+  [ ] Blacklist POST/DELETE with admin_actions INSERT (FLAG #2 fix)
+  [ ] Audit logging with ip_address + user_agent
+
+Tests:
+  [ ] Unit test coverage ≥ 85% (8 tests)
+  [ ] Integration tests pass (9/9)
+  [ ] API tests pass (~25 cases)
+  [ ] 2FA lockout test pass
+  [ ] BulkCancel worker test pass (with async notification)
+  [ ] Audit log completeness test pass (with blacklist enum fix)
+  [ ] CI pipeline green
+
+Security:
+  [ ] 2FA TOTP verified
+  [ ] Lockout mechanism verified
+  [ ] Zero tokens in logs
+  [ ] admin_actions for all mutations
+  [ ] RLS enforced
+  [ ] No schema amendment
+
+Documentation:
+  [ ] docs/ADMIN_2FA.md
+  [ ] docs/BULK_CANCEL.md
+  [ ] docs/LEDGER_VIEW.md
+  [ ] docs/ADMIN_TOOLS.md
+  [ ] docs/BLACKLIST_ENUM.md
+  [ ] postman_collection.json
+
+9.2 ROLLBACK POINT
+────────────────────────────────────────────────────────────────────────────────
+
+Kalau FASE 8 gagal:
+  - Semua work di branch `feature/fase-8-admin-tools`
+  - `develop` tetap stable (FASE 7 state)
+  - Rollback = hapus branch
+  - Admin 2FA secrets di Redis tetap (no rollback needed)
+
+Setelah FASE 8 selesai:
+  - Merge → `develop` → `main`
+  - Tag: `v0.8.0-admin-tools`
+  - FASE 9 (Testing & Polish) bisa dimulai
+
+9.3 SIGN-OFF
+────────────────────────────────────────────────────────────────────────────────
+
+  QA/Verifier:       M. Arif Aulia
+  Date Completed:    [___]
+  Ready for FASE 9:  [ ] YES  [ ] NO
+
+================================================================================
+SECTION 10 — NOTES & REFERENCES
+================================================================================
+
+10.1 FLAG #1 (CRITICAL): ADMIN 2FA (Opsi A APPROVED)
+────────────────────────────────────────────────────────────────────────────────
+
+  Method: TOTP (RFC 6238) via pquerna/otp
+  Enrollment: CLI/one-time provisioning (no API endpoint)
+  Storage: Redis persistent (admin_2fa:{user_id})
+  Lockout: 3 fails in 15 min → lock 15 min
+  Header: X-Admin-2FA-Token (required for financial mutations)
+  Zero schema drift
+
+10.2 FLAG #2: BULK CANCEL SCOPE (Opsi A APPROVED)
+────────────────────────────────────────────────────────────────────────────────
+
+  Scope: tickets.status IN ('CONFIRMED', 'LOCKED', 'PENDING_SPLIT_PAY', 
+                             'RESALE_PENDING')
+  Skip: 'USED', 'RESOLD', 'CANCELLED'
+
+10.3 FLAG #3: LEDGER VIEW (Opsi A APPROVED)
+────────────────────────────────────────────────────────────────────────────────
+
+  - UNION ALL 3 sources
+  - ORDER BY created_at DESC
+  - Pagination: default 50, max 100
+  - Materialized view: v1.1+
+
+10.4 POST-GEMINI REVIEW #1 FIXES (v1.1)
+────────────────────────────────────────────────────────────────────────────────
+
+Fix #1 — E8-S1-T21 admin_actions INSERT explicit:
+  POST /admin/blacklist WAJIB INSERT admin_actions dengan:
+    - action_type = 'BLACKLIST_IP' (enum)
+    - description = 'Added {type} to blacklist: {value}'
+    - changes_after = { type: 'ip'|'device_fingerprint', value, reason, 
+                        expires_at }
+    - ip_address + user_agent (from request)
+  Konsisten dengan E8-S1-T22 (DELETE) yang sudah punya audit.
+
+Fix #2 — Blacklist device_fingerprint enum workaround:
+  - admin_action_type_enum hanya punya BLACKLIST_IP (bukan BLACKLIST_DEVICE)
+  - Workaround zero-drift: gunakan BLACKLIST_IP enum + actual type di 
+    description + changes_after JSONB
+  - Audit trail tetap lengkap tanpa enum violation
+
+Fix #3 — E3-S1-T9 BulkCancelWorker async notification:
+  - Notification MUST via RabbitMQ (notification_queue)
+  - Fire-and-forget (non-blocking)
+  - NotificationWorker (separate consumer) handles delivery
+  - Worker tidak tertahan oleh API notifikasi sinkron
+
+10.5 NOTES UMUM
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 8 = fitur P0 TERAKHIR. Sensitif (financial + admin access).
+
+- ADMIN 2FA WAJIB untuk semua financial mutations. TOTP via Redis 
+  (zero schema drift).
+
+- Enrollment CLI (cmd/admin-2fa-enroll/main.go). TIDAK ada API endpoint.
+
+- BulkCancel ASYNC (return 202, worker process). Refund retry 3x. 
+  Notification async via MQ.
+
+- Ledger view = UNION ALL (3 sources). Bukan internal ledger (PRD 
+  Out of Scope).
+
+- Semua mutasi INSERT admin_actions: admin_id, action_type, reason, 
+  changes_before/after, ip_address, user_agent.
+
+- Blacklist device_fingerprint: enum workaround (BLACKLIST_IP + changes_after).
+
+- Force release: FOR UPDATE + Redis SETBIT 0 per seat.
+
+- Frontend screens (10.1, 12.1, 12.2, 12.3) di FASE 8 hanya SKELETON. 
+  Full impl di FASE 9.
+
+10.6 CROSS-REFERENCE FOUNDATION
+────────────────────────────────────────────────────────────────────────────────
+
+| Foundation Doc         | Section Relevan                                |
+|------------------------|------------------------------------------------|
+| PRD v6.0               | §F006 (full spec)                              |
+| DATABASE_SCHEMA v2.9   | admin_actions + blacklist + users + bookings   |
+| LOGIC_FLOW v1.4        | §8 (F006 flows)                                |
+| HALAMAN v1.1           | §10.1, §12.1, §12.2, §12.3                     |
+| TDD v1.10              | §6.7 (refresh token), admin 2FA CLI            |
+| API_CONTRACT v1.2      | §14.1-14.11 (11 endpoints)                     |
+| SECURITY_SPEC v1.4     | §2, §6.3, §9.1                                 |
+| DRP v1.2               | §5.1, §5.2, §5.6                               |
+| STP v1.1               | UT-ADMIN-001..008, IT-ADMIN-001..009           |
+
+10.7 CROSS-REFERENCE ROADMAP FASE LAIN
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 0-7: consumed by FASE 8 (all features)
+- FASE 9: frontend screens 10.1, 12.x (full impl)
+
+10.8 VERSION HISTORY
+────────────────────────────────────────────────────────────────────────────────
+
+| Version  | Date       | Author       | Changes                                          |
+|----------|------------|--------------|--------------------------------------------------|
+| 1.0-FINAL| 2026-09-11 | M. Arif Aulia| Initial ROADMAP FASE 8. 3 flags pre-approved.    |
+| 1.1-FINAL| 2026-09-11 | M. Arif Aulia| **Post-Gemini review #1:** 1) E8-S1-T21: explicit  |
+|          |            |              | admin_actions INSERT with ip_address + user_agent. |
+|          |            |              | 2) Blacklist device_fingerprint enum workaround    |
+|          |            |              | (BLACKLIST_IP + actual type in description +       |
+|          |            |              | changes_after). 3) E3-S1-T9: async notification    |
+|          |            |              | via RabbitMQ (fire-and-forget). Added UT-ADMIN-008,|
+|          |            |              | IT-ADMIN-008, IT-ADMIN-009.                       |
+
+================================================================================
+📋 FASE 8 SYNC CHECKLIST (100% COMPLIANCE)
+================================================================================
+
+✅ BLUEPRINT ROADMAP v1.0-FINAL Sync:
+  - FASE 8 = F006 Admin Tools ✓
+  - Estimasi 1 minggu ✓
+
+✅ PRD v6.0 Sync:
+  - F006 full spec ✓
+  - Out of Scope respected (no wallet/ledger) ✓
+
+✅ DATABASE_SCHEMA v2.9 Sync:
+  - admin_actions + blacklist + users + bookings ✓
+  - admin_action_type_enum respected (with FLAG #2 workaround) ✓
+  - No schema amendment ✓
+
+✅ LOGIC_FLOW v1.4 Sync:
+  - §8 F006 flows ✓
+  - Bulk cancel flow ✓
+  - Manual reconciliation flow ✓
+
+✅ HALAMAN v1.1 Sync:
+  - §10.1, §12.1, §12.2, §12.3 ✓
+
+✅ TDD v1.10 Sync:
+  - Admin 2FA CLI enrollment ✓
+  - No full code injection ✓
+
+✅ API_CONTRACT v1.2 Sync:
+  - 11 endpoints 1:1 (§14.1-14.11) ✓
+  - Error codes ✓
+  - Headers (X-Admin-2FA-Token) ✓
+  - No ghost endpoints ✓
+
+✅ SECURITY_SPEC v1.4 Sync:
+  - §2 (2FA) ✓
+  - §6.3 (Admin financial) ✓
+  - §9.1 (Audit log) ✓
+  - Header sanitization ✓
+  - Rate limiting ✓
+
+✅ DRP v1.2 Sync:
+  - Playbook #1, #2, #5, #6 ✓
+
+✅ STP v1.1 Sync:
+  - UT-ADMIN-001..008 ✓
+  - IT-ADMIN-001..009 ✓
+  - Coverage ≥ 85% ✓
+
+✅ AI ROADMAP GUARDRAIL §2.2 Sync:
+  - No full code injection (pseudocode only) ✓
+
+✅ Anti-Drift Guardrails G1-G8:
+  - G1 Traceability ✓
+  - G2 Scope Freeze ✓
+  - G3 No Wallet/Ledger ✓
+  - G4 ENUM Consistency (with FLAG #2 workaround documented) ✓
+  - G5 Error Code Consistency ✓
+  - G6 Header Consistency ✓
+  - G7 Self-Contained ✓
+  - G8 Acceptance Criteria ✓
+
+✅ 3 FLAGS PRE-APPROVED (Opsi A):
+  - FLAG #1 (CRITICAL): 2FA TOTP via Redis ✓
+  - FLAG #2: Bulk cancel scope ✓
+  - FLAG #3: Ledger UNION ALL + pagination ✓
+
+✅ POST-GEMINI REVIEW #1 FIXES:
+  - E8-S1-T21 admin_actions explicit ✓
+  - Blacklist enum workaround documented ✓
+  - BulkCancel async notification ✓
+
+================================================================================
+END OF ROADMAP FASE (8) v1.1-FINAL
+================================================================================
+
+✅ 100% READY TO EXECUTE
+✅ Self-contained
+✅ 30 tasks across 10 epics, est. ~45.5 jam (~1 minggu)
+✅ 22 functional AC + 8 non-functional AC
+✅ 14 risks identified with mitigations
+✅ Rollback point defined
+✅ Zero drift (no wallet/ledger, no ghost endpoints, no schema amendment)
+✅ 11 endpoints 1:1 dengan API_CONTRACT v1.2 §14
+✅ 3 flags pre-approved (Opsi A)
+✅ Post-Gemini review #1 fixes applied
+✅ FITUR P0 TERAKHIR — setelah ini tinggal FASE 9 (Testing & Polish)
+
+Last Updated: 2026-09-11 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED.

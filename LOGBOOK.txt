@@ -1,0 +1,29 @@
+# LOGBOOK - E-Tix Flash
+
+Project: E-Tix Flash (Smart Ticketing Platform)
+Repo: e-tix-flash (local)
+Tanggal Mulai: 2026-10-02
+
+## Entri Log
+
+[2026-10-02 07:52] FASE 0 — Task E1-S1-T1 — DONE
+Init git repo, .gitignore, .env.example, README.md, LOGBOOK.txt,
+folder backend/ dan frontend/.
+
+[2026-10-02 08:01] FASE 0 — Task E1-S1-T1 — POST-FIX
+Fix timestamp duplication di LOGBOOK, cleanup artifact files,
+tambah prompt_*.txt pattern ke gitignore.
+
+[2026-10-02 08:13] FASE 0 — Task E1-S1-T1 — CLEANUP
+Hapus artifact fixa.log. prompt_fixa.txt sudah tidak ada sebelum
+eksekusi, verified via ls dan find di seluruh repo, jadi tidak ada
+yang dihapus untuk file tersebut.
+Refinement .gitignore (4 edit): prompt_*.txt jadi /prompt_*.txt
+(root only), hapus session_*.log (redundant, sudah tercakup *.log),
+hapus .yarnrc.yml (Yarn Berry butuh untuk reproducibility), anchor
+out/ jadi /out/ dan dist/ jadi /dist/ di section Node.js. Baris
+/dist/ di section Go tidak diganggu.
+Format timestamp di prompt sebelumnya diganti ke real date command.
+Catatan: prompt menyebut prompt_fixa.txt sebagai fakta, tapi file itu
+tidak pernah ada di root pada run ini. Deviasi logged per TEAM
+CONTRACT v2.2 section 11.5.

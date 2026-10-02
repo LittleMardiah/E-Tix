@@ -1,0 +1,1485 @@
+================================================================================
+ROADMAP FASE (3): BITMASK MULTI-SEAT ATOMIC LOCKING (F002) — E-Tix Flash
+================================================================================
+
+Version:         1.1-FINAL
+Last Updated:    2026-09-11
+Author:          M. Arif Aulia
+Status:          ⏳ NOT STARTED (Ready to Execute)
+Blueprint Ref:   BLUEPRINT ROADMAP v1.0-FINAL, FASE 3
+Depends On:      FASE 0 (Foundation) — LOCKED
+                 FASE 1 (Auth & User) — LOCKED
+                 FASE 2 (F001 Behavioral Ingress) — LOCKED
+
+================================================================================
+📌 BISMILLAH — ROADMAP FASE 3 FINAL VERSION (POST-GEMINI REVIEW #1)
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. FASE IDENTITY
+2. SCOPE & OBJECTIVES
+3. FOUNDATION DISTILLATION
+4. TASK BREAKDOWN
+5. DELIVERABLES
+6. ACCEPTANCE CRITERIA
+7. RISKS & MITIGATIONS
+8. SECURITY CONSIDERATIONS
+9. DEFINITION OF DONE (DoD)
+10. NOTES & REFERENCES
+
+================================================================================
+SECTION 1 — FASE IDENTITY
+================================================================================
+
+Fase ID:           FASE 3
+Nama Fase:         Bitmask Multi-Seat Atomic Locking (F002)
+Fitur Utama:       F002 — Bitmask Multi-Seat Atomic Locking (Partitioned per Section)
+Estimasi Durasi:   Week 3-4 (1.5 minggu, ~34.5 jam kerja)
+Dependencies:      FASE 0 (Redis, RabbitMQ, DB)
+                   FASE 1 (auth middleware untuk protected endpoints)
+                   FASE 2 (Queue Token dari F001)
+Status:            ⏳ Not Started
+
+Ringkasan:
+  Implementasi Bitmask Multi-Seat Atomic Locking menggunakan Redis native 
+  bitmap (GETBIT/SETBIT) via Lua script. Memungkinkan pengguna mengunci N 
+  kursi berurutan (max 10) secara atomic dalam < 50ms, tanpa risiko 
+  race condition. Partitioned per section untuk mengurangi contention.
+
+  DELIVERABLE UTAMA:
+    - GET  /events                                          — Public event catalog
+    - GET  /events/{event_id}                               — Event detail
+    - GET  /events/{event_id}/sections/{section_id}/seats   — Seat availability
+    - POST /events/{event_id}/sections/{section_id}/seats   — Atomic lock seats
+    - 2 Redis Lua scripts (lock_seats, release_seats)
+    - Delayed message ke RabbitMQ (release_seat_check, TTL 180s)
+    - bookings table INSERT
+
+================================================================================
+SECTION 2 — SCOPE & OBJECTIVES
+================================================================================
+
+2.1 SCOPE — IN
+────────────────────────────────────────────────────────────────────────────────
+
+✅ Endpoints (4 total — API_CONTRACT v1.2 §8.1-8.3, §9.1):
+   - GET  /events?status=ON_SALE&...           — Public, 100 req/min per IP
+   - GET  /events/{event_id}                   — Public, 100 req/min per IP
+   - GET  /events/{eid}/sections/{sid}/seats   — Auth, 100 req/min per user
+   - POST /events/{eid}/sections/{sid}/seats   — Auth + X-Queue-Token + 
+                                                 X-Idempotency-Key, 10 req/min
+
+✅ Redis Bitmask Locking:
+   - Key: seats:{event_id}:{section_id}:v{layout_version}
+   - Native Redis Bitmap (GETBIT/SETBIT)
+   - 0-based offset (seat 1 → offset 0)
+   - Atomic via Lua script (all-or-nothing)
+
+✅ Lock Release:
+   - Granular per-bit (SETBIT 0, no overwrite)
+   - Triggered via delayed message (FASE 4 consumer)
+
+✅ Delayed Message:
+   - Queue: release_seat_check (via delayed_exchange)
+   - TTL: 180 seconds (dari system_config.seat_lock_ttl_seconds)
+   - Payload: { type: 'RELEASE_SEAT_CHECK', booking_id: uuid }
+
+✅ Bookings DB Record:
+   - INSERT INTO bookings (event_id, section_id, leader_user_id, 
+     seat_positions JSONB, total_seats, total_amount, payment_mode, 
+     payment_status, expires_at)
+   - payment_status = 'PENDING'
+   - expires_at = NOW() + 180s
+
+✅ Catalog Endpoints:
+   - GET /events — list dengan filter (status, search, category, sort_by, 
+     pagination)
+   - GET /events/{id} — detail dengan sections + availability
+
+✅ Seat Availability:
+   - Bitmap → array of {position, status: AVAILABLE|TAKEN|LOCKED}
+   - Optional bitmap_optimized (base64) untuk fast rendering
+
+✅ Max Group Seats:
+   - 10 kursi per group (dari system_config.max_group_seats)
+   - Validation: > 10 → 422 UNPROCESSABLE_ENTITY
+
+✅ Layout Version Immutability:
+   - sections.layout_version di-check
+   - Kalau layout berubah di tengah → reject (mismatch)
+
+2.2 SCOPE — OUT
+────────────────────────────────────────────────────────────────────────────────
+
+❌ Booking expiry worker (BookingExpiryWorker) → FASE 4
+❌ Payment flow → FASE 4
+❌ Split/Bulk mode selection → FASE 4
+❌ Queue token generation → FASE 2 (sudah)
+❌ Frontend implementation → FASE 9 (skeleton saja di FASE 3)
+❌ Real WebSocket seat updates → Polling + FASE 9 hardening
+❌ Wallet/ledger → NEVER (PRD Out of Scope)
+
+2.3 OBJECTIVES (MEASURABLE)
+────────────────────────────────────────────────────────────────────────────────
+
+1. Lock N seats atomic via Lua script (GETBIT/SETBIT 0-based)
+2. Partial conflict → rollback ALL (no partial lock)
+3. TTL 180s enforced via delayed message
+4. Max 10 seats per group (system_config.max_group_seats)
+5. Group Lock Success Rate = 100% (verified via concurrency test)
+6. Response time lock < 50ms (p95)
+7. 4 endpoints return expected status codes
+8. Queue Token single-use validated (SET NX)
+9. Layout version immutability enforced
+10. Unit test coverage ≥ 90% untuk booking module
+
+2.4 SUCCESS CRITERIA
+────────────────────────────────────────────────────────────────────────────────
+
+Mengacu pada PRD §Success Metrics + STP §8.1 DoD:
+
+- [x] 4 endpoints terimplementasi (2 public catalog + 2 seat)
+- [x] Redis Lua lock atomic, no race condition
+- [x] Partial conflict → 409 CONFLICT + rollback ALL
+- [x] TTL 180s dari system_config
+- [x] Max group seats = 10 enforced
+- [x] Delayed message published ke RabbitMQ
+- [x] Bookings DB record created
+- [x] Queue Token single-use validated
+- [x] Group Lock Success Rate = 100% (concurrency test 10 users → 1 winner)
+- [x] Response lock < 50ms p95
+- [x] Unit + Integration coverage ≥ 90%
+
+================================================================================
+SECTION 3 — FOUNDATION DISTILLATION
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+3.1 FROM PRD v6.0 §F002 — BITMASK ATOMIC LOCKING SPEC
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION:
+  Mengunci N-kursi berurutan secara atomik dalam denah panggung menggunakan 
+  operasi bitwise di memori. Denah kursi dipartisi per section untuk mengurangi 
+  konflik, dan mapping kursi dibuat immutable setelah layout diterbitkan.
+
+INPUTS:
+  - Event ID (UUID)
+  - Section ID (string)
+  - Seat IDs (Array of Integers / Bit Positions)
+  - User Queue Token (Valid JWT)
+
+PROCESS:
+  1. Engine memuat Bitmask Matrix dari cache berdasarkan Section ID 
+     (setiap section adalah key terpisah).
+  2. Sistem menjalankan operasi bitwise untuk memeriksa ketersediaan N kursi 
+     secara simultan dalam satu operasi atomic.
+  3. Jika seluruh kursi tersedia (bernilai 0), sistem mengubah status kursi 
+     menjadi terkunci (bernilai 1) dan menyimpan pemetaan ID Pengguna dengan 
+     TTL 180 detik.
+  4. Sistem mengirim event payload ke Message Broker untuk memicu proses 
+     Split-Pay (F003).
+
+OUTPUTS:
+  - Booking Reference ID
+  - Seat Allocation Map (JSON response)
+  - Expiry Timestamp (Epoch ISO8601)
+
+EDGE CASES:
+  - Partial Seat Lock Conflict (1 dari 4 kursi tiba-tiba diambil pengguna 
+    lain) → Sistem langsung membatalkan lock untuk seluruh N kursi 
+    (Rollback All) dan mengembalikan pesan "Seats No Longer Available".
+  - Cache Cluster Failure → Sistem masuk ke Degraded Mode.
+
+────────────────────────────────────────────────────────────────────────────────
+3.2 FROM DATABASE_SCHEMA v2.9 — EVENTS, SECTIONS, BOOKINGS
+────────────────────────────────────────────────────────────────────────────────
+
+ENUMs (relevan):
+
+  event_status_enum      : DRAFT | PUBLISHED | ON_SALE | SOLD_OUT | COMPLETED | CANCELLED
+  payment_mode_enum      : SPLIT | BULK
+  payment_status_enum    : PENDING | PAID | EXPIRED | FAILED | REFUNDED | CANCELLED
+
+EVENTS TABLE (kolom relevan):
+
+  - id UUID (PK)
+  - organizer_id UUID (FK users)
+  - name, description, venue_name, venue_address
+  - event_date DATE, event_start_time TIME, event_end_time TIME
+  - seat_layout_version INTEGER DEFAULT 1
+  - status event_status_enum DEFAULT 'DRAFT'
+  - banner_url TEXT
+  - created_at, updated_at, published_at
+
+  Indexes: idx_events_organizer, idx_events_status, idx_events_date
+
+SECTIONS TABLE (kolom relevan):
+
+  - id UUID (PK)
+  - event_id UUID (FK events)
+  - name VARCHAR(100)
+  - price NUMERIC(15,2)  → CONSTRAINT price > 0
+  - total_seats INTEGER  → CONSTRAINT total_seats > 0
+  - bitmask_key VARCHAR(255)
+  - layout_version INTEGER NOT NULL
+  - created_at, updated_at
+
+  UNIQUE(event_id, name, layout_version)
+  Indexes: idx_sections_event, idx_sections_bitmask_key
+
+BOOKINGS TABLE (kolom relevan):
+
+  - id UUID (PK)
+  - event_id UUID (FK events)
+  - section_id UUID (FK sections)
+  - leader_user_id UUID (FK users)
+  - seat_positions JSONB NOT NULL
+  - total_seats INTEGER NOT NULL      → CONSTRAINT > 0
+  - total_amount NUMERIC(15,2) NOT NULL → CONSTRAINT > 0
+  - payment_mode payment_mode_enum NOT NULL DEFAULT 'SPLIT'
+  - payment_status payment_status_enum NOT NULL DEFAULT 'PENDING'
+  - expires_at TIMESTAMPTZ NOT NULL
+  - created_at, updated_at
+
+  CATATAN: TIDAK ADA kolom layout_version di tabel bookings.
+
+  Indexes: idx_bookings_event, idx_bookings_section, idx_bookings_leader,
+           idx_bookings_payment_status, idx_bookings_expires_at (partial)
+
+RLS POLICIES (events, sections, bookings):
+
+  -- EVENTS
+  - "Anyone can view published events"    → SELECT if status IN (PUBLISHED, ON_SALE, SOLD_OUT, COMPLETED)
+  - "Organizers can manage own events"    → ALL if organizer_id = auth.uid()
+  - "Admins can manage all events"        → ALL if role = 'admin'
+
+  -- SECTIONS
+  - "Anyone can view sections of published events" → SELECT (via EXISTS events)
+  - "Organizers can manage sections"      → ALL (via EXISTS events + organizer match)
+  - "Admins can manage all sections"      → ALL if role = 'admin'
+
+  -- BOOKINGS
+  - "Users can view own bookings"         → SELECT if leader_user_id = auth.uid()
+  - "Users can insert bookings"           → INSERT WITH CHECK leader_user_id = auth.uid()
+  - "Users can update own bookings"       → UPDATE if leader_user_id = auth.uid()
+  - "Admins can view all bookings"        → SELECT if role IN ('admin', 'event_organizer')
+
+SYSTEM_CONFIG (relevant):
+
+  - seat_lock_ttl_seconds = 180
+  - max_group_seats       = 10
+
+────────────────────────────────────────────────────────────────────────────────
+3.3 FROM LOGIC_FLOW v1.4 §3 — FLOW SUMMARY (PSEUDOCODE ONLY)
+────────────────────────────────────────────────────────────────────────────────
+
+STATE DEFINITION (Seat & Booking):
+
+  | State              | Description                                          |
+  |--------------------|------------------------------------------------------|
+  | AVAILABLE          | Bit = 0, kursi kosong                                |
+  | LOCKED             | Bit = 1, kursi sedang di-lock (TTL 3 menit)          |
+  | PENDING_SPLIT_PAY  | Kursi terkunci, menunggu pembayaran grup             |
+  | CONFIRMED          | Sudah dibayar, tiket valid                           |
+  | RESALE_PENDING     | Sedang dalam proses resale                           |
+  | CANCELLED          | Dibatalkan                                           |
+  | USED               | Sudah di-scan di gate                                |
+
+CRITICAL — UNIFORM NATIVE REDIS BITMAP (FIXED v1.4):
+  - WAJIB menggunakan native Redis Bitmap (GETBIT/SETBIT)
+  - OFFSET: 0-based (posisi kursi 1 → offset 0)
+  - TIDAK PERNAH menggunakan manipulasi string ASCII pada key bitmap
+
+ATOMIC LOCK SCRIPT (lock_seats.lua) — Pseudocode:
+
+  Input:
+    KEYS[1] = "seats:{event_id}:{section_id}:v{layout_version}"
+    ARGV[1] = JSON array seat positions, e.g. [10,11,12,13]
+    ARGV[2] = booking_id
+    ARGV[3] = JSON booking data
+
+  Output:
+    JSON { status: SUCCESS|CONFLICT, position?, booking_id? }
+
+  Algorithm:
+    Step 1: For each seat position `pos`:
+              IF GETBIT(KEYS[1], pos - 1) == 1:
+                RETURN { status: 'CONFLICT', position: pos }
+    Step 2: For each seat position `pos`:
+              SETBIT(KEYS[1], pos - 1, 1)
+    Step 3: SET "booking:{ARGV[2]}" = ARGV[3] EX 180
+    Step 4: RETURN { status: 'SUCCESS', booking_id: ARGV[2] }
+
+  Atomicity guarantee: single Redis Lua execution (no interleaving).
+
+ATOMIC RELEASE SCRIPT (release_seats.lua) — Pseudocode:
+
+  Input:
+    KEYS[1] = "seats:{event_id}:{section_id}:v{layout_version}"
+    ARGV[1] = JSON array seat positions
+    ARGV[2] = booking_id
+
+  Output:
+    JSON { status: SUCCESS, released: <count> }
+
+  Algorithm:
+    released = 0
+    For each seat position `pos`:
+      IF GETBIT(KEYS[1], pos - 1) == 1:
+        SETBIT(KEYS[1], pos - 1, 0)   ← granular per-bit, no overwrite
+        released = released + 1
+    DEL "booking:{ARGV[2]}"
+    RETURN { status: 'SUCCESS', released: released }
+
+SEQUENCE FLOW (Booking Lock):
+
+  [USER REQUEST: BOOK SEATS]
+    │
+    ▼
+  Step 1: VALIDATE INPUT
+    - Validasi Queue Token (JWT signature & expiry)
+    - Single-use token check: SET "queue_token:used:{jti}" 1 NX EX 300
+        └─> Jika return nil → HTTP 409 CONFLICT (TOKEN_ALREADY_USED)
+    - Validasi Event ON_SALE
+    - Validasi Section ID + layout_version
+    - Validasi seat positions 1..total_seats
+    - Validasi len(seat_positions) <= max_group_seats (10)
+    │
+    ▼
+  Step 2: EXECUTE LUA SCRIPT (atomic)
+    - If status == CONFLICT → 409 (rollback ALL, no partial lock)
+    - If status == SUCCESS → proceed
+    │
+    ▼
+  Step 3: CREATE BOOKING RECORD (Postgres INSERT)
+    - INSERT bookings dengan payment_status = 'PENDING'
+    - expires_at = NOW() + 180s
+    - If DB fails → release Redis bits (rollback)
+    │
+    ▼
+  Step 4: SEND DELAYED MESSAGE (F003)
+    - Publish { type: 'RELEASE_SEAT_CHECK', booking_id } ke delayed_exchange
+    - x-delay = 180s
+    - Idempotent Lazy-Check pattern (tidak pernah dibatalkan)
+    │
+    ▼
+  [RETURN RESPONSE]
+    - Booking ID, Seat Allocation Map, Expiry Timestamp
+
+EDGE CASES:
+
+  | Edge Case                                    | Handling                        |
+  |----------------------------------------------|---------------------------------|
+  | Partial conflict (1 dari 4 kursi diambil)    | Lua rollback all, no partial    |
+  | Redis Cluster Failure                        | Circuit Breaker → Degraded Mode |
+  | Immutability Violation (layout berubah)      | Reject via layout_version check |
+  | TTL 180 detik habis (belum bayar)            | Delayed msg worker (FASE 4)     |
+  | Queue Token Replay Attack                    | Single-use via Redis SET NX     |
+
+────────────────────────────────────────────────────────────────────────────────
+3.4 FROM LOGIC_FLOW v1.4 §9.2, §9.3 — QUEUE TOKEN + BIT RELEASE
+────────────────────────────────────────────────────────────────────────────────
+
+SINGLE-USE QUEUE TOKEN GUARD:
+
+  [SAAT TOKEN DIBUAT di F001.3 Step 8]
+    ├─> Generate JWT dengan payload:
+    │    { user_id, tier, final_score, jti, exp: NOW() + 5 minutes }
+    └─> jti = UUID v4
+
+  [SAAT TOKEN DIVALIDASI di F002.3 Step 1]
+    ├─> Validasi signature & expiry (standar JWT)
+    ├─> Cek single-use di Redis:
+    │    SET "queue_token:used:{jti}" 1 NX EX 300
+    │    └─> Return "OK"    → token belum dipakai, lanjutkan
+    │    └─> Return nil     → token sudah dipakai, HTTP 409 CONFLICT
+    └─> TTL 300 detik (sama dengan expiry JWT)
+
+GRANULAR BIT RELEASE:
+
+  [SAAT RELEASE SEATS (Rollback / Expired / Admin Cancel)]
+    └─> FOR EACH seat_position IN seats_to_release:
+          SETBIT(key, seat_position - 1, 0)   ← 0 = AVAILABLE
+
+  [SAAT CHECK SEATS AVAILABILITY]
+    └─> GETBIT(key, seat_position - 1)
+
+  [SAAT LOCK SEATS]
+    └─> SETBIT(key, seat_position - 1, 1)
+
+  NOTE: Release per-bit via SETBIT. TIDAK PERNAH overwrite seluruh bitmap.
+  Race condition-safe karena per-bit granular dan Redis single-threaded.
+
+────────────────────────────────────────────────────────────────────────────────
+3.5 FROM TDD v1.10 §6.2 — IMPLEMENTATION FLOW SUMMARY (PSEUDOCODE ONLY)
+────────────────────────────────────────────────────────────────────────────────
+
+LOCK SEATS SERVICE — Flow:
+
+  Function LockSeats(ctx, req):
+    Step 1: Validate Queue Token (single-use, SET NX EX 300)
+              - if fail → return ErrTokenAlreadyUsed
+
+    Step 2: Get section.layout_version from DB
+              - if fail → return err
+
+    Step 3: Compute Redis key
+              key = "seats:{event_id}:{section_id}:v{layout_version}"
+              args = [seat_positions_json, booking_id, booking_data_json]
+
+    Step 4: Execute Lua script via Circuit Breaker wrapper
+              - if Circuit OPEN → fallbackLockSeats (DB Queue, return QUEUED)
+              - if CONFLICT → return ErrSeatsNotAvailable (409)
+              - if SUCCESS → continue
+
+    Step 5: Build booking record (ID, EventID, SectionID, LeaderUserID,
+              SeatPositions, TotalSeats, TotalAmount, PaymentMode,
+              PaymentStatus='PENDING', ExpiresAt=NOW()+180s)
+              CATATAN: layout_version BUKAN field booking (runtime var only,
+              tidak ada kolom di bookings table per DATABASE_SCHEMA v2.9).
+
+    Step 6: INSERT booking ke DB
+              - if DB fail → release Redis bits (compensation)
+              - if DB success → continue
+
+    Step 7: Publish delayed message ke RabbitMQ
+              queue = "release_seat_check"
+              delay = 180 seconds
+              payload = { type: 'RELEASE_SEAT_CHECK', booking_id }
+
+    Step 8: Return LockResponse { BookingID, ExpiresAt }
+
+  Return: LockResponse atau error
+
+RELEASE SEATS SERVICE — Flow:
+
+  Function releaseSeats(ctx, eventID, sectionID, bookingID, seats, layoutVersion):
+    key = "seats:{event_id}:{section_id}:v{layout_version}"
+    args = [seats_json, booking_id]
+    Execute release Lua script
+    Return error jika gagal
+
+FALLBACK (Circuit Breaker OPEN) — Flow:
+
+  Function fallbackLockSeats(ctx, req):
+    - Insert request ke DB Queue (bookings_queue atau FIFO pattern)
+    - Return LockResponse {
+        BookingID: req.BookingID,
+        Status: "QUEUED",
+        Message: "System is busy, your booking is queued",
+        EstimatedWait: 30
+      }
+
+────────────────────────────────────────────────────────────────────────────────
+3.6 FROM API_CONTRACT v1.2 §8.1-8.3, §9.1 — ENDPOINTS SPEC
+────────────────────────────────────────────────────────────────────────────────
+
+ENDPOINT 1 — GET /events (Public Catalog)
+
+  URL:      GET /events?status=ON_SALE&search={q}&category={c}&sort_by={s}&page=1&limit=20
+  Auth:     Optional (anyone can browse)
+  Rate:     100 req/min per IP
+
+  Query Parameters:
+    - status: filter (DRAFT|PUBLISHED|ON_SALE|SOLD_OUT|COMPLETED|CANCELLED)
+    - search: string
+    - category: string
+    - sort_by: event_date_asc|event_date_desc|popularity
+    - page: integer (default 1)
+    - limit: integer (default 20, max 50)
+
+  Success (200):
+    {
+      "success": true,
+      "data": {
+        "events": [
+          {
+            "event_id": "uuid-event-456",
+            "name": "DEWA 19 FEAT. MAHADEWI",
+            "description": "Konser spesial...",
+            "venue_name": "GBK Stadium",
+            "venue_address": "Jakarta",
+            "event_date": "2026-12-20",
+            "event_start_time": "19:00",
+            "status": "ON_SALE",
+            "banner_url": "...",
+            "min_price": "500000",
+            "max_price": "2000000",
+            "tickets_available": 477,
+            "total_tickets": 5000,
+            "sections": [
+              { "section_id": "...", "name": "VIP", "price": "2000000" }
+            ]
+          }
+        ]
+      },
+      "meta": { "total": 15, "current_page": 1, "total_pages": 1, "limit": 20 }
+    }
+
+  Errors:
+    - 400 INVALID_REQUEST: Invalid filter
+    - 500 INTERNAL_ERROR
+
+ENDPOINT 2 — GET /events/{event_id} (Detail)
+
+  URL:      GET /events/{event_id}
+  Auth:     Optional
+  Rate:     100 req/min per IP
+
+  Success (200):
+    {
+      "success": true,
+      "data": {
+        "event_id": "...",
+        "name": "...",
+        "description": "...",
+        "venue_name": "...",
+        "venue_address": "...",
+        "event_date": "2026-12-20",
+        "event_start_time": "19:00",
+        "event_end_time": "23:00",
+        "status": "ON_SALE",
+        "banner_url": "...",
+        "organizer": { "organizer_id": "...", "name": "Promotor XYZ" },
+        "sections": [
+          {
+            "section_id": "...",
+            "name": "VIP",
+            "price": "2000000",
+            "total_seats": 500,
+            "available_seats": 47
+          }
+        ],
+        "seat_layout_version": 1,
+        "created_at": "..."
+      }
+    }
+
+  Errors:
+    - 404 NOT_FOUND
+    - 500 INTERNAL_ERROR
+
+ENDPOINT 3 — GET /events/{eid}/sections/{sid}/seats (Availability)
+
+  URL:      GET /events/{event_id}/sections/{section_id}/seats
+  Screen:   HALAMAN 4.1 (Seat Map — initial render)
+  Auth:     Required (JWT)
+  Rate:     100 req/min per user
+
+  Success (200):
+    {
+      "success": true,
+      "data": {
+        "event_id": "...",
+        "section_id": "...",
+        "section_name": "VIP",
+        "layout_version": 1,
+        "total_seats": 500,
+        "available_seats": 47,
+        "seats": [
+          { "position": 1, "status": "AVAILABLE" },
+          { "position": 2, "status": "TAKEN" },
+          { "position": 3, "status": "AVAILABLE" },
+          { "position": 4, "status": "LOCKED" },
+          { "position": 5, "status": "AVAILABLE" }
+        ],
+        "bitmap_optimized": "base64-encoded-bitmap-data",
+        "last_updated_at": "..."
+      }
+    }
+
+  Status values: AVAILABLE (0), TAKEN (1), LOCKED (1 — by other users, TTL 3 min)
+
+  Errors:
+    - 401 UNAUTHORIZED
+    - 404 NOT_FOUND
+    - 503 SERVICE_UNAVAILABLE (Redis circuit breaker open)
+
+ENDPOINT 4 — POST /events/{eid}/sections/{sid}/seats (Lock Seats)
+
+  URL:      POST /events/{event_id}/sections/{section_id}/seats
+  Screen:   HALAMAN 4.1 (Seat Map)
+  Auth:     Required (JWT, customer)
+  Rate:     10 req/min per user
+  Headers:
+    - Authorization: Bearer <access_token>
+    - X-Idempotency-Key: <uuid>
+    - X-Queue-Token: <jwt-queue-token>  ← dari FASE 2
+
+  Request:
+    {
+      "seat_positions": [10, 11, 12, 13],
+      "payment_mode": "SPLIT"
+    }
+
+  Success (201 Created):
+    {
+      "success": true,
+      "data": {
+        "booking_id": "...",
+        "event_id": "...",
+        "section_id": "...",
+        "seat_positions": [10, 11, 12, 13],
+        "total_seats": 4,
+        "total_amount": "4000000",
+        "payment_mode": "SPLIT",
+        "payment_status": "PENDING",
+        "expires_at": "2026-09-11T10:33:00Z"
+      }
+    }
+
+  Errors:
+    - 401 QUEUE_TOKEN_REQUIRED: X-Queue-Token header missing
+    - 409 CONFLICT: Seats no longer available
+    - 409 TOKEN_ALREADY_USED: Queue token already used (replay attack)
+    - 422 UNPROCESSABLE_ENTITY: Max group seats exceeded
+    - 503 SERVICE_UNAVAILABLE: Redis circuit breaker open
+
+────────────────────────────────────────────────────────────────────────────────
+3.7 FROM SECURITY_SPEC v1.4 §8.2 — QUEUE TOKEN VALIDATION
+────────────────────────────────────────────────────────────────────────────────
+
+QUEUE TOKEN LIFECYCLE:
+
+  1. Issued: POST /queue/verify-captcha OR GET /queue/status (FASE 2)
+  2. Payload:
+     {
+       "user_id": "uuid",
+       "tier": "TIER_2",
+       "final_score": 85,
+       "jti": "uuid-jti-123",
+       "exp": 1723641300,  // 5 minutes
+       "iss": "e-tix-flash-queue"
+     }
+  3. Single-Use Guard:
+     - On use: SET queue_token:used:{jti} 1 NX EX 300
+     - If return nil (already exists) → HTTP 409 TOKEN_ALREADY_USED
+  4. Required in: POST /events/{eid}/sections/{sid}/seats
+     Header: X-Queue-Token: <jwt-queue-token>
+
+────────────────────────────────────────────────────────────────────────────────
+3.8 FROM HALAMAN v1.1 §4.1, §4.2 — WIREFRAMES
+────────────────────────────────────────────────────────────────────────────────
+
+SCREEN 4.1 — SEAT MAP (Atomic Group Locking):
+
+  ┌──────────────────────────────┐
+  │ ← BACK        SELECT SEATS   │
+  ├──────────────────────────────┤
+  │ 🎸 DEWA 19 FEAT. MAHADEWI   │
+  │ Section: CAT 1 (VIP)         │
+  │ Price: Rp 1,000,000/ticket   │
+  │                              │
+  │  ─── Seat Map ───            │
+  │  ┌──────────────────────────┐│
+  │  │    STAGE                 ││
+  │  │  ████████████████████   ││
+  │  │  ██ AVAILABLE           ││
+  │  │  ██ TAKEN               ││
+  │  │  ██ SELECTED (YOURS)    ││
+  │  │  ██ LOCKED (Others)     ││
+  │  │                          ││
+  │  │   A1 A2 A3 A4 A5 A6     ││
+  │  │   A7 A8 A9 A10 A11 A12  ││
+  │  │   B1 B2 B3 B4 B5 B6     ││
+  │  │   B7 B8 B9 B10 B11 B12  ││
+  │  │   C1 C2 C3 C4 C5 C6     ││
+  │  └──────────────────────────┘│
+  │  Selected: 4 seats           │
+  │  ┌──────────────────────────┐│
+  │  │ A4, A5, A6, A7          ││
+  │  └──────────────────────────┘│
+  │  ⏰ Lock expires in: 02:45   │
+  │  ┌──────────────────────────┐│
+  │  │   CONTINUE TO PAYMENT   ││
+  │  └──────────────────────────┘│
+  └──────────────────────────────┘
+
+  Data Binding:
+    - GET /sections/{section_id}/seats → availability (bitmap)
+    - POST /bookings → lock seats via Lua script
+
+SCREEN 4.2 — SEAT COLLISION TOAST/ALERT:
+
+  ┌──────────────────────────────┐
+  │ ← BACK        SELECT SEATS   │
+  ├──────────────────────────────┤
+  │ ⚠️ SEAT CONFLICT!            │
+  │  ┌──────────────────────────┐│
+  │  │ ❌ Seat A5 was just      ││
+  │  │    taken by another user.││
+  │  │                          ││
+  │  │ We released all your     ││
+  │  │ selected seats.          ││
+  │  │                          ││
+  │  │ Please select again.     ││
+  │  └──────────────────────────┘│
+  │  ┌──────────────────────────┐│
+  │  │   SELECT AGAIN           ││
+  │  └──────────────────────────┘│
+  └──────────────────────────────┘
+
+  Trigger: POST /bookings return status = 'CONFLICT'
+  Data Binding: Auto-refresh GET /seats → updated availability
+
+────────────────────────────────────────────────────────────────────────────────
+3.9 FROM STP v1.1 §3.2 — TEST CASES
+────────────────────────────────────────────────────────────────────────────────
+
+UNIT TEST CASES (FASE 3 scope):
+
+| Test ID       | Description                                                |
+|---------------|------------------------------------------------------------|
+| UT-BOOK-001   | LockSeats_AllAvailable_ReturnsSuccess                      |
+| UT-BOOK-002   | LockSeats_Conflict_ReturnsConflictPosition                 |
+| UT-BOOK-003   | LockSeats_LuaScript_0BasedOffset (GETBIT/SETBIT)           |
+| UT-BOOK-004   | ReleaseSeats_GranularPerBit_NoOverwrite                    |
+| UT-BOOK-005   | LockSeats_11Seats_Returns422MaxGroupSeats                  |
+| UT-BOOK-006   | ValidateQueueToken_SingleUse_SecondUseReturns409           |
+| UT-BOOK-007   | ValidateLayoutVersion_Mismatch_ReturnsConflict             |
+
+INTEGRATION TEST CASES (FASE 3 scope):
+
+| Test ID       | Description                                                |
+|---------------|------------------------------------------------------------|
+| IT-BOOK-001   | POST lock → Lua lock → DB INSERT → RabbitMQ delayed msg    |
+| IT-BOOK-002   | Concurrency: 10 concurrent users lock 1 seat → 1 winner    |
+| IT-BOOK-003   | Partial conflict: 4 seats, 1 taken → rollback all          |
+| IT-BOOK-004   | Redis down → Circuit Breaker OPEN → DB Queue fallback      |
+| IT-BOOK-005   | GET /events → filter + pagination                          |
+| IT-BOOK-006   | GET /events/{id}/sections/{sid}/seats → correct bitmap     |
+
+API TEST CASES (Postman — FASE 3 scope):
+  - 4 endpoints × (happy + error) = ~16 test cases
+
+================================================================================
+SECTION 4 — TASK BREAKDOWN
+================================================================================
+
+9 EPICS, 27 TASKS. Estimasi total ~34.5 jam (~1.5 minggu).
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E1: MODULE SKELETON
+────────────────────────────────────────────────────────────────────────────────
+
+E1-S1-T1 [30 min] — Create internal/booking/ folder + internal/event/
+   Deliverable: 
+     - internal/booking/{handler,service,repository,model,lua_scripts}.go
+     - internal/event/{handler,service,repository,model}.go
+   DoD: empty files dengan package declaration
+
+E1-S1-T2 [1 jam] — Define model.go (Event, Section, Booking structs + 
+                     request/response types)
+   Deliverable:
+     - Event, Section, Booking
+     - LockSeatsRequest, LockSeatsResponse
+     - SeatAvailabilityResponse
+   DoD: structs sesuai API_CONTRACT v1.2
+   NOTE: Booking struct TIDAK punya field layout_version (runtime var only, 
+         tidak ada di DATABASE_SCHEMA v2.9)
+
+E1-S1-T3 [30 min] — Repository skeleton
+   Deliverable:
+     - EventRepository (List, GetByID)
+     - SectionRepository (GetByID, GetLayoutVersion)
+     - BookingRepository (Create, GetByID)
+   DoD: method signatures clean
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E2: CATALOG ENDPOINTS (GET /events, GET /events/{id})
+────────────────────────────────────────────────────────────────────────────────
+
+E2-S1-T4 [2 jam] — Handler: GET /events
+   Deliverable: EventHandler.List
+   Sub-tasks:
+     a. Parse query params (status, search, category, sort_by, page, limit)
+     b. Validate params (limit max 50)
+     c. Query DB dengan filters
+     d. Aggregate sections per event
+     e. Pagination response
+   DoD: 
+     - 200 response dengan pagination
+     - 400 untuk invalid params
+
+E2-S1-T5 [1.5 jam] — Handler: GET /events/{id}
+   Deliverable: EventHandler.GetByID
+   Sub-tasks:
+     a. Path param validation (UUID)
+     b. Query event + sections + availability count
+     c. Include organizer info (JOIN users)
+   DoD: 200 response atau 404
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E3: SEAT AVAILABILITY (GET /seats)
+────────────────────────────────────────────────────────────────────────────────
+
+E3-S1-T6 [2 jam] — Handler: GET /events/{eid}/sections/{sid}/seats
+   Deliverable: BookingHandler.GetSeatAvailability
+   Sub-tasks:
+     a. Auth middleware (JWT required)
+     b. Validate event + section exist
+     c. Get layout_version dari sections
+     d. Read Redis bitmap via GETBIT loop (or MGET optimization)
+     e. Build seats array (position + status)
+     f. Compute available_seats count
+   DoD: 200 response dengan complete seat list
+
+E3-S1-T7 [1 jam] — Bitmap → JSON seats serializer
+   Deliverable: SerializeBitmap(key, totalSeats)
+   Sub-tasks:
+     a. For each position 1..total_seats: GETBIT → 0/1
+     b. Map status: 0 = AVAILABLE, 1 = TAKEN/LOCKED
+     c. Optimize via pipeline / MGET
+   DoD: unit test 500 seats → serialization < 100ms
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E4: REDIS LUA SCRIPTS
+────────────────────────────────────────────────────────────────────────────────
+
+E4-S1-T8 [1 jam] — Load & cache Lua scripts
+   Deliverable: internal/booking/lua_scripts.go
+   Sub-tasks:
+     a. Embed lock_seats.lua + release_seats.lua (go:embed)
+     b. SCRIPT LOAD ke Redis saat startup
+     c. Cache SHA1 untuk EVALSHA (perf optimization)
+   DoD: script loaded, EVALSHA works
+
+E4-S1-T9 [1 jam] — Lock script wrapper (Go)
+   Deliverable: BookingService.lockSeatsAtomic(key, seats, bookingID, data)
+   Sub-tasks:
+     a. Eval lockScript
+     b. Parse response JSON
+     c. Return LockResponse
+   DoD: unit test with miniredis
+
+E4-S1-T10 [1 jam] — Release script wrapper (Go)
+   Deliverable: BookingService.releaseSeatsAtomic(key, seats, bookingID)
+   DoD: unit test verify SETBIT per-bit (not overwrite)
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E5: LOCK SEATS (POST /seats) — MAIN F002
+────────────────────────────────────────────────────────────────────────────────
+
+E5-S1-T11 [2 jam] — Handler: POST /events/{eid}/sections/{sid}/seats
+   Deliverable: BookingHandler.LockSeats
+   Sub-tasks:
+     a. Auth middleware
+     b. X-Queue-Token header check (missing → 401 QUEUE_TOKEN_REQUIRED)
+     c. X-Idempotency-Key check (Redis L1)
+     d. Bind JSON + validate (seat_positions 1..10, payment_mode)
+   DoD: 
+     - Handler wired to service
+     - 400 untuk payload invalid
+
+E5-S1-T12 [2 jam] — Service: full lock flow
+   Deliverable: BookingService.LockSeats
+   Sub-tasks:
+     a. Validate Queue Token (single-use via SET NX EX 300)
+     b. Get section layout_version (runtime var — BUKAN field booking)
+     c. Compute total_amount = section.price * len(seats)
+     d. Execute lock Lua script (with Circuit Breaker)
+     e. On CONFLICT → return 409
+     f. On SUCCESS → INSERT bookings DB
+     g. Publish delayed message (see E6)
+   DoD: 
+     - Full flow works
+     - Zero partial lock (atomic)
+
+E5-S1-T13 [1 jam] — Section layout version check
+   Deliverable: Validate layout version dari sections table vs request
+   Sub-tasks:
+     a. Query sections.layout_version
+     b. Redis key uses v{layout_version}
+     c. Mismatch → 409 CONFLICT
+   DoD: unit test verify mismatch handling
+
+E5-S1-T14 [1 jam] — Max group seats validation
+   Deliverable: Validate len(seat_positions) <= system_config.max_group_seats
+   Sub-tasks:
+     a. Read from system_config (cached in memory, refresh 5m)
+     b. If > 10 → 422 UNPROCESSABLE_ENTITY
+   DoD: unit test 10 → OK, 11 → 422
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E6: DELAYED MESSAGE (release_seat_check)
+────────────────────────────────────────────────────────────────────────────────
+
+E6-S1-T15 [1 jam] — Publish helper untuk delayed message
+   Deliverable: internal/queue/publisher.go — PublishDelayed(queue, payload, delay)
+   Sub-tasks:
+     a. Use delayed_exchange (x-delayed-message)
+     b. Set x-delay header = 180000 ms
+     c. Payload: { type: 'RELEASE_SEAT_CHECK', booking_id: uuid }
+   DoD: message published via RabbitMQ
+
+E6-S1-T16 [30 min] — Wire ke LockSeats service
+   Deliverable: Call PublishDelayed setelah DB INSERT
+   DoD: verified via RabbitMQ management console
+   NOTE (FLAG #1): Message akan menumpuk di queue sampai FASE 4 deploy 
+   BookingExpiryWorker. RabbitMQ durable — safe. Monitor queue depth.
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E7: BOOKING DB RECORD
+────────────────────────────────────────────────────────────────────────────────
+
+E7-S1-T17 [1 jam] — Repository: CreateBooking
+   Deliverable: BookingRepository.Create
+   Sub-tasks:
+     a. INSERT dengan semua field
+     b. Handle unique constraint (jika ada)
+     c. Return created booking
+   DoD: 
+     - unit test INSERT success
+     - DB record lengkap
+   NOTE: INSERT columns HARUS match DATABASE_SCHEMA v2.9 (tanpa layout_version)
+
+E7-S1-T18 [30 min] — Total amount computation
+   Deliverable: Compute total_amount = section.price * len(seat_positions)
+   DoD: unit test verify decimal precision (2 decimals)
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E8: RATE LIMITING & MIDDLEWARE
+────────────────────────────────────────────────────────────────────────────────
+
+E8-S1-T19 [30 min] — Rate limit GET /events (100 req/min per IP)
+E8-S1-T20 [30 min] — Rate limit GET /events/{id} (100 req/min per IP)
+E8-S1-T21 [30 min] — Rate limit GET /seats (100 req/min per user)
+E8-S1-T22 [30 min] — Rate limit POST /seats (10 req/min per user)
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E9: TESTS
+────────────────────────────────────────────────────────────────────────────────
+
+E9-S1-T23 [3 jam] — Unit tests (7 tests)
+   Deliverable: tests/unit/booking/*.go
+   Sub-tasks: UT-BOOK-001..007
+   DoD: coverage ≥ 90%
+
+E9-S1-T24 [4 jam] — Integration tests (6 tests)
+   Deliverable: tests/integration/booking_flow_test.go (testcontainers)
+   Sub-tasks: IT-BOOK-001..006
+   DoD:
+     - Concurrency test: 10 users lock 1 seat → 1 winner
+     - Partial conflict → rollback verified
+     - Circuit Breaker fallback verified
+
+E9-S2-T25 [2 jam] — API tests (Postman)
+   Deliverable: postman_collection.json (4 endpoints × happy + error)
+   DoD: Newman pass ~16 cases
+
+E9-S2-T26 [2 jam] — Concurrency stress test
+   Deliverable: tests/load/seat_lock_concurrency.go
+   Sub-tasks:
+     a. 100 concurrent users lock same seat
+     b. Verify: 1 winner, 99 get 409
+     c. Zero double-booking
+   DoD: Group Lock Success Rate = 100%
+
+E9-S2-T27 [1 jam] — Redis failure chaos test
+   Deliverable: tests/chaos/redis_down_test.go
+   Sub-tasks:
+     a. Simulate Redis down
+     b. Verify Circuit Breaker OPEN
+     c. Verify DB Queue fallback
+   DoD: no cascade failure, graceful degradation
+
+────────────────────────────────────────────────────────────────────────────────
+TASK SUMMARY
+────────────────────────────────────────────────────────────────────────────────
+
+| Epic | Tasks | Est. Duration |
+|------|-------|---------------|
+| E1   | 3     | ~2 jam        |
+| E2   | 2     | ~3.5 jam      |
+| E3   | 2     | ~3 jam        |
+| E4   | 3     | ~3 jam        |
+| E5   | 4     | ~6 jam        |
+| E6   | 2     | ~1.5 jam      |
+| E7   | 2     | ~1.5 jam      |
+| E8   | 4     | ~2 jam        |
+| E9   | 5     | ~12 jam       |
+|------|-------|---------------|
+| Total| 27    | ~34.5 jam (~1.5 minggu) |
+
+================================================================================
+SECTION 5 — DELIVERABLES
+================================================================================
+
+5.1 CODE ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+Backend — Event Module:
+  ✅ internal/event/handler.go       (2 endpoints)
+  ✅ internal/event/service.go
+  ✅ internal/event/repository.go
+  ✅ internal/event/model.go
+
+Backend — Booking Module:
+  ✅ internal/booking/handler.go       (2 endpoints: GET + POST seats)
+  ✅ internal/booking/service.go       (LockSeats, ReleaseSeats)
+  ✅ internal/booking/repository.go
+  ✅ internal/booking/model.go         (Booking struct TANPA layout_version)
+  ✅ internal/booking/lua_scripts.go   (embed + cache SHA1)
+
+Redis Lua Scripts:
+  ✅ internal/booking/scripts/lock_seats.lua       (embedded)
+  ✅ internal/booking/scripts/release_seats.lua    (embedded)
+
+Message Queue:
+  ✅ internal/queue/publisher.go — PublishDelayed helper
+
+Router:
+  ✅ cmd/api/main.go — 4 endpoints:
+     - Public: /events, /events/{id}
+     - Protected: /events/{eid}/sections/{sid}/seats (GET + POST)
+
+5.2 DOCUMENTATION
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ docs/BITMASK_LOCKING.md — Lua scripts + flow explanation
+  ✅ docs/CATALOG_API.md — 2 public endpoints
+  ✅ docs/SEAT_LOCK_API.md — GET + POST seats
+
+5.3 TEST ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ tests/unit/booking/*.go                 (UT-BOOK-001..007)
+  ✅ tests/integration/booking_flow_test.go  (IT-BOOK-001..006)
+  ✅ tests/load/seat_lock_concurrency.go
+  ✅ tests/chaos/redis_down_test.go
+  ✅ postman_collection.json (updated)
+
+5.4 FRONTEND ARTIFACTS (Skeleton Only — full impl di FASE 9)
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ app/customer/seat-map/[eventId]/page.tsx — placeholder
+  ✅ components/customer/SeatMap.tsx — skeleton
+  ✅ components/customer/SeatCollisionAlert.tsx — skeleton
+  ✅ lib/api/booking.ts — API client functions
+
+================================================================================
+SECTION 6 — ACCEPTANCE CRITERIA
+================================================================================
+
+6.1 FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] GET /events → 200 dengan filter + pagination
+  [ ] GET /events/{id} → 200 detail + sections availability
+  [ ] GET /events/{id} → 404 jika tidak ada
+  [ ] GET /seats → 200 dengan bitmap availability
+  [ ] GET /seats → 401 jika no auth
+  [ ] POST /seats → 201 lock success (all seats available)
+  [ ] POST /seats → 409 CONFLICT jika ada yang diambil user lain
+  [ ] POST /seats → 409 TOKEN_ALREADY_USED jika queue token replayed
+  [ ] POST /seats → 401 QUEUE_TOKEN_REQUIRED jika header missing
+  [ ] POST /seats → 422 jika seat_positions > 10
+  [ ] POST /seats → 503 jika Redis circuit breaker OPEN
+  [ ] Redis bitmap lock atomic (no race condition)
+  [ ] Partial conflict → rollback ALL (no partial lock)
+  [ ] TTL 180s dari system_config.seat_lock_ttl_seconds
+  [ ] Bookings DB record created (tanpa layout_version column)
+  [ ] Delayed message published ke RabbitMQ (release_seat_check)
+  [ ] Layout version immutability enforced
+
+6.2 NON-FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] CI pipeline green
+  [ ] Unit test coverage ≥ 90%
+  [ ] API tests pass: 16/16
+  [ ] Integration tests pass: 6/6
+  [ ] Concurrency test: 100 users → 1 winner (Group Lock Success Rate = 100%)
+  [ ] Lock response time < 50ms (p95)
+  [ ] Chaos test: Redis down → Circuit Breaker fallback, no cascade
+  [ ] Zero tokens di logs
+  [ ] 4 endpoints 1:1 dengan API_CONTRACT v1.2
+
+6.3 TEST COVERAGE TARGET
+────────────────────────────────────────────────────────────────────────────────
+
+  Unit tests:          ≥ 90% untuk booking + event modules
+  Integration tests:   4 endpoints + concurrency + chaos
+  API tests:           4 endpoints × (happy + errors)
+  Load tests:          Concurrency + chaos
+
+================================================================================
+SECTION 7 — RISKS & MITIGATIONS
+================================================================================
+
+| Risk                                          | Likelihood | Impact | Mitigation                                          |
+|-----------------------------------------------|------------|--------|-----------------------------------------------------|
+| Lua script version mismatch (reload)          | Low        | Med    | SCRIPT LOAD on startup + EVALSHA fallback to EVAL   |
+| Redis cluster failover mid-lock               | Low        | High   | Circuit Breaker + DB Queue fallback                 |
+| Layout version mismatch (racing admin)        | Medium     | Med    | Explicit version check + reject mismatch            |
+| Bitmap key bloating (section with 10k seats)  | Low        | Med    | Monitor key size; bitmap efficient (~1.25KB/10k)    |
+| Delayed message TTL accuracy                  | Low        | Med    | RabbitMQ x-delayed-message; monitor accuracy        |
+| Queue token replay (race)                     | Medium     | High   | SET NX atomic (Redis single-threaded)               |
+| Concurrency race in DB INSERT                 | Low        | Med    | Lua script locks first, then INSERT (safe)          |
+| Bookings table overflow (expired not cleaned) | Medium     | Low    | FASE 4 BookingExpiryWorker will clean PENDING rows  |
+| Cascade failure (Redis down → API down)       | Medium     | High   | Circuit Breaker + DB Queue + banner user            |
+| Idempotency key collision (malicious)         | Low        | Med    | UUID-based keys + Redis TTL 24h                     |
+
+RESPONSE PER SCENARIO (cross-reference DRP v1.2):
+
+- Redis down → Playbook #2 (DRP §5.3): Circuit Breaker OPEN, Degraded Mode
+- DB down → Playbook #1 (DRP §5.2)
+- RabbitMQ down → Playbook #3 (DRP §5.4)
+
+================================================================================
+SECTION 8 — SECURITY CONSIDERATIONS
+================================================================================
+
+8.1 THREATS RELEVANT TO FASE 3
+────────────────────────────────────────────────────────────────────────────────
+
+| Threat                    | Mitigation di FASE 3                                |
+|---------------------------|-----------------------------------------------------|
+| Race Condition            | Redis Lua atomic (single-threaded)                  |
+| Double-Booking            | Atomic GETBIT/SETBIT check+lock                     |
+| Queue Token Replay        | Redis SET NX EX 300 (single-use)                    |
+| Unauthorized Lock         | Auth middleware + JWT sub check (leader_user_id)    |
+| IDOR (Lock other's booking)| RLS enforce leader_user_id = auth.uid()             |
+| Layout Version Tampering  | Server-side version check, not trust client         |
+| Max Group Seats Bypass    | Validate len(seat_positions) <= 10                  |
+| Malicious Large Request   | BodySizeLimit 1MB (middleware from FASE 0)          |
+| Idempotency Replay        | X-Idempotency-Key (Redis L1 24h)                    |
+| Catalog Enumeration       | Rate limit 100 req/min per IP                       |
+
+8.2 HEADERS
+────────────────────────────────────────────────────────────────────────────────
+
+  | Endpoint                    | Headers Required                                        |
+  |-----------------------------|---------------------------------------------------------|
+  | GET /events                 | (none — public)                                         |
+  | GET /events/{id}            | (none — public)                                         |
+  | GET /seats                  | Authorization: Bearer <token>                           |
+  | POST /seats                 | Authorization + X-Idempotency-Key + X-Queue-Token       |
+
+8.3 QUEUE TOKEN VALIDATION (CRITICAL)
+────────────────────────────────────────────────────────────────────────────────
+
+  POST /seats WAJIB validate X-Queue-Token:
+    1. Verify signature (RS256 public key dari FASE 1)
+    2. Check exp (5 min window dari FASE 2)
+    3. Check token_type == "queue"
+    4. Single-use: Redis SET queue_token:used:{jti} 1 NX EX 300
+       - Return "OK" → first use → proceed
+       - Return nil → already used → 409 TOKEN_ALREADY_USED
+
+  NOTE: Single-use guard ini SUDAH DISETUP di FASE 2. Validasi aktual di sini.
+
+8.4 GRANULAR BIT RELEASE (NO OVERWRITE)
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ Release per-bit via SETBIT key {pos-1} 0
+  ❌ DILARANG DEL key (menghapus seluruh bitmap)
+  ❌ DILARANG SET key <new_bitmap_string> (overwrite)
+  Alasan: Bitmap shared antar booking dalam section yang sama.
+
+8.5 HEADER SANITIZATION
+────────────────────────────────────────────────────────────────────────────────
+
+  - X-Queue-Token di-redact → [REDACTED] di logs
+  - Authorization di-redact → [REDACTED]
+  - Verify via grep: log tidak mengandung "eyJ"
+
+8.6 RATE LIMITING
+────────────────────────────────────────────────────────────────────────────────
+
+  | Endpoint         | Limit          | Scope   |
+  |------------------|----------------|---------|
+  | GET /events      | 100 req/min    | IP      |
+  | GET /events/{id} | 100 req/min    | IP      |
+  | GET /seats       | 100 req/min    | User    |
+  | POST /seats      | 10 req/min     | User    |
+
+8.7 IDEMPOTENCY (POST /seats)
+────────────────────────────────────────────────────────────────────────────────
+
+  POST /seats WAJIB X-Idempotency-Key:
+    - Storage: Redis L1 (key: idempotency:booking:lock:{key})
+    - TTL: 24 jam
+    - Value: cached response (booking_id + status)
+    - Same key + same payload → identical response
+    - Same key + different payload → 409 IDEMPOTENCY_CONFLICT
+
+================================================================================
+SECTION 9 — DEFINITION OF DONE (DoD)
+================================================================================
+
+9.1 CHECKLIST KELULUSAN FASE
+────────────────────────────────────────────────────────────────────────────────
+
+Code:
+  [ ] internal/event/ folder lengkap (4 files)
+  [ ] internal/booking/ folder lengkap (5 files)
+  [ ] Booking struct TANPA layout_version field (runtime var only)
+  [ ] 2 Lua scripts embedded + loaded (SHA1 cached)
+  [ ] Router wiring: 2 public + 2 protected routes
+  [ ] Lock flow: token validate → Lua lock → DB INSERT → delayed msg
+  [ ] Release granular (SETBIT per-bit, no overwrite)
+  [ ] Layout version check enforced
+  [ ] Max group seats = 10 enforced
+  [ ] Circuit Breaker fallback (DB Queue)
+  [ ] Delayed message published
+
+Tests:
+  [ ] Unit test coverage ≥ 90%
+  [ ] Integration tests pass (6/6)
+  [ ] API tests pass (16/16)
+  [ ] Concurrency test: Group Lock Success Rate = 100%
+  [ ] Chaos test: Redis down → Circuit Breaker fallback
+  [ ] CI pipeline green
+
+Security:
+  [ ] Zero tokens in logs
+  [ ] Queue token single-use verified via test
+  [ ] RLS enforced (booking leader check)
+  [ ] Idempotency key validated
+  [ ] 4 endpoints 1:1 API_CONTRACT v1.2
+
+Documentation:
+  [ ] docs/BITMASK_LOCKING.md
+  [ ] docs/CATALOG_API.md
+  [ ] docs/SEAT_LOCK_API.md
+  [ ] postman_collection.json updated
+
+9.2 ROLLBACK POINT
+────────────────────────────────────────────────────────────────────────────────
+
+Kalau FASE 3 gagal:
+  - Semua work di branch `feature/fase-3-bitmask-lock`
+  - `develop` tetap stable (FASE 2 state)
+  - Rollback = hapus branch
+  - Redis bitmap keys (seats:*) bisa di-FLUSH jika perlu
+
+Setelah FASE 3 selesai:
+  - Merge → `develop` → `main`
+  - Tag: `v0.3.0-bitmask-lock`
+  - FASE 4 bisa dimulai (butuh bookings + delayed message)
+
+9.3 SIGN-OFF
+────────────────────────────────────────────────────────────────────────────────
+
+  QA/Verifier:       M. Arif Aulia
+  Date Completed:    [___]
+  Ready for FASE 4:  [ ] YES  [ ] NO
+
+================================================================================
+SECTION 10 — NOTES & REFERENCES
+================================================================================
+
+10.1 NOTES (2 FLAGS APPROVED BY GEMINI)
+────────────────────────────────────────────────────────────────────────────────
+
+FLAG #1 — Producer/Consumer Split (APPROVED Opsi A):
+  FASE 3 kirim delayed message `release_seat_check` (TTL 180s) ke RabbitMQ 
+  via `delayed_exchange`. FASE 4 (BookingExpiryWorker) akan consume message.
+  Message AKAN MENUMPUK di queue selama window FASE 3 → FASE 4 (perkiraan 
+  1-1.5 minggu). Ini PERILAKU WAJAR — RabbitMQ durable, message tidak hilang.
+  Monitor queue depth via CloudAMQP dashboard. JANGAN tambah consumer di FASE 3.
+
+FLAG #2 — Catalog Endpoints Scope (APPROVED Opsi A):
+  4 endpoints (2 catalog + 2 seat) SEMUA di FASE 3 per BLUEPRINT ROADMAP §6.
+  Catalog adalah prerequisite untuk seat map rendering (user harus lihat 
+  event + sections sebelum pilih kursi). Tidak ada phase split.
+
+10.2 NOTES UMUM
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 3 adalah fitur bisnis PERTAMA yang menyentuh uang (booking = intent 
+  to pay). Kualitas concurrency HARUS sempurna.
+
+- Redis bitmap adalah SOURCE OF TRUTH untuk lock state. DB bookings hanya 
+  untuk audit + audit trail. Kalau Redis di-restore, rebuild dari tickets 
+  (lihat DRP v1.2 §5.2 Step 7).
+
+- Layout version immutability: setiap section punya layout_version. Kalau 
+  admin ubah layout, version ++ dan key baru dibuat. Key lama akan 
+  auto-cleanup (no TTL needed — Redis key tetap ada tapi tidak di-akses).
+
+- PENTING: Booking struct TIDAK punya field layout_version (per DATABASE_SCHEMA 
+  v2.9 — bookings table TIDAK ada kolom layout_version). Layout version 
+  disimpan sebagai RUNTIME VARIABLE di service, dipakai untuk membentuk 
+  Redis key. Jangan masukkan ke struct atau INSERT statement.
+
+- Postgres transactions: booking INSERT harus commit SETELAH Redis lock 
+  sukses. Kalau DB fail, release Redis bit (rollback). Pattern ini ada di 
+  TDD v1.10 §6.2.
+
+- Delayed message TIDAK PERNAH dibatalkan (Idempotent Lazy-Check pattern). 
+  FASE 4 worker akan cek booking status di T+3min: kalau sudah PAID → no-op; 
+  kalau masih PENDING → rollback.
+
+- Concurrency test WAJIB: 10-100 users lock seat yang sama. Hasil harus 
+  1 winner, sisanya 409. Ini bukti atomic lock works.
+
+- Chaos test WAJIB: Redis down → Circuit Breaker OPEN → DB Queue fallback. 
+  User dapat response "QUEUED" dengan estimasi wait 30s.
+
+- Frontend screens (4.1, 4.2) di FASE 3 hanya SKELETON. Implementasi penuh 
+  di FASE 9.
+
+- Rate limit per user: identify via JWT sub. Kalau user tidak authenticated 
+  (public endpoints), fallback IP.
+
+- Idempotency key WAJIB: kalau user retry POST /seats dengan key sama 
+  dalam 24 jam, return cached response (tidak double-lock).
+
+- NO CODE INJECTION (per AI ROADMAP GUARDRAIL §2.2): Section 3.3 & 3.5 
+  hanya berisi pseudocode + flow summary (bukan Lua script utuh atau Go 
+  handler utuh). Detail implementasi ada di TDD v1.10 §6.2. Eksekutor 
+  implementasi mengikuti panduan pseudocode + cross-reference TDD.
+
+10.3 CROSS-REFERENCE FOUNDATION
+────────────────────────────────────────────────────────────────────────────────
+
+| Foundation Doc         | Section Relevan                                |
+|------------------------|------------------------------------------------|
+| PRD v6.0               | §F002 (bitmask locking, immutability)          |
+| DATABASE_SCHEMA v2.9   | events, sections, bookings + ENUMs + RLS       |
+| LOGIC_FLOW v1.4        | §3 (full flow), §9.2 (queue token), §9.3 (bit) |
+| HALAMAN v1.1           | §4.1 Seat Map, §4.2 Collision Alert            |
+| TDD v1.10              | §6.2 (F002 implementation — pseudocode)        |
+| API_CONTRACT v1.2      | §8.1-8.3, §9.1 (4 endpoints)                   |
+| SECURITY_SPEC v1.4     | §8.2 (queue token), §7.2 (payload limits)      |
+| DRP v1.2               | §5.3 Playbook #2 (Redis failure)               |
+| STP v1.1               | UT-BOOK-001..007, IT-BOOK-001..006             |
+
+10.4 CROSS-REFERENCE ROADMAP FASE LAIN
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 0: Redis + RabbitMQ + DB setup
+- FASE 1: Auth middleware
+- FASE 2: Queue Token (F001) — prerequisite untuk POST /seats
+- FASE 4: BookingExpiryWorker akan consume delayed message dari FASE 3
+- FASE 9: Frontend screens 4.1, 4.2 (full impl), WebSocket seat update
+
+10.5 VERSION HISTORY
+────────────────────────────────────────────────────────────────────────────────
+
+| Version  | Date       | Author       | Changes                                          |
+|----------|------------|--------------|--------------------------------------------------|
+| 1.0-FINAL| 2026-09-11 | M. Arif Aulia| Initial ROADMAP FASE 3. Bitmask Multi-Seat       |
+|          |            |              | Atomic Locking (F002). 2 flags pre-approved      |
+|          |            |              | by Gemini (Opsi A).                              |
+| 1.1-FINAL| 2026-09-11 | M. Arif Aulia| **Post-Gemini review #1:** 1) Fix #1: Removed    |
+|          |            |              | `LayoutVersion` field dari Booking struct —      |
+|          |            |              | tidak ada kolom di DATABASE_SCHEMA v2.9. Layout  |
+|          |            |              | version = runtime variable only. 2) Fix #2:      |
+|          |            |              | Sinkronisasi metrik task (Section 1: 50→34.5     |
+|          |            |              | jam; Section 4: 30→27 tasks, 50→34.5 jam).       |
+|          |            |              | 3) Fix #3: Section 3.3 & 3.5 di-ringkas jadi     |
+|          |            |              | pseudocode + flow summary (per AI ROADMAP        |
+|          |            |              | GUARDRAIL §2.2 — No Code Injection).             |
+|          |            |              | 4) FLAG: Gemini inconsistency — FASE 1 & 2 juga  |
+|          |            |              | ada code snippet tapi tidak di-flag (sudah       |
+|          |            |              | LOCKED, tidak revisit).                          |
+
+================================================================================
+📋 FASE 3 SYNC CHECKLIST (100% COMPLIANCE)
+================================================================================
+
+✅ BLUEPRINT ROADMAP v1.0-FINAL Sync:
+  - FASE 3 = F002 Bitmask Lock ✓
+  - Estimasi 1.5 minggu ✓
+  - Template 10 section diikuti ✓
+  - Dependencies: FASE 0, 1, 2 ✓
+
+✅ PRD v6.0 Sync:
+  - F002 full spec ✓
+  - Immutability (layout_version) ✓
+  - Max 10 seats (system_config) ✓
+
+✅ DATABASE_SCHEMA v2.9 Sync:
+  - events, sections, bookings tables + ENUMs + RLS ✓
+  - NO layout_version column di bookings ✓ (fix #1)
+  - No new tables/columns ✓
+  - SYSTEM_USER_UUID referenced (fallback pattern) ✓
+
+✅ LOGIC_FLOW v1.4 Sync:
+  - §3 F002 flow (Lua scripts, GETBIT/SETBIT 0-based) ✓
+  - §9.2 Queue token single-use (SET NX EX 300) ✓
+  - §9.3 Granular bit release (SETBIT per-bit) ✓
+
+✅ HALAMAN v1.1 Sync:
+  - §4.1 Seat Map ✓
+  - §4.2 Collision Alert ✓
+
+✅ TDD v1.10 Sync:
+  - §6.2 implementation referenced (pseudocode summary) ✓
+  - Circuit Breaker fallback (DB Queue) ✓
+  - SCRIPT LOAD for perf ✓
+
+✅ API_CONTRACT v1.2 Sync:
+  - 4 endpoints 1:1 (§8.1, §8.2, §8.3, §9.1) ✓
+  - Error codes (400/401/403/404/409/422/503) ✓
+  - Headers (X-Idempotency-Key, X-Queue-Token) ✓
+  - No ghost endpoints ✓
+
+✅ SECURITY_SPEC v1.4 Sync:
+  - §8.2 queue token single-use ✓
+  - §7.2 payload limits (1MB, 10 seats) ✓
+  - Header sanitization ✓
+  - Rate limiting per endpoint ✓
+
+✅ DRP v1.2 Sync:
+  - Playbook #2 (Redis failure) ✓
+  - Playbook #3 (RabbitMQ) — message numpuk noted ✓
+
+✅ STP v1.1 Sync:
+  - UT-BOOK-001..007 ✓
+  - IT-BOOK-001..006 ✓
+  - Concurrency test (>100 users) ✓
+  - Chaos test (Redis down) ✓
+  - Coverage ≥ 90% ✓
+
+✅ AI ROADMAP GUARDRAIL §2.2 Sync:
+  - No full code injection di Section 3.3 & 3.5 ✓ (fix #3)
+  - Pseudocode + flow summary only ✓
+
+✅ Anti-Drift Guardrails G1-G8:
+  - G1 Traceability ✓
+  - G2 Scope Freeze ✓
+  - G3 No Wallet/Ledger ✓
+  - G4 ENUM Consistency ✓
+  - G5 Error Code Consistency ✓
+  - G6 Header Consistency ✓
+  - G7 Self-Contained ✓
+  - G8 Acceptance Criteria ✓
+
+✅ POST-GEMINI v1.1 FIXES:
+  - Fix #1: Booking struct no layout_version field ✓
+  - Fix #2: Task count 27, durasi 34.5 jam (consistent) ✓
+  - Fix #3: Section 3.3 & 3.5 di-ringkas (no full code) ✓
+  - FLAG: Gemini inconsistency (FASE 1 & 2 code snippet) noted ✓
+
+================================================================================
+END OF ROADMAP FASE (3) v1.1-FINAL
+================================================================================
+
+✅ 100% READY TO EXECUTE
+✅ Self-contained (tidak perlu baca foundation docs)
+✅ 27 tasks across 9 epics, est. ~34.5 jam (~1.5 minggu)
+✅ 17 functional AC + 9 non-functional AC
+✅ 10 risks identified with mitigations
+✅ Rollback point defined
+✅ Zero drift (no wallet/ledger, no ghost endpoints, no ghost columns)
+✅ 4 endpoints 1:1 dengan API_CONTRACT v1.2 §8.1-8.3, §9.1
+✅ 2 flags pre-approved oleh Gemini (Opsi A)
+✅ Post-Gemini fixes #1 applied (with 1 FLAG against Gemini)
+✅ No full code injection (per AI ROADMAP GUARDRAIL §2.2)
+
+Last Updated: 2026-09-11 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED.

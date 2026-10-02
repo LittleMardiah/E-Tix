@@ -1,0 +1,1461 @@
+================================================================================
+ROADMAP FASE (7): CONTROLLED SECONDARY RESALE MARKET (F005) — E-Tix Flash
+================================================================================
+
+Version:         1.0-FINAL
+Last Updated:    2026-09-11
+Author:          M. Arif Aulia
+Status:          ⏳ NOT STARTED (Ready to Execute)
+Blueprint Ref:   BLUEPRINT ROADMAP v1.0-FINAL, FASE 7
+Depends On:      FASE 0 (Foundation) — LOCKED
+                 FASE 1 (Auth & User) — LOCKED
+                 FASE 4 (F003 Split-Pay — payment flow) — LOCKED
+                 FASE 5 (F004 Tickets + QR) — LOCKED
+
+================================================================================
+📌 BISMILLAH — ROADMAP FASE 7 FINAL VERSION
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. FASE IDENTITY
+2. SCOPE & OBJECTIVES
+3. FOUNDATION DISTILLATION
+4. TASK BREAKDOWN
+5. DELIVERABLES
+6. ACCEPTANCE CRITERIA
+7. RISKS & MITIGATIONS
+8. SECURITY CONSIDERATIONS
+9. DEFINITION OF DONE (DoD)
+10. NOTES & REFERENCES
+
+================================================================================
+SECTION 1 — FASE IDENTITY
+================================================================================
+
+Fase ID:           FASE 7
+Nama Fase:         Controlled Secondary Resale Market (F005)
+Fitur Utama:       F005 — Controlled Resale Market (Price Cap +10%, Platform Fee 2.5%)
+Estimasi Durasi:   Week 7 (1 minggu, ~35 jam kerja)
+Dependencies:      FASE 0 (Redis, RabbitMQ, DB)
+                   FASE 1 (auth middleware)
+                   FASE 4 (Payment Gateway Adapter — reuse untuk payout)
+                   FASE 5 (tickets + QR — untuk ownership transfer)
+Status:            ⏳ Not Started
+
+Ringkasan:
+  Implementasi pasar sekunder terkendali: pemegang tiket bisa jual kembali 
+  dengan price cap max +10% dari harga asli. Transaksi via Payment Gateway 
+  sebagai mediator (tanpa internal wallet/ledger).
+
+  DELIVERABLE UTAMA:
+    - POST /resale                        — List ticket for resale
+    - GET  /resale?event_id&status=PENDING — Browse marketplace
+    - POST /resale/{resale_id}/buy        — Buy resale ticket (IDOR patched)
+    - DELETE /resale/listings/{resale_id} — Cancel listing
+    - ResaleExpiryWorker                  — Timeout reservation (3 min)
+    - Trigger handle_resale_lifecycle (reference)
+
+  ⚠️ 3 FLAGS APPROVED (Zero-Drift):
+    - FLAG #1 (CRITICAL): "RESERVED" = synthetic state (status='PENDING' + 
+      buyer_user_id IS NOT NULL + reservation_expires_at > NOW())
+    - FLAG #2: Platform fee = env var (0.025); Price cap = system_config (10%)
+    - FLAG #3: PENDING_PAYOUT triggered on payout fail after retry 3x
+
+================================================================================
+SECTION 2 — SCOPE & OBJECTIVES
+================================================================================
+
+2.1 SCOPE — IN
+────────────────────────────────────────────────────────────────────────────────
+
+✅ Endpoints (4 total — API_CONTRACT v1.2 §12.1-12.4):
+   - POST /resale                          — Auth + X-Idempotency-Key, 10 req/min
+   - GET  /resale?event_id&status=PENDING  — Optional auth (public browse), 100 req/min
+   - POST /resale/{resale_id}/buy          — Auth + X-Idempotency-Key, 10 req/min
+   - DELETE /resale/listings/{resale_id}   — Auth (seller only) + X-Idempotency-Key
+
+✅ Resale Listing (POST /resale):
+   - Validate: ticket belongs to seller (owner_user_id == JWT sub)
+   - Validate: ticket.status = 'CONFIRMED'
+   - Validate: no active listing (partial unique index idx_resale_single_active)
+   - Validate: resale_price <= original_price * (1 + cap/100)
+   - Compute: platform_fee = resale_price * RESALE_PLATFORM_FEE_RATE
+   - Compute: seller_payout = resale_price - platform_fee (decimal precision)
+   - INSERT resale_transactions (status = 'PENDING')
+   - Trigger handle_resale_lifecycle (INSERT) → tickets.status = 'RESALE_PENDING'
+
+✅ Browse Marketplace (GET /resale):
+   - Public (optional auth), RLS allow pending listings
+   - Filter: event_id, status=PENDING
+   - Filter semantics: WHERE status='PENDING' AND buyer_user_id IS NULL
+     (exclude reserved rows — FLAG #1)
+   - Seller name + seat + resale_price + platform_fee + seller_payout
+
+✅ Buy Ticket (POST /resale/{id}/buy) — IDOR PATCHED:
+   - Request body: EMPTY (buyer_user_id from JWT sub — SECURITY_SPEC §2.2)
+   - Atomic via FOR UPDATE:
+     1. SELECT resale_transactions FOR UPDATE
+     2. Check status='PENDING' AND buyer_user_id IS NULL
+     3. UPDATE: buyer_user_id = JWT sub, reservation_expires_at = NOW() + 3 min
+        (status tetap 'PENDING' — FLAG #1)
+     4. COMMIT
+   - Return: { resale_id, status: "RESERVED" (synthetic), 
+               reservation_expires_at, payment_link }
+   - Publish delayed message (resale_expiry_check, TTL 3 min)
+
+✅ Payment + Payout Flow:
+   - Buyer payment SUCCESS (webhook) → try payout via Payment Gateway
+   - Payout SUCCESS → UPDATE status = 'COMPLETED' → trigger (old ticket RESOLD, 
+     new ticket CONFIRMED untuk buyer)
+   - Payout FAIL (after retry 3x) → UPDATE status = 'PENDING_PAYOUT' (FLAG #3)
+   - Admin manual reconciliation (FASE 8) untuk PENDING_PAYOUT
+
+✅ Cancel Listing (DELETE /resale/listings/{id}):
+   - Only seller (seller_user_id == JWT sub)
+   - Only status='PENDING' AND buyer_user_id IS NULL (belum di-reserve)
+   - UPDATE status = 'CANCELLED', cancelled_at = NOW()
+   - Trigger handle_resale_lifecycle (CANCELLED) → tickets.status = 'CONFIRMED'
+
+✅ Reservation Timeout (ResaleExpiryWorker):
+   - Delayed message resale_expiry_check (TTL 3 min)
+   - Lazy-check: query reserved rows WHERE status='PENDING' 
+     AND buyer_user_id IS NOT NULL AND reservation_expires_at < NOW()
+   - Atomic reset: buyer_user_id = NULL, reservation_expires_at = NULL
+   - Log ke admin_actions (action_type = 'FORCE_RELEASE_SEAT', reason = 
+     'RESALE_RESERVATION_EXPIRED')
+
+✅ Database Trigger handle_resale_lifecycle:
+   - INSERT (status PENDING) → tickets.status = 'RESALE_PENDING'
+   - UPDATE to COMPLETED → old ticket RESOLD + new ticket untuk buyer 
+     (CONFIRMED, is_assigned=TRUE, original_owner_user_id=seller)
+   - UPDATE to CANCELLED → tickets.status = 'CONFIRMED' (revert)
+
+✅ Partial UNIQUE Index (schema constraint):
+   - idx_resale_single_active ON resale_transactions(ticket_id) 
+     WHERE status = 'PENDING'
+   - Prevents 2 active listings per ticket
+
+2.2 SCOPE — OUT
+────────────────────────────────────────────────────────────────────────────────
+
+❌ Wallet / ledger (NEVER — PRD Out of Scope)
+❌ Internal escrow (semua via Payment Gateway)
+❌ Admin manual reconciliation endpoint → FASE 8
+❌ Buyer-seller chat / messaging → out of scope
+❌ Auction / bidding → only fixed price
+❌ QR regeneration for new buyer → auto via FASE 5 worker (new ticket_id)
+❌ Multi-currency → IDR only
+❌ Frontend implementation → FASE 9 (skeleton saja)
+
+2.3 OBJECTIVES (MEASURABLE)
+────────────────────────────────────────────────────────────────────────────────
+
+1. 4 endpoints return expected status codes
+2. Price cap +10% enforced (422 if exceed)
+3. Platform fee 2.5% (from env var) + payout decimal precision
+4. Reservation TTL 3 min (delayed message + worker)
+5. FOR UPDATE prevents double-claim
+6. Buyer ID from JWT (IDOR patched)
+7. Cannot buy own listing (422)
+8. Payout retry 3x → PENDING_PAYOUT on fail
+9. Trigger lifecycle: PENDING → RESALE_PENDING; COMPLETED → RESOLD + new ticket
+10. Unit + Integration coverage ≥ 90%
+
+2.4 SUCCESS CRITERIA
+────────────────────────────────────────────────────────────────────────────────
+
+- [x] 4 endpoints terimplementasi
+- [x] Price cap +10% enforced
+- [x] Platform fee (env var) + price cap (system_config) split
+- [x] Reservation via synthetic state (FLAG #1)
+- [x] IDOR patch verified (body empty, buyer from JWT)
+- [x] FOR UPDATE prevents race
+- [x] Payout retry 3x + fallback PENDING_PAYOUT (FLAG #3)
+- [x] Trigger lifecycle works (INSERT + UPDATE)
+- [x] Partial unique index enforced
+- [x] ResaleExpiryWorker TTL 3min reset
+- [x] No wallet/ledger drift
+
+================================================================================
+SECTION 3 — FOUNDATION DISTILLATION
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+3.1 FROM PRD v6.0 §F005 — CONTROLLED RESALE SPEC
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION:
+  Memungkinkan pemegang tiket menjual kembali di platform resmi dengan 
+  price-cap, menggunakan Payment Gateway sebagai mediator (tanpa wallet/ledger 
+  internal).
+
+INPUTS: Ticket ID, Seller User ID, Resale Price (max +10% face value), 
+        Buyer User ID
+
+PROCESS:
+  1. Validasi tiket aktif dan belum dipindahtangankan
+  2. Kunci tiket sementara (status RESALE_PENDING) cegah double-selling
+  3. Payment via Payment Gateway (VA/E-Wallet/Kartu)
+  4. Payout ke Seller via Payout API
+  5. Transfer Ownership: QR lama invalidate, generate QR baru untuk buyer
+  6. Pencatatan riwayat transaksi untuk audit
+
+ATURAN KEPEMILIKAN:
+  - Hanya pemilik tiket yang bisa jual
+  - Untuk Bulk Mode yang sudah di-assign → anggota adalah pemilik sah
+  - Untuk Bulk Mode yang belum di-assign → hanya Leader
+
+OUTPUTS: New Ticket Ownership, Resale Receipt, Updated QR Code
+
+EDGE CASES:
+  - Seller cancel sebelum buyer bayar → lepas lock, status ACTIVE
+  - Buyer gagal bayar → lepas lock (no refund — belum ada dana)
+  - Price melebihi cap → 422
+  - Payout API gagal → retry exponential backoff (3x), jika gagal → 
+    status PENDING_PAYOUT + admin manual reconciliation (FASE 8)
+
+────────────────────────────────────────────────────────────────────────────────
+3.2 FROM DATABASE_SCHEMA v2.9 — RESALE_TRANSACTIONS + TICKETS
+────────────────────────────────────────────────────────────────────────────────
+
+ENUMs (relevan):
+
+  resale_status_enum   : PENDING | COMPLETED | CANCELLED | PENDING_PAYOUT
+                         (⚠️ NO 'RESERVED' — FLAG #1)
+
+  ticket_status_enum   : AVAILABLE | LOCKED | PENDING_SPLIT_PAY | CONFIRMED |
+                         RESALE_PENDING | RESOLD | CANCELLED | USED
+
+RESALE_TRANSACTIONS TABLE (full kolom):
+
+  - id UUID (PK)
+  - ticket_id UUID (FK tickets)
+  - event_id UUID (FK events)
+  - seller_user_id UUID (FK users)
+  - buyer_user_id UUID (FK users, NULLABLE — NULL = belum di-klaim)
+  - original_price NUMERIC(15,2) NOT NULL
+  - resale_price NUMERIC(15,2) NOT NULL      → CONSTRAINT resale_price > 0
+  - platform_fee NUMERIC(15,2) DEFAULT 0
+  - seller_payout NUMERIC(15,2) NOT NULL
+  - status resale_status_enum DEFAULT 'PENDING'
+  - payment_transaction_id VARCHAR(255) (nullable)
+  - payout_transaction_id VARCHAR(255) (nullable)
+  - created_at TIMESTAMPTZ DEFAULT NOW()
+  - completed_at TIMESTAMPTZ (nullable)
+  - cancelled_at TIMESTAMPTZ (nullable)
+
+  ⚠️ NOTE: TIDAK ADA kolom `reservation_expires_at` di schema!
+  FLAG #1 RESOLUTION: Karena RESERVED tidak ada di enum + tidak ada kolom 
+  reservation_expires_at, kita pakai APPROACH:
+    - Status tetap 'PENDING' saat reserved
+    - Reserved distinguished via: buyer_user_id IS NOT NULL
+    - TTL track via delayed message RabbitMQ (bukan DB column)
+    - ResaleExpiryWorker cek: WHERE status='PENDING' AND buyer_user_id 
+      IS NOT NULL AND created_at < NOW() - INTERVAL '3 minutes'
+
+  Constraints:
+    - resale_price <= original_price * 1.10 (price cap)
+    - seller_user_id != buyer_user_id (when buyer exists)
+    - CHECK resale_price > 0
+
+  Indexes:
+    - idx_resale_ticket, idx_resale_seller, idx_resale_buyer, 
+      idx_resale_status, idx_resale_event, idx_resale_event_status
+    - PARTIAL UNIQUE: idx_resale_single_active ON ticket_id 
+      WHERE status = 'PENDING'
+
+TICKETS TABLE (relevant untuk trigger):
+
+  - id, booking_id, payment_obligation_id, owner_user_id
+  - section_id, seat_position, status (ticket_status_enum)
+  - is_assigned, qr_secret_key, fallback_pin
+  - original_owner_user_id (nullable), resale_transaction_id (nullable)
+  - created_at, updated_at
+
+  Partial UNIQUE: (booking_id, seat_position) WHERE status NOT IN 
+                  ('RESOLD', 'CANCELLED')
+
+TRIGGER handle_resale_lifecycle (AFTER INSERT OR UPDATE ON resale_transactions):
+
+  THREE CASES:
+  [CASE 1: INSERT]
+    - UPDATE tickets SET status = 'RESALE_PENDING', updated_at = NOW()
+      WHERE id = NEW.ticket_id
+
+  [CASE 2: UPDATE to COMPLETED]
+    - Get old_ticket_record FROM tickets WHERE id = NEW.ticket_id
+    - Step 1: UPDATE old ticket:
+        status = 'RESOLD',
+        original_owner_user_id = OLD.seller_user_id,
+        resale_transaction_id = NEW.id,
+        updated_at = NOW()
+    - Step 2: INSERT new ticket for buyer:
+        booking_id = old_ticket_record.booking_id,
+        payment_obligation_id = old_ticket_record.payment_obligation_id,
+        owner_user_id = NEW.buyer_user_id,
+        section_id = old_ticket_record.section_id,
+        seat_position = old_ticket_record.seat_position,
+        status = 'CONFIRMED',
+        is_assigned = TRUE,
+        qr_secret_key = gen_random_uuid(),
+        fallback_pin = UPPER(SUBSTRING(REPLACE(gen_random_uuid(), '-', ''), 1, 12)),
+        original_owner_user_id = OLD.seller_user_id,
+        resale_transaction_id = NEW.id
+
+  [CASE 3: UPDATE to CANCELLED]
+    - UPDATE tickets SET 
+        status = 'CONFIRMED',
+        resale_transaction_id = NULL,
+        updated_at = NOW()
+      WHERE id = NEW.ticket_id
+
+RLS POLICIES (resale_transactions):
+
+  - "Users can view own resale transactions" → 
+    SELECT if seller_user_id = auth.uid() OR buyer_user_id = auth.uid()
+  - "Anyone can view pending resale tickets" → 
+    SELECT if status = 'PENDING'
+  - "Buyer can complete resale purchase" → 
+    UPDATE if (seller_user_id = auth.uid() AND status = 'PENDING') OR
+              ((buyer_user_id IS NULL OR buyer_user_id = auth.uid()) 
+               AND status = 'PENDING')
+    WITH CHECK status IN ('PENDING', 'COMPLETED', 'CANCELLED')
+  - "Users can insert resale" → 
+    INSERT WITH CHECK seller_user_id = auth.uid() AND 
+    EXISTS (SELECT 1 FROM tickets WHERE id = ticket_id 
+            AND owner_user_id = auth.uid() AND status = 'CONFIRMED')
+  - "Admins can view all resale" → 
+    SELECT if role IN ('admin', 'event_organizer')
+
+────────────────────────────────────────────────────────────────────────────────
+3.3 FROM LOGIC_FLOW v1.4 §7 — FLOW SUMMARY (PSEUDOCODE ONLY)
+────────────────────────────────────────────────────────────────────────────────
+
+⚠️ FLAG #1: RESERVED state = synthetic (status='PENDING' + buyer_user_id 
+   IS NOT NULL). TIDAK ADA di DB enum.
+
+STATE DEFINITION:
+  | State           | Description                                         |
+  |-----------------|-----------------------------------------------------|
+  | PENDING         | Tiket terdaftar, menunggu pembeli (buyer_user_id NULL) |
+  | RESERVED(*)     | Buyer sudah klaim, menunggu pembayaran (3 min TTL)  |
+  |                 | (*) = synthetic: status='PENDING' + buyer NOT NULL  |
+  | COMPLETED       | Transaksi selesai, ownership transferred            |
+  | CANCELLED       | Seller batal                                        |
+  | PENDING_PAYOUT  | Buyer sudah bayar, payout gagal (retry exhausted)   |
+
+LIST TICKET FOR RESALE — Flow:
+
+  Function ListTicket(ctx, req):
+    Step 1: SELECT ticket BY id AND owner_user_id = JWT sub
+              - If not found or not owner → 403
+    Step 2: Verify ticket.status = 'CONFIRMED'
+              - If not → 422 UNPROCESSABLE_ENTITY
+    Step 3: Check no active listing:
+              - SELECT 1 FROM resale_transactions WHERE ticket_id = ticket.id 
+                AND status = 'PENDING'
+              - If found → 409 RESALE_LISTING_EXISTS
+    Step 4: Get original_price from ticket's section:
+              - SELECT price FROM sections WHERE id = ticket.section_id
+    Step 5: Compute price cap:
+              - cap_percent = SELECT value FROM system_config 
+                              WHERE key = 'resale_price_cap_percent' (10)
+              - cap_amount = original_price * (1 + cap_percent / 100)
+    Step 6: Validate req.resale_price <= cap_amount
+              - If exceed → 422 PRICE_EXCEEDS_CAP
+    Step 7: Compute platform_fee + seller_payout:
+              - fee_rate = env RESALE_PLATFORM_FEE_RATE (0.025)
+              - platform_fee = resale_price * fee_rate
+              - seller_payout = resale_price - platform_fee
+              - Use decimal.Decimal (shopspring/decimal) — 2 decimal precision
+    Step 8: INSERT resale_transactions:
+              - ticket_id, event_id, seller_user_id, buyer_user_id=NULL,
+                original_price, resale_price, platform_fee, seller_payout,
+                status='PENDING', created_at=NOW()
+    Step 9: Trigger handle_resale_lifecycle (INSERT) → tickets.status = 
+            'RESALE_PENDING'
+    Step 10: Return { resale_id, original_price, resale_price, platform_fee, 
+                       seller_payout, status='PENDING' }
+
+BUY RESALE TICKET (with FOR UPDATE) — Flow:
+
+  Function BuyResaleTicket(ctx, resaleID):
+    Step 1: buyer_user_id = JWT sub (from claims — IDOR patch)
+              - Body is EMPTY (no buyer_user_id in request)
+    Step 2: BEGIN transaction
+    Step 3: SELECT resale FROM resale_transactions 
+            WHERE id = resaleID FOR UPDATE
+              - If not found → 404
+    Step 4: Validate:
+              - resale.seller_user_id != buyer_user_id (cannot buy own)
+              - resale.status = 'PENDING'
+              - resale.buyer_user_id IS NULL 
+                (exclude reserved state — FLAG #1)
+    Step 5: UPDATE resale_transactions SET:
+              buyer_user_id = buyer_user_id,
+              status = 'PENDING' (tetap — tidak ada RESERVED enum),
+              updated_at = NOW()
+            WHERE id = resaleID
+    Step 6: COMMIT
+    Step 7: Publish delayed message:
+              queue = "resale_expiry_check"
+              delay = 180 seconds
+              payload = { resale_id: resaleID }
+    Step 8: Return:
+              {
+                resale_id, 
+                status: "RESERVED" (SYNTHETIC — FLAG #1 mapping), 
+                reservation_expires_at: NOW() + 3 min (computed, not stored),
+                payment_link: <generated via Payment Gateway>
+              }
+
+PAYMENT WEBHOOK + PAYOUT — Flow:
+
+  Function HandleResalePaymentWebhook(webhook):
+    Step 1: Validate webhook signature (reuse PaymentGateway adapter FASE 4)
+    Step 2: Lookup resale_transaction BY payment_transaction_id
+    Step 3: If webhook status = SUCCESS:
+      a. Attempt payout to seller (retry 3x with exponential backoff):
+           - Call PaymentGateway.Payout(seller_payout, seller_id)
+           - If success → UPDATE status = 'COMPLETED', 
+                          completed_at=NOW(), payout_transaction_id=xxx
+           - If retry exhausted (3x fail) → UPDATE status = 'PENDING_PAYOUT'
+                                              + INSERT admin_actions 
+                                                (MANUAL_REFUND, 
+                                                reason='PAYOUT_RETRY_EXHAUSTED')
+    Step 4: Trigger handle_resale_lifecycle fires:
+      - If COMPLETED → old ticket RESOLD + new ticket for buyer
+
+  ⚠️ NOTE: Payout timing — apakah synchronous dalam webhook handler 
+  atau async worker? Rekomendasi: async worker (via RabbitMQ) untuk avoid 
+  webhook timeout. Webhook handler hanya validate + enqueue payout job.
+
+RESALE EXPIRY WORKER — Flow:
+
+  Function ResaleExpiryWorker():
+    Ticker every 1 minute (idempotent — cek reserved rows):
+      Step 1: SELECT resale_transactions WHERE status='PENDING' 
+              AND buyer_user_id IS NOT NULL 
+              AND created_at < NOW() - INTERVAL '3 minutes' 
+              AND updated_at < NOW() - INTERVAL '3 minutes'
+      Step 2: FOR EACH expired:
+        a. UPDATE resale_transactions SET:
+             buyer_user_id = NULL,
+             updated_at = NOW()
+           WHERE id = expired.id
+        b. (Optional) INSERT admin_actions for audit
+      Step 3: Log summary (count of resets)
+
+  ⚠️ FLAG #1 alignment: TIDAK ada status RESERVED, TIDAK ada 
+     reservation_expires_at column. TTL di-track via created_at + delayed 
+     message. Worker idempotent — bisa run multiple times tanpa masalah.
+
+CANCEL LISTING — Flow:
+
+  Function CancelListing(ctx, resaleID):
+    Step 1: BEGIN transaction
+    Step 2: SELECT resale FOR UPDATE WHERE id = resaleID
+    Step 3: Verify seller_user_id = JWT sub
+              - If not → 403
+    Step 4: Verify status = 'PENDING' AND buyer_user_id IS NULL
+              - If buyer already claimed → 422 (cannot cancel)
+    Step 5: UPDATE resale_transactions SET:
+              status = 'CANCELLED', cancelled_at = NOW()
+    Step 6: COMMIT
+    Step 7: Trigger handle_resale_lifecycle (CANCELLED) → tickets.status = 
+            'CONFIRMED'
+    Step 8: Return { resale_id, status: 'CANCELLED', cancelled_at }
+
+────────────────────────────────────────────────────────────────────────────────
+3.4 FROM TDD v1.10 §6.5 — IMPLEMENTATION FLOW SUMMARY (PSEUDOCODE ONLY)
+────────────────────────────────────────────────────────────────────────────────
+
+RESALE EXPIRY PAYLOAD (structured):
+
+  type ResaleExpiryPayload struct {
+    ResaleID string `json:"resale_id"`
+  }
+
+BUY RESALE TICKET HANDLER:
+
+  Function BuyResaleTicket(ctx, resaleID):
+    Step 1: buyerID = extractFromJWT(ctx)
+    Step 2: BEGIN tx
+    Step 3: SELECT resale FOR UPDATE:
+              SELECT id, ticket_id, status, buyer_user_id, created_at
+              FROM resale_transactions WHERE id = $1 FOR UPDATE
+    Step 4: Error branches:
+              - 404 if not found
+              - 409 if reserved (buyer_user_id NOT NULL and < 3min)
+              - 422 if not PENDING
+              - 422 if buyer == seller (own listing)
+    Step 5: UPDATE resale:
+              UPDATE resale_transactions SET 
+                buyer_user_id = $1, 
+                updated_at = NOW()
+              WHERE id = $2
+    Step 6: COMMIT
+    Step 7: Publish delayed: PublishDelayed("resale_expiry_check", 
+                                            payload, 3*time.Minute)
+    Step 8: Return 200:
+              {
+                resale_id,
+                status: "RESERVED",   ← synthetic mapping (FLAG #1)
+                reservation_expires_at: time.Now().Add(3*time.Minute),
+                payment_link: "https://payment.example.com/" + resaleID
+              }
+
+RESALE EXPIRY WORKER (per TDD):
+
+  Function ProcessResaleExpiry(ctx, msg):
+    Step 1: Deserialize { resale_id }
+    Step 2: BEGIN tx
+    Step 3: SELECT id FROM resale_transactions WHERE id = $1 
+            AND status = 'PENDING' AND buyer_user_id IS NOT NULL 
+            FOR UPDATE
+              - If not found → skip (already paid / cancelled)
+    Step 4: UPDATE resale_transactions SET:
+              buyer_user_id = NULL,
+              updated_at = NOW()
+            WHERE id = $1
+    Step 5: INSERT admin_actions (
+              admin_id = SYSTEM_USER_UUID,
+              action_type = 'FORCE_RELEASE_SEAT',
+              target_resource_type = 'resale_transaction',
+              target_resource_id = resale_id,
+              description = 'Resale reservation expired',
+              reason = 'RESERVATION_EXPIRED'
+            )
+    Step 6: COMMIT
+
+────────────────────────────────────────────────────────────────────────────────
+3.5 FROM API_CONTRACT v1.2 §12.1-12.4 — ENDPOINTS SPEC
+────────────────────────────────────────────────────────────────────────────────
+
+ENDPOINT 1 — POST /resale
+
+  Auth:     Required (JWT, customer — ticket owner)
+  Rate:     10 req/min per user
+  Headers:  X-Idempotency-Key REQUIRED
+
+  Request:
+    { "ticket_id": "uuid-ticket-123", "resale_price": "1050000" }
+
+  Success (201 Created):
+    {
+      "success": true,
+      "data": {
+        "resale_id": "uuid-resale-123",
+        "ticket_id": "uuid-ticket-123",
+        "original_price": "1000000",
+        "resale_price": "1050000",
+        "platform_fee": "26250",
+        "seller_payout": "1023750",
+        "status": "PENDING",
+        "created_at": "2026-09-11T10:30:00Z"
+      }
+    }
+
+  Errors:
+    - 403 FORBIDDEN (not ticket owner)
+    - 409 RESALE_LISTING_EXISTS
+    - 422 UNPROCESSABLE_ENTITY (price exceeds cap / ticket not CONFIRMED)
+
+ENDPOINT 2 — GET /resale?event_id={id}&status=PENDING
+
+  Auth:     Optional (anyone can browse)
+  Rate:     100 req/min per IP
+
+  Success (200):
+    {
+      "success": true,
+      "data": {
+        "listings": [
+          {
+            "resale_id": "uuid-resale-123",
+            "ticket_id": "uuid-ticket-123",
+            "seller_name": "Andi",
+            "seat": "CAT 1 - A4",
+            "resale_price": "1050000",
+            "platform_fee": "26250",
+            "seller_payout": "1023750",
+            "original_price": "1000000",
+            "created_at": "2026-09-11T10:30:00Z"
+          }
+        ]
+      }
+    }
+
+  Filter semantics (FLAG #1):
+    WHERE status = 'PENDING' AND buyer_user_id IS NULL
+    (exclude reserved — reserved rows have buyer_user_id NOT NULL)
+
+ENDPOINT 3 — POST /resale/{resale_id}/buy (IDOR PATCHED)
+
+  Auth:     Required (JWT, customer)
+  Rate:     10 req/min per user
+  Headers:  X-Idempotency-Key REQUIRED
+
+  Request: EMPTY BODY (buyer_user_id from JWT sub — IDOR patch)
+    {}
+
+  Processing (FOR UPDATE — Atomic):
+    1. Extract buyer_user_id from JWT
+    2. BEGIN TX
+    3. SELECT ... FOR UPDATE on resale_transactions
+    4. Check status='PENDING' AND buyer_user_id IS NULL
+    5. UPDATE buyer_user_id, updated_at = NOW()
+    6. COMMIT
+    7. Publish delayed message (resale_expiry_check, TTL 3 min)
+
+  Success (200):
+    {
+      "success": true,
+      "data": {
+        "resale_id": "uuid-resale-123",
+        "status": "RESERVED",         ← synthetic mapping (FLAG #1)
+        "reservation_expires_at": "2026-09-11T10:33:00Z",
+        "payment_link": "https://payment.example.com/resale-xyz"
+      }
+    }
+
+  Errors:
+    - 404 NOT_FOUND (resale not found)
+    - 409 CONFLICT (already reserved by another buyer)
+    - 422 UNPROCESSABLE_ENTITY (cannot buy own listing / not PENDING)
+
+ENDPOINT 4 — DELETE /resale/listings/{resale_id}
+
+  Auth:     Required (JWT, seller only)
+  Rate:     10 req/min per user
+  Headers:  X-Idempotency-Key REQUIRED
+
+  Success (200):
+    {
+      "success": true,
+      "data": {
+        "resale_id": "uuid-resale-123",
+        "status": "CANCELLED",
+        "cancelled_at": "2026-09-11T10:32:00Z"
+      }
+    }
+
+  Errors:
+    - 403 FORBIDDEN (not seller)
+    - 404 NOT_FOUND
+    - 422 UNPROCESSABLE_ENTITY (already reserved by buyer)
+
+────────────────────────────────────────────────────────────────────────────────
+3.6 FROM SECURITY_SPEC v1.4 §2.2, §6.2 — RESALE SECURITY
+────────────────────────────────────────────────────────────────────────────────
+
+IDOR PREVENTION (Resale Buy):
+
+  POST /resale/{resale_id}/buy
+  → buyer_user_id is extracted from JWT claims (sub), NOT from request body
+  → Prevents buyer impersonation attack
+
+  Foundation: API_CONTRACT v1.2 §12.3 "buyer_user_id REMOVED from body"
+
+PAYMENT GATEWAY AS MEDIATOR:
+
+  - Charge buyer via Payment Gateway (reuse FASE 4 adapter)
+  - Payout to seller via Payment Gateway Payout API
+  - No internal wallet/ledger
+  - Both sides verifiable via external_transaction_id
+
+FINANCIAL INTEGRITY:
+  ✅ All transactions verified via Payment Gateway
+  ✅ Idempotency via X-Idempotency-Key (L1 Redis)
+  ✅ Admin actions logged to admin_actions
+  ✅ Payout retry 3x + fallback log
+
+PRICE CAP ENFORCEMENT:
+  - Read cap dari system_config (10%)
+  - Server-side validation (jangan trust client)
+  - Compare resale_price vs original_price * (1 + cap/100)
+
+────────────────────────────────────────────────────────────────────────────────
+3.7 FROM HALAMAN v1.1 §7.1-7.3 — WIREFRAMES
+────────────────────────────────────────────────────────────────────────────────
+
+SCREEN 7.1 — LIST TICKET FOR RESALE:
+  - Ticket info (event, seat, original price)
+  - Price input field (max +10%)
+  - Platform Fee display
+  - "You Receive" (seller_payout) display
+  - Price cap warning
+  - LIST FOR RESALE button
+
+SCREEN 7.2 — BROWSE RESALE MARKET:
+  - Search bar
+  - Listing cards: ticket, seller, price, original price, seller rating
+  - BUY TICKET button per listing
+
+SCREEN 7.3 — CANCEL RESALE LISTING:
+  - Listing info (ticket, price, status)
+  - Views count
+  - Edit Price button (optional — tidak di API_CONTRACT, skip)
+  - Cancel Listing button
+  - Confirmation modal
+
+────────────────────────────────────────────────────────────────────────────────
+3.8 FROM STP v1.1 §3.2 — TEST CASES
+────────────────────────────────────────────────────────────────────────────────
+
+UNIT TEST CASES (FASE 7 scope):
+
+| Test ID        | Description                                              |
+|----------------|----------------------------------------------------------|
+| UT-RESALE-001  | ListTicket_PriceExceedsCap10_Returns422                  |
+| UT-RESALE-002  | ListTicket_AlreadyListed_Returns409                      |
+| UT-RESALE-003  | BuyResale_OwnListing_Returns422                          |
+| UT-RESALE-004  | BuyResale_BuyerFromJWT_NotBody (IDOR patch)              |
+| UT-RESALE-005  | ComputePlatformFee_2.5Percent_DecimalPrecision           |
+| UT-RESALE-006  | ReservationTTL_3Min_ResetBuyerUserID                     |
+| UT-RESALE-007  | PayoutFail_Retry3x_TransitionsToPendingPayout            |
+| UT-RESALE-008  | CancelListing_AlreadyReserved_Returns422                 |
+
+INTEGRATION TEST CASES (FASE 7 scope):
+
+| Test ID        | Description                                              |
+|----------------|----------------------------------------------------------|
+| IT-RESALE-001  | List → Buy (FOR UPDATE) → Payment → Payout → Old RESOLD  |
+| IT-RESALE-002  | Reservation TTL 3min expires → Reset to PENDING          |
+| IT-RESALE-003  | Seller cancel before buyer pays → Ticket back to CONFIRMED|
+| IT-RESALE-004  | Concurrent 2 buyers same listing → 1 winner, 1 CONFLICT  |
+| IT-RESALE-005  | Partial unique index prevents 2 active listings          |
+| IT-RESALE-006  | Payout failure → status PENDING_PAYOUT + admin log       |
+| IT-RESALE-007  | Trigger: old ticket RESOLD + new ticket CONFIRMED buyer  |
+
+API TEST CASES (Postman — FASE 7 scope):
+  - 4 endpoints × (happy + error) = ~14 test cases
+
+================================================================================
+SECTION 4 — TASK BREAKDOWN
+================================================================================
+
+9 EPICS, 24 TASKS. Estimasi total ~35 jam (~1 minggu).
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E1: MODULE SKELETON
+────────────────────────────────────────────────────────────────────────────────
+
+E1-S1-T1 [30 min] — Create internal/resale/ + worker folder
+   Deliverable:
+     - internal/resale/{handler,service,repository,model,payout}.go
+     - internal/worker/resale_expiry.go
+   DoD: empty files dengan package declaration
+
+E1-S1-T2 [1 jam] — Define model.go
+   Deliverable:
+     - ResaleTransaction struct
+     - ListTicketRequest, BuyResponse, CancelResponse
+     - ResaleExpiryPayload
+   DoD: structs sesuai API_CONTRACT v1.2 §12
+
+E1-S1-T3 [30 min] — Repository skeleton
+   Deliverable:
+     - ResaleRepository (Create, GetByIDForUpdate, ListPending, 
+                        UpdateBuyer, UpdateStatus, CheckActive)
+   DoD: method signatures clean
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E2: LIST TICKET (POST /resale)
+────────────────────────────────────────────────────────────────────────────────
+
+E2-S1-T4 [1.5 jam] — Handler: POST /resale
+   Deliverable: ResaleHandler.List
+   Sub-tasks:
+     a. Auth middleware
+     b. X-Idempotency-Key
+     c. Bind JSON + validate (ticket_id UUID, resale_price > 0)
+   DoD: handler wired
+
+E2-S1-T5 [2 jam] — Service: list flow (price cap + fee computation)
+   Deliverable: ResaleService.ListTicket
+   Sub-tasks:
+     a. Verify ticket ownership
+     b. Check ticket status = 'CONFIRMED'
+     c. Check no active listing (partial unique index)
+     d. Read cap_percent dari system_config
+     e. Validate price cap
+     f. Compute platform_fee (from env RESALE_PLATFORM_FEE_RATE)
+     g. Compute seller_payout (decimal.Decimal precision)
+     h. INSERT resale_transactions
+   DoD:
+     - 201 success
+     - 403 not owner
+     - 409 already listed
+     - 422 price exceeds cap
+
+E2-S1-T6 [1 jam] — Fee computation helper (decimal precision)
+   Deliverable: ComputeFees(resalePrice) → { fee, payout }
+   Sub-tasks:
+     a. fee_rate dari env (0.025)
+     b. platform_fee = resale_price * fee_rate (2 decimals)
+     c. seller_payout = resale_price - platform_fee
+     d. Use shopspring/decimal
+   DoD: unit test precision 2 decimals
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E3: BROWSE MARKETPLACE (GET /resale)
+────────────────────────────────────────────────────────────────────────────────
+
+E3-S1-T7 [1.5 jam] — Handler: GET /resale
+   Deliverable: ResaleHandler.Browse
+   Sub-tasks:
+     a. Optional auth (public browse allowed)
+     b. Parse query: event_id, status
+     c. Query listings dengan filter (FLAG #1):
+        WHERE status='PENDING' AND buyer_user_id IS NULL
+     d. JOIN tickets + sections + users (seller name)
+   DoD: 200 response dengan listings
+
+E3-S1-T8 [30 min] — Filter semantics implementation
+   Deliverable: Query builder exclude reserved rows
+   DoD: unit test verify reserved excluded
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E4: BUY RESALE (POST /resale/{id}/buy) — IDOR PATCH
+────────────────────────────────────────────────────────────────────────────────
+
+E4-S1-T9 [1.5 jam] — Handler: POST /resale/{id}/buy
+   Deliverable: ResaleHandler.Buy
+   Sub-tasks:
+     a. Auth middleware
+     b. X-Idempotency-Key
+     c. Body EMPTY — extract buyer dari JWT sub (IDOR patch)
+   DoD: handler wired
+
+E4-S1-T10 [2 jam] — Service: buy flow (FOR UPDATE)
+   Deliverable: ResaleService.BuyResaleTicket
+   Sub-tasks:
+     a. BEGIN tx
+     b. SELECT FOR UPDATE resale
+     c. Validate: status='PENDING' AND buyer_user_id IS NULL
+     d. Validate: seller != buyer (cannot buy own)
+     e. UPDATE buyer_user_id + updated_at
+     f. COMMIT
+     g. Publish delayed message (TTL 3 min)
+   DoD:
+     - 200 success dengan synthetic "RESERVED"
+     - 409 concurrent buyer
+     - 422 own listing
+
+E4-S1-T11 [1 jam] — Synthetic "RESERVED" response mapper
+   Deliverable: MapToReservedResponse(resale) → response
+   Sub-tasks:
+     a. Compute reservation_expires_at = updated_at + 3 min (on-the-fly)
+     b. Return status string "RESERVED" (synthetic)
+   DoD: response sesuai API_CONTRACT §12.3
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E5: CANCEL LISTING (DELETE /resale/listings/{id})
+────────────────────────────────────────────────────────────────────────────────
+
+E5-S1-T12 [1.5 jam] — Handler + Service: DELETE /resale/listings/{id}
+   Deliverable: ResaleHandler.Cancel
+   Sub-tasks:
+     a. Auth middleware
+     b. SELECT FOR UPDATE resale
+     c. Verify seller_user_id = JWT sub
+     d. Verify status='PENDING' AND buyer_user_id IS NULL
+     e. UPDATE status='CANCELLED', cancelled_at=NOW()
+     f. Trigger fires → tickets.status = 'CONFIRMED'
+   DoD:
+     - 200 success
+     - 403 not seller
+     - 422 already reserved
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E6: RESALE EXPIRY WORKER
+────────────────────────────────────────────────────────────────────────────────
+
+E6-S1-T13 [2 jam] — ResaleExpiryWorker (delayed consumer)
+   Deliverable: internal/worker/resale_expiry.go
+   Sub-tasks:
+     a. Consume message resale_expiry_check
+     b. Deserialize payload
+     c. SELECT FOR UPDATE
+     d. Verify status='PENDING' AND buyer_user_id IS NOT NULL
+     e. UPDATE buyer_user_id = NULL, updated_at = NOW()
+     f. INSERT admin_actions (audit)
+     g. COMMIT
+   DoD:
+     - Consume works
+     - Reset atomic
+     - admin_actions logged
+
+E6-S1-T14 [1 jam] — Periodic ticker (backup cleanup)
+   Deliverable: Additional ticker for orphaned reservations
+   Sub-tasks:
+     a. Ticker every 1 min
+     b. Scan: WHERE status='PENDING' AND buyer_user_id IS NOT NULL 
+              AND updated_at < NOW() - INTERVAL '3 minutes'
+     c. Reset (idempotent)
+   DoD: cleanup works (defensive)
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E7: PAYMENT + PAYOUT FLOW
+────────────────────────────────────────────────────────────────────────────────
+
+E7-S1-T15 [2 jam] — Webhook handler (resale payment)
+   Deliverable: internal/resale/payout.go — HandlePaymentWebhook
+   Sub-tasks:
+     a. Validate webhook signature (reuse adapter FASE 4)
+     b. Lookup resale BY payment_transaction_id
+     c. Enqueue payout job ke MQ (async — avoid webhook timeout)
+   DoD: webhook validates + enqueues
+
+E7-S1-T16 [2 jam] — Payout worker (async)
+   Deliverable: PayoutWorker consume dari MQ
+   Sub-tasks:
+     a. Consume payout job
+     b. Call PaymentGateway.Payout
+     c. Retry 3x (100ms, 200ms, 400ms)
+     d. Success → UPDATE status='COMPLETED' + completed_at
+     e. Fail → UPDATE status='PENDING_PAYOUT' + INSERT admin_actions
+   DoD:
+     - Success → COMPLETED + trigger fires
+     - Fail → PENDING_PAYOUT + audit log
+
+E7-S1-T17 [1 jam] — Register payout worker
+   Deliverable: main.go registration
+   DoD: worker active
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E8: RATE LIMITING & MIDDLEWARE
+────────────────────────────────────────────────────────────────────────────────
+
+E8-S1-T18 [30 min] — Rate limit POST /resale (10 req/min)
+E8-S1-T19 [30 min] — Rate limit GET /resale (100 req/min per IP)
+E8-S1-T20 [30 min] — Rate limit POST /resale/{id}/buy (10 req/min)
+E8-S1-T21 [30 min] — Rate limit DELETE /resale/listings/{id} (10 req/min)
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E9: TESTS
+────────────────────────────────────────────────────────────────────────────────
+
+E9-S1-T22 [3 jam] — Unit tests (8 tests)
+   Deliverable: tests/unit/resale/*.go
+   Sub-tasks: UT-RESALE-001..008
+   DoD: coverage ≥ 90%
+
+E9-S1-T23 [3 jam] — Integration tests (7 tests)
+   Deliverable: tests/integration/resale_flow_test.go
+   Sub-tasks: IT-RESALE-001..007
+   DoD: all pass
+
+E9-S2-T24 [2 jam] — API tests (Postman)
+   Deliverable: postman_collection.json (4 endpoints)
+   DoD: Newman pass ~14 cases
+
+────────────────────────────────────────────────────────────────────────────────
+TASK SUMMARY
+────────────────────────────────────────────────────────────────────────────────
+
+| Epic | Tasks | Est. Duration |
+|------|-------|---------------|
+| E1   | 3     | ~2 jam        |
+| E2   | 3     | ~4.5 jam      |
+| E3   | 2     | ~2 jam        |
+| E4   | 3     | ~4.5 jam      |
+| E5   | 1     | ~1.5 jam      |
+| E6   | 2     | ~3 jam        |
+| E7   | 3     | ~5 jam        |
+| E8   | 4     | ~2 jam        |
+| E9   | 3     | ~8 jam        |
+|------|-------|---------------|
+| Total| 24    | ~32.5 jam (~1 minggu) |
+
+================================================================================
+SECTION 5 — DELIVERABLES
+================================================================================
+
+5.1 CODE ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+Backend — Resale Module:
+  ✅ internal/resale/handler.go         (4 endpoints)
+  ✅ internal/resale/service.go
+  ✅ internal/resale/repository.go
+  ✅ internal/resale/model.go
+  ✅ internal/resale/payout.go          (webhook + payout worker)
+
+Backend — Worker:
+  ✅ internal/worker/resale_expiry.go   (delayed consumer + ticker)
+  ✅ internal/worker/payout_worker.go   (async payout)
+
+Router:
+  ✅ cmd/api/main.go — 4 endpoints
+     - Public: GET /resale
+     - Protected: POST /resale, POST /resale/{id}/buy, DELETE /resale/listings/{id}
+
+Worker Registration:
+  ✅ ResaleExpiryWorker (consumer + ticker)
+  ✅ PayoutWorker (consumer)
+
+5.2 DOCUMENTATION
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ docs/RESALE_MODULE.md — 4 endpoints + flow
+  ✅ docs/RESERVED_SYNTHETIC_STATE.md — FLAG #1 explanation
+  ✅ docs/PAYOUT_FLOW.md — retry + PENDING_PAYOUT
+
+5.3 TEST ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ tests/unit/resale/*.go                    (UT-RESALE-001..008)
+  ✅ tests/integration/resale_flow_test.go     (IT-RESALE-001..007)
+  ✅ postman_collection.json (updated)
+
+5.4 FRONTEND ARTIFACTS (Skeleton Only — full impl di FASE 9)
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ app/customer/resale/list/[ticketId]/page.tsx — placeholder
+  ✅ app/customer/resale/market/[eventId]/page.tsx — placeholder
+  ✅ components/customer/ResaleListing.tsx — skeleton
+  ✅ components/customer/ResaleMarketCard.tsx — skeleton
+  ✅ lib/api/resale.ts
+
+================================================================================
+SECTION 6 — ACCEPTANCE CRITERIA
+================================================================================
+
+6.1 FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] POST /resale → 201 (valid ticket + price cap OK)
+  [ ] POST /resale → 403 not owner
+  [ ] POST /resale → 409 already listed
+  [ ] POST /resale → 422 price exceeds cap
+  [ ] POST /resale → 422 ticket not CONFIRMED
+  [ ] GET /resale → 200 with listings (exclude reserved)
+  [ ] GET /resale → public browse allowed
+  [ ] POST /resale/{id}/buy → 200 with synthetic "RESERVED"
+  [ ] POST /resale/{id}/buy → buyer from JWT (IDOR patch verified)
+  [ ] POST /resale/{id}/buy → 409 concurrent (FOR UPDATE)
+  [ ] POST /resale/{id}/buy → 422 own listing
+  [ ] DELETE /resale/listings/{id} → 200 CANCELLED
+  [ ] DELETE /resale/listings/{id} → 403 not seller
+  [ ] DELETE /resale/listings/{id} → 422 already reserved
+  [ ] ResaleExpiryWorker: TTL 3 min reset (buyer_user_id = NULL)
+  [ ] Payout success → COMPLETED → old RESOLD + new CONFIRMED
+  [ ] Payout fail 3x → PENDING_PAYOUT + admin_actions log
+  [ ] Platform fee 2.5% (env var) — decimal 2 precision
+  [ ] Price cap 10% (system_config)
+  [ ] Partial unique index: no 2 active listings
+  [ ] FLAG #1: No 'RESERVED' enum, no reservation_expires_at column
+  [ ] No wallet/ledger drift
+
+6.2 NON-FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] CI pipeline green
+  [ ] Unit test coverage ≥ 90% (8 tests)
+  [ ] Integration tests pass: 7/7
+  [ ] API tests pass: ~14 cases
+  [ ] Zero tokens in logs
+  [ ] 4 endpoints 1:1 dengan API_CONTRACT v1.2 §12
+
+6.3 TEST COVERAGE TARGET
+────────────────────────────────────────────────────────────────────────────────
+
+  Unit: ≥ 90% untuk resale module
+  Integration: 7 tests
+  API: 4 endpoints × (happy + errors)
+
+================================================================================
+SECTION 7 — RISKS & MITIGATIONS
+================================================================================
+
+| Risk                                          | Likelihood | Impact | Mitigation                                          |
+|-----------------------------------------------|------------|--------|-----------------------------------------------------|
+| Double-claim race                             | Medium     | High   | SELECT FOR UPDATE on resale_transactions            |
+| Reservation lockout (buyer never pays)        | High       | High   | Delayed message TTL 3 min + worker reset             |
+| Payout API fails repeatedly                   | Medium     | High   | Retry 3x + PENDING_PAYOUT + admin (FASE 8)          |
+| Price cap bypass (client-side)                | Low        | High   | Server-side validation only                          |
+| IDOR (buy on behalf)                          | Low        | High   | buyer_user_id from JWT (body empty — patch)          |
+| Own listing purchase                          | Medium     | Med    | Validate seller != buyer                             |
+| Concurrent listing (same ticket)              | Low        | Med    | Partial UNIQUE index idx_resale_single_active        |
+| Trigger failure (ownership transfer)          | Low        | High   | DB trigger atomic + monitoring                       |
+| Platform fee precision                        | Low        | Low    | shopspring/decimal, 2 decimal precision              |
+| Webhook timeout (payout slow)                 | Medium     | Med    | Async worker (webhook only enqueue)                  |
+| Reservation reset race (worker vs payment)    | Medium     | High   | FOR UPDATE + status guard + idempotency              |
+| QR regeneration for new buyer                 | Low        | Med    | New ticket_id → auto via FASE 5 worker               |
+
+RESPONSE PER SCENARIO (DRP v1.2):
+- Payment Gateway down → Playbook #5 (DRP §5.6)
+- DB down → Playbook #1 (DRP §5.2)
+- RabbitMQ down → Playbook #3 (DRP §5.4)
+
+================================================================================
+SECTION 8 — SECURITY CONSIDERATIONS
+================================================================================
+
+8.1 THREATS RELEVANT TO FASE 7
+────────────────────────────────────────────────────────────────────────────────
+
+| Threat                    | Mitigation di FASE 7                                |
+|---------------------------|-----------------------------------------------------|
+| IDOR (buy on behalf)      | buyer_user_id from JWT (body empty)                  |
+| Double-Claim              | FOR UPDATE + status guard                            |
+| Price Cap Bypass          | Server-side validation (jangan trust client)          |
+| Own Listing Purchase      | Validate seller != buyer                             |
+| Reservation Lockout       | TTL 3 min + worker reset                             |
+| Payout Failure Silent     | Retry 3x + PENDING_PAYOUT + log admin                |
+| Concurrent Listing        | Partial UNIQUE index                                 |
+| Payout Duplication        | Idempotency via payment_transaction_id                |
+
+8.2 HEADERS
+────────────────────────────────────────────────────────────────────────────────
+
+  | Endpoint                          | Headers Required                          |
+  |-----------------------------------|-------------------------------------------|
+  | POST /resale                      | Authorization + X-Idempotency-Key         |
+  | GET /resale                       | (optional Authorization)                  |
+  | POST /resale/{id}/buy             | Authorization + X-Idempotency-Key         |
+  | DELETE /resale/listings/{id}      | Authorization + X-Idempotency-Key         |
+
+8.3 IDOR PATCH (CRITICAL)
+────────────────────────────────────────────────────────────────────────────────
+
+  POST /resale/{resale_id}/buy:
+    - Request body: EMPTY {}
+    - buyer_user_id = extractFromJWT(ctx)
+    - Server-side: TIDAK trust body apapun
+    - Prevents buyer impersonation
+
+  SECURITY_SPEC §2.2 "IDOR Prevention: buyer_user_id is extracted from 
+  JWT claims (sub), NOT from request body"
+
+8.4 FLAG #1 — RESERVED SYNTHETIC STATE
+────────────────────────────────────────────────────────────────────────────────
+
+  Problem: DATABASE_SCHEMA resale_status_enum = {PENDING, COMPLETED, 
+  CANCELLED, PENDING_PAYOUT}. Tidak ada RESERVED.
+
+  Resolution (Opsi A):
+    - Runtime "reserved" = status='PENDING' AND buyer_user_id IS NOT NULL
+    - API response MAP to "RESERVED" string (synthetic)
+    - TTL tracked via delayed message (RabbitMQ) + created_at column
+    - Filter query: WHERE status='PENDING' AND buyer_user_id IS NULL
+    - Worker: reset buyer_user_id to NULL after TTL
+
+  Trade-off: API response slightly different dari DB state — acceptable 
+  untuk preserve schema integrity (no migration amendment).
+
+8.5 FLAG #2 — PLATFORM FEE + PRICE CAP SOURCES
+────────────────────────────────────────────────────────────────────────────────
+
+  - Platform fee (2.5%) → env var RESALE_PLATFORM_FEE_RATE
+    * Reasoning: infra cost, config-level
+  - Price cap (10%) → system_config.resale_price_cap_percent
+    * Reasoning: business rule, dapat diubah via DB tanpa redeploy
+
+  Decimal precision: shopspring/decimal, 2 decimal places.
+
+8.6 FLAG #3 — PENDING_PAYOUT TRIGGER
+────────────────────────────────────────────────────────────────────────────────
+
+  Flow:
+    1. Buyer payment webhook SUCCESS
+    2. Async payout worker try PaymentGateway.Payout
+    3. Retry 3x (100ms, 200ms, 400ms)
+    4. If SUCCESS → status = 'COMPLETED' + trigger lifecycle
+    5. If retry exhausted → status = 'PENDING_PAYOUT' + admin_actions log
+    6. Admin manual reconciliation (FASE 8) → resolve PENDING_PAYOUT
+
+8.7 RATE LIMITING
+────────────────────────────────────────────────────────────────────────────────
+
+  | Endpoint                          | Limit         | Scope   |
+  |-----------------------------------|---------------|---------|
+  | POST /resale                      | 10 req/min    | User    |
+  | GET /resale                       | 100 req/min   | IP      |
+  | POST /resale/{id}/buy             | 10 req/min    | User    |
+  | DELETE /resale/listings/{id}      | 10 req/min    | User    |
+
+8.8 HEADER SANITIZATION
+────────────────────────────────────────────────────────────────────────────────
+
+  - Authorization → [REDACTED]
+  - Verify via grep: log tidak mengandung "eyJ"
+  - Platform fee rate, payout amount in logs (OK — not sensitive)
+  - Buyer/seller user_id (OK — UUID, not PII)
+
+================================================================================
+SECTION 9 — DEFINITION OF DONE (DoD)
+================================================================================
+
+9.1 CHECKLIST KELULUSAN FASE
+────────────────────────────────────────────────────────────────────────────────
+
+Code:
+  [ ] internal/resale/ folder lengkap (5 files)
+  [ ] internal/worker/resale_expiry.go + payout_worker.go
+  [ ] Router wiring: 1 public + 3 protected
+  [ ] ResaleExpiryWorker registered (consumer + ticker)
+  [ ] PayoutWorker registered
+  [ ] Price cap +10% enforced
+  [ ] Platform fee from env, cap from system_config
+  [ ] Synthetic "RESERVED" response mapping (FLAG #1)
+  [ ] FOR UPDATE buy flow
+  [ ] Payout retry 3x + PENDING_PAYOUT fallback (FLAG #3)
+
+Tests:
+  [ ] Unit test coverage ≥ 90% (8 tests)
+  [ ] Integration tests pass (7/7)
+  [ ] API tests pass (~14 cases)
+  [ ] CI pipeline green
+
+Security:
+  [ ] Zero tokens in logs
+  [ ] IDOR patch verified (body empty)
+  [ ] RLS enforced (resale_transactions)
+  [ ] Own-listing check
+  [ ] Partial unique index enforced
+  [ ] admin_actions logged
+
+Documentation:
+  [ ] docs/RESALE_MODULE.md
+  [ ] docs/RESERVED_SYNTHETIC_STATE.md
+  [ ] docs/PAYOUT_FLOW.md
+  [ ] postman_collection.json
+
+9.2 ROLLBACK POINT
+────────────────────────────────────────────────────────────────────────────────
+
+Kalau FASE 7 gagal:
+  - Semua work di branch `feature/fase-7-resale`
+  - `develop` tetap stable (FASE 6 state)
+  - Rollback = hapus branch
+  - Active resale listings dapat di-force-cancel via SQL (manual)
+
+Setelah FASE 7 selesai:
+  - Merge → `develop` → `main`
+  - Tag: `v0.7.0-resale`
+  - FASE 8 bisa dimulai (butuh resale + admin tools)
+
+9.3 SIGN-OFF
+────────────────────────────────────────────────────────────────────────────────
+
+  QA/Verifier:       M. Arif Aulia
+  Date Completed:    [___]
+  Ready for FASE 8:  [ ] YES  [ ] NO
+
+================================================================================
+SECTION 10 — NOTES & REFERENCES
+================================================================================
+
+10.1 FLAG #1 (CRITICAL): RESERVED SYNTHETIC STATE (Opsi A APPROVED)
+────────────────────────────────────────────────────────────────────────────────
+
+  Konteks: DATABASE_SCHEMA resale_status_enum tidak punya 'RESERVED'. 
+  API_CONTRACT + LOGIC_FLOW + TDD menyebut 'RESERVED'.
+
+  Resolution (Opsi A):
+    - DB tetap pakai enum existing (PENDING, COMPLETED, CANCELLED, 
+      PENDING_PAYOUT)
+    - Runtime "reserved" = status='PENDING' AND buyer_user_id IS NOT NULL
+    - API response MAP to synthetic "RESERVED"
+    - TTL: track via delayed message + created_at
+    - Worker: reset buyer_user_id after TTL
+
+  Gemini Note: "ResaleExpiryWorker harus reset atomis (buyer_user_id = NULL, 
+  updated_at = NOW())."
+
+10.2 FLAG #2: PLATFORM FEE + PRICE CAP SOURCES (Opsi A APPROVED)
+────────────────────────────────────────────────────────────────────────────────
+
+  - Platform fee (2.5%): env var RESALE_PLATFORM_FEE_RATE
+  - Price cap (10%): system_config.resale_price_cap_percent
+  
+  Gemini Note: "Pembentukan seller_payout menggunakan kalkulasi desimal 
+  presisi tinggi di level aplikasi (shopspring/decimal)."
+
+10.3 FLAG #3: PENDING_PAYOUT TRIGGER (Opsi A APPROVED)
+────────────────────────────────────────────────────────────────────────────────
+
+  - Buyer payment SUCCESS → try payout
+  - Payout SUCCESS → COMPLETED
+  - Payout FAIL after retry 3x → PENDING_PAYOUT
+  
+  Gemini Note: "Proteksi idempotency pada handler webhook terpasang 
+  ketat agar transaksi payout tidak terduplikasi."
+  
+  Resolution: webhook handler idempotent via payment_transaction_id lookup 
+  + enqueue ke MQ (yang juga idempotent).
+
+10.4 NOTES UMUM
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 7 = fitur keuangan KEDUA setelah F003. Reuse Payment Gateway 
+  Adapter dari FASE 4.
+
+- RESERVED state = SYNTHETIC. JANGAN coba INSERT enum value 'RESERVED' 
+  → akan fail (SQL enum violation).
+
+- Reservation TTL: delayed message (RabbitMQ, primary) + ticker (backup 
+  cleanup). Both idempotent.
+
+- IDOR PATCH: buyer_user_id MUST dari JWT. Request body EMPTY. Ini fix 
+  dari API_CONTRACT v1.1.
+
+- Price cap: server-side validation ONLY. Client display hint, tapi 
+  server tetap verify.
+
+- Platform fee: decimal.Decimal, 2 precision. NEVER float64 untuk 
+  financial.
+
+- Trigger handle_resale_lifecycle: 3 cases (INSERT/COMPLETED/CANCELLED). 
+  Careful testing: old ticket RESOLD + new ticket CONFIRMED untuk buyer.
+
+- Payout async: webhook handler hanya enqueue job. Payout worker 
+  process (avoid webhook timeout).
+
+- PENDING_PAYOUT: admin reconciliation di FASE 8 (manual refund endpoint).
+
+- Frontend screens (7.1, 7.2, 7.3) di FASE 7 hanya SKELETON. Full impl 
+  di FASE 9.
+
+10.5 CROSS-REFERENCE FOUNDATION
+────────────────────────────────────────────────────────────────────────────────
+
+| Foundation Doc         | Section Relevan                                |
+|------------------------|------------------------------------------------|
+| PRD v6.0               | §F005 (full spec)                              |
+| DATABASE_SCHEMA v2.9   | resale_transactions + tickets + trigger + RLS  |
+| LOGIC_FLOW v1.4        | §7 (full flow + state machine + TTL)           |
+| HALAMAN v1.1           | §7.1, §7.2, §7.3                               |
+| TDD v1.10              | §6.5 (BuyResaleTicket + ResaleExpiryWorker)    |
+| API_CONTRACT v1.2      | §12.1-12.4 (4 endpoints)                       |
+| SECURITY_SPEC v1.4     | §2.2 IDOR prevention, §6.2 Payment flow        |
+| DRP v1.2               | §5.6 Playbook #5                               |
+| STP v1.1               | UT-RESALE-001..008, IT-RESALE-001..007         |
+
+10.6 CROSS-REFERENCE ROADMAP FASE LAIN
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 4: Payment Gateway Adapter (reuse untuk charge + payout)
+- FASE 5: Tickets + QR (consumed for ownership transfer)
+- FASE 8: Admin manual reconciliation untuk PENDING_PAYOUT
+- FASE 9: Frontend screens 7.1-7.3 (full impl)
+
+10.7 VERSION HISTORY
+────────────────────────────────────────────────────────────────────────────────
+
+| Version  | Date       | Author       | Changes                                          |
+|----------|------------|--------------|--------------------------------------------------|
+| 1.0-FINAL| 2026-09-11 | M. Arif Aulia| Initial ROADMAP FASE 7. F005 Controlled Resale   |
+|          |            |              | Market. 3 flags pre-approved (Opsi A):           |
+|          |            |              | 1) RESERVED synthetic state                      |
+|          |            |              | 2) Platform fee env / cap config                 |
+|          |            |              | 3) PENDING_PAYOUT on payout retry exhaustion     |
+
+================================================================================
+📋 FASE 7 SYNC CHECKLIST (100% COMPLIANCE)
+================================================================================
+
+✅ BLUEPRINT ROADMAP v1.0-FINAL Sync:
+  - FASE 7 = F005 Resale Market ✓
+  - Estimasi 1 minggu ✓
+
+✅ PRD v6.0 Sync:
+  - F005 full spec ✓
+  - Out of Scope respected (no wallet/ledger) ✓
+
+✅ DATABASE_SCHEMA v2.9 Sync:
+  - resale_transactions + tickets + trigger + RLS ✓
+  - resale_status_enum (4 values, NO RESERVED) ✓
+  - Partial UNIQUE idx_resale_single_active ✓
+  - No new columns ✓
+
+✅ LOGIC_FLOW v1.4 Sync:
+  - §7 full flow ✓
+  - Reservation TTL 3 min ✓
+  - State machine (PENDING → COMPLETED/CANCELLED) ✓
+
+✅ HALAMAN v1.1 Sync:
+  - §7.1 Resale List ✓
+  - §7.2 Resale Market ✓
+  - §7.3 Cancel Listing ✓
+
+✅ TDD v1.10 Sync:
+  - §6.5 BuyResaleTicket (FOR UPDATE) ✓
+  - ResaleExpiryWorker ✓
+  - Structured payload ✓
+
+✅ API_CONTRACT v1.2 Sync:
+  - 4 endpoints 1:1 (§12.1-12.4) ✓
+  - IDOR patch: buyer from JWT ✓
+  - Error codes: 403/404/409/422 ✓
+  - No ghost endpoints ✓
+
+✅ SECURITY_SPEC v1.4 Sync:
+  - §2.2 IDOR prevention ✓
+  - §6.2 Payment flow ✓
+  - Header sanitization ✓
+  - Rate limiting ✓
+
+✅ DRP v1.2 Sync:
+  - Playbook #5 (Payment GW) ✓
+  - Playbook #1, #3 ✓
+
+✅ STP v1.1 Sync:
+  - UT-RESALE-001..008 ✓
+  - IT-RESALE-001..007 ✓
+  - Coverage ≥ 90% ✓
+
+✅ AI ROADMAP GUARDRAIL §2.2 Sync:
+  - No full code injection (pseudocode only) ✓
+
+✅ Anti-Drift Guardrails G1-G8:
+  - G1 Traceability ✓
+  - G2 Scope Freeze ✓
+  - G3 No Wallet/Ledger ✓
+  - G4 ENUM Consistency (resale_status_enum respected) ✓
+  - G5 Error Code Consistency ✓
+  - G6 Header Consistency ✓
+  - G7 Self-Contained ✓
+  - G8 Acceptance Criteria ✓
+
+✅ 3 FLAGS PRE-APPROVED (Opsi A):
+  - FLAG #1 (CRITICAL): RESERVED synthetic mapping ✓
+  - FLAG #2: Fee env / cap config split ✓
+  - FLAG #3: PENDING_PAYOUT on payout fail ✓
+
+✅ GEMINI TECHNICAL NOTES ADDRESSED:
+  - Worker reset atomis ✓
+  - Decimal precision (shopspring/decimal) ✓
+  - Webhook idempotency (payment_transaction_id) ✓
+
+================================================================================
+END OF ROADMAP FASE (7) v1.0-FINAL
+================================================================================
+
+✅ 100% READY TO EXECUTE
+✅ Self-contained
+✅ 24 tasks across 9 epics, est. ~32.5 jam (~1 minggu)
+✅ 22 functional AC + 6 non-functional AC
+✅ 12 risks identified with mitigations
+✅ Rollback point defined
+✅ Zero drift (no wallet/ledger, no ghost endpoints, no schema amendment)
+✅ 4 endpoints 1:1 dengan API_CONTRACT v1.2 §12
+✅ 3 flags pre-approved (Opsi A) — FLAG #1 CRITICAL
+✅ No full code injection (pseudocode only)
+✅ Gemini 3 technical notes addressed (atomic reset, decimal precision, 
+   webhook idempotency)
+
+Last Updated: 2026-09-11 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED.

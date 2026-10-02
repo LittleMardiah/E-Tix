@@ -1,0 +1,1227 @@
+================================================================================
+HALAMAN: E-Tix Flash (Smart Ticketing Platform) - Wireframes & UI Flow
+================================================================================
+
+Version:         1.1-FINAL
+Last Updated:    2026-09-08
+Author:          M. Arif Aulia
+Status:          ✅ 100% PRODUCTION-READY — LOCKED (ALL GEMINI REVIEW FIXES APPLIED)
+
+================================================================================
+📌 BISMILLAH — FINAL VERSION (POST-GEMINI REVIEW — 9 MISSING SCREENS ADDED)
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📌 OVERVIEW
+================================================================================
+
+Dokumen ini berisi **wireframe (blueprint UI)** untuk E-Tix Flash — platform tiket pintar dengan 4 user roles:
+
+- 🧑 **Customer (Fans)** — Membeli tiket, split-pay, resale, masuk venue.
+- 🎪 **Event Organizer (EO)** — Mengelola event, dashboard, analytics.
+- 🚪 **Gate Staff** — Scan QR/PIN validasi tiket.
+- 👨‍💼 **Admin** — Reconciliation, emergency tools, audit.
+
+**Design Principles:**
+- ✅ Mobile-first (320px - 768px)
+- ✅ Web responsive (Desktop 1024px+)
+- ✅ Accessibility (WCAG 2.1 Level AA)
+- ✅ Dark mode support (optional)
+- ✅ 100% SYNCHRONIZED WITH BACKEND — all screens map to PRD, DB, LOGIC FLOW
+
+================================================================================
+🧭 NAVIGATION STRUCTURE
+================================================================================
+
+E-TIX FLASH UI HIERARCHY:
+
+┌─ AUTHENTICATION
+│  ├─ Login Screen ✅
+│  ├─ Register Screen ✅ (NEW v1.1)
+│  └─ OTP Verification ✅ (NEW v1.1)
+│
+├─ CUSTOMER APP (Role: customer)
+│  ├─ Home / Dashboard ✅
+│  │  ├─ Event List (Upcoming / Ongoing)
+│  │  └─ Quick Actions
+│  ├─ Waiting Room ✅
+│  │  ├─ Priority Tier Indicator (Tier 1/2/3)
+│  │  ├─ Estimated Wait Time
+│  │  └─ CAPTCHA Modal ✅ (NEW v1.1)
+│  ├─ Seat Selection ✅
+│  │  ├─ Seat Map (Section-based)
+│  │  ├─ Group Selection (2-10 seats)
+│  │  ├─ Atomic Lock Timer (3 min countdown)
+│  │  └─ Seat Collision Toast/Alert ✅ (NEW v1.1)
+│  ├─ Payment (Split-Pay) ✅
+│  │  ├─ Split Mode: Individual Links
+│  │  ├─ Bulk Mode: Leader Pays All
+│  │  ├─ Bulk Ticket Assignment Screen ✅ (NEW v1.1)
+│  │  └─ Payment Status (Pending / Paid / Expired)
+│  ├─ My Tickets ✅
+│  │  ├─ Ticket List (Active / Used / Resold)
+│  │  ├─ Dynamic QR (refreshes every 30s)
+│  │  └─ Fallback PIN (display & SMS/Email)
+│  ├─ Resale Marketplace ✅
+│  │  ├─ List Ticket (price cap +10%)
+│  │  ├─ Browse Available Tickets
+│  │  ├─ Purchase Resale Ticket
+│  │  └─ Cancel Resale Listing ✅ (NEW v1.1)
+│  ├─ Post-Event (if attended)
+│  │  └─ Rate Event / Feedback
+│  └─ Profile
+│     ├─ Loyalty Score & Tier
+│     └─ Purchase History
+│
+├─ EVENT ORGANIZER APP (Role: event_organizer)
+│  ├─ Dashboard ✅
+│  │  ├─ Real-time Sales (tickets sold, revenue)
+│  │  ├─ Anti-Bot Report (blocked requests)
+│  │  └─ Active Orders
+│  ├─ Event Management
+│  │  ├─ Create Event
+│  │  ├─ Seat Layout (upload / configure)
+│  │  └─ Publish Event
+│  ├─ Post-Event Analytics ✅
+│  │  ├─ Attendance Report
+│  │  ├─ Gate Utilization
+│  │  └─ Insights / Recommendations
+│  └─ Emergency Tools ✅
+│     ├─ Bulk Cancellation
+│     └─ Manual Reconciliation
+│
+├─ GATE STAFF APP (Role: gate_staff)
+│  ├─ Scanner Dashboard ✅
+│  │  ├─ QR Scan (primary)
+│  │  ├─ PIN Manual Entry (fallback)
+│  │  ├─ Scan History
+│  │  └─ Offline Sync Indicator ✅ (NEW v1.1)
+│  └─ Offline Mode (sync when online)
+│
+└─ ADMIN WEB PANEL (Role: admin)
+   ├─ Ledger & Reconciliation ✅
+   ├─ User & Blacklist Management ✅ (NEW v1.1)
+   ├─ Force Seat Release Tool ✅ (NEW v1.1)
+   └─ System Health Monitoring
+
+================================================================================
+📱 CUSTOMER APP — AUTHENTICATION
+================================================================================
+
+1.1 LOGIN SCREEN
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│          E-TIX FLASH          │
+│    Smart Ticketing Platform   │
+│                              │
+│  📧 Email/Phone              │
+│  ┌──────────────────────────┐│
+│  │ your@email.com          ││
+│  └──────────────────────────┘│
+│                              │
+│  🔐 Password                 │
+│  ┌──────────────────────────┐│
+│  │ ••••••••••              ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │   LOGIN                 ││
+│  └──────────────────────────┘│
+│                              │
+│  Forgot password?            │
+│  Don't have account? Sign up │
+└──────────────────────────────┘
+
+**Data Binding:**
+- POST /auth/login → access_token, refresh_token, user_id, role
+
+================================================================================
+
+1.2 REGISTER SCREEN (NEW v1.1)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│      Create Account          │
+│                              │
+│  👤 Full Name                │
+│  ┌──────────────────────────┐│
+│  │ Budi Santoso            ││
+│  └──────────────────────────┘│
+│                              │
+│  📧 Email                    │
+│  ┌──────────────────────────┐│
+│  │ budi@email.com          ││
+│  └──────────────────────────┘│
+│                              │
+│  📱 Phone (+62)              │
+│  ┌──────────────────────────┐│
+│  │ 81234567890             ││
+│  └──────────────────────────┘│
+│                              │
+│  🔐 Password                 │
+│  ┌──────────────────────────┐│
+│  │ ••••••••••              ││
+│  └──────────────────────────┘│
+│                              │
+│  🔐 Confirm Password         │
+│  ┌──────────────────────────┐│
+│  │ ••••••••••              ││
+│  └──────────────────────────┘│
+│                              │
+│  👥 I am a:                  │
+│  ◉ Customer  ◯ EO ◯ Gate Staff
+│                              │
+│  ☑️ I agree to Terms & Privacy│
+│                              │
+│  ┌──────────────────────────┐│
+│  │   SIGN UP               ││
+│  └──────────────────────────┘│
+│                              │
+│  Already have account? Login │
+└──────────────────────────────┘
+
+**Data Binding:**
+- POST /auth/register → user_id, email verification required
+- POST /auth/send-otp → OTP sent to email/phone
+
+================================================================================
+
+1.3 OTP VERIFICATION SCREEN (NEW v1.1)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│    Verify Your Phone         │
+│                              │
+│  We sent a code to:          │
+│  +62 812 345 67890           │
+│                              │
+│  🔐 Enter 6-digit code       │
+│  ┌────┐┌────┐┌────┐         │
+│  │ _  ││ _  ││ _  │         │
+│  └────┘└────┘└────┘         │
+│  ┌────┐┌────┐┌────┐         │
+│  │ _  ││ _  ││ _  │         │
+│  └────┘└────┘└────┘         │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   VERIFY                ││
+│  └──────────────────────────┘│
+│                              │
+│  Didn't receive? Resend (30s)│
+│  Wrong number? Change        │
+└──────────────────────────────┘
+
+**Data Binding:**
+- POST /auth/verify-otp → validates SMS code
+- POST /auth/resend-otp → resend OTP (cooldown 30s)
+
+================================================================================
+📱 CUSTOMER APP — HOME / DASHBOARD
+================================================================================
+
+2.1 HOME SCREEN (POST-LOGIN)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│☰ E-TIX FLASH   🔔   👤       │
+├──────────────────────────────┤
+│                              │
+│  👋 Hello, Budi!             │
+│  ⭐ Loyalty Score: 85        │
+│  🏷️ Tier: 2 (Regular Fan)   │
+│                              │
+│  ─── Upcoming Events ───     │
+│  ┌──────────────────────────┐│
+│  │ 🎸 DEWA 19 FEAT. MAHADEWI││
+│  │ 📅 2026-12-20 19:00      ││
+│  │ 📍 GBK Stadium           ││
+│  │ 🔥 Tickets: 4,523/5,000  ││
+│  │ ⏰ Flash Sale: 2h left   ││
+│  │                          ││
+│  │ ┌──────────────────────┐ ││
+│  │ │  BUY TICKETS         │ ││
+│  │ └──────────────────────┘ ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │ 🎫 My Tickets (3)       ││
+│  │ 🏷️ Resale Marketplace   ││
+│  └──────────────────────────┘│
+│                              │
+├─ HOME ─ TICKETS ─ RESALE ─   │
+└──────────────────────────────┘
+
+**Data Binding:**
+- GET /events?status=ON_SALE → list of active events
+- GET /users/me → loyalty score, tier
+
+================================================================================
+📱 CUSTOMER APP — WAITING ROOM (F001)
+================================================================================
+
+3.1 WAITING ROOM (Priority Tier)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK          WAITING ROOM  │
+├──────────────────────────────┤
+│                              │
+│  🎸 DEWA 19 FEAT. MAHADEWI   │
+│  📍 GBK Stadium              │
+│  📅 2026-12-20 19:00         │
+│                              │
+│  ────────────────────────────│
+│  ⏳ Estimated Wait: 2 min    │
+│                              │
+│  Your Position: 123          │
+│  Total in Queue: 2,341      │
+│                              │
+│  🏷️ TIER 2 — Regular Fan    │
+│  ⭐ Loyalty Score: 85       │
+│                              │
+│  ┌──────────────────────────┐│
+│  │ ██████████░░░░░░░░░░░░ ││
+│  │ 20% completed            ││
+│  └──────────────────────────┘│
+│                              │
+│  ⏰ Sale starts in: 00:02:15 │
+│                              │
+│  ┌──────────────────────────┐│
+│  │ ⚠️ Stay on this page!   ││
+│  │ Don't refresh.           ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+**Data Binding:**
+- WebSocket / Polling: GET /waiting-room/status → position, estimated wait
+- Queue Token generated by backend (F001)
+
+================================================================================
+
+3.2 CAPTCHA MODAL (NEW v1.1 — F001 Stage 2)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ⚠️ VERIFICATION REQUIRED     │
+├──────────────────────────────┤
+│                              │
+│  🔒 We need to verify        │
+│  you're human.               │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   [CAPTCHA IMAGE]       ││
+│  │   "Select all traffic    ││
+│  │    lights"              ││
+│  │   ▢ ▢ ▢ ▢ ▢ ▢ ▢ ▢ ▢    ││
+│  └──────────────────────────┘│
+│                              │
+│  ⏰ Time remaining: 01:30    │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   VERIFY                 ││
+│  └──────────────────────────┘│
+│                              │
+│  ⓘ Why this? Your behavior  │
+│     was flagged as unusual.  │
+│     Complete this to continue│
+│     your purchase.           │
+└──────────────────────────────┘
+
+**Trigger:**
+- User Final Score < 50 (detected as potential bot)
+- Multiple failed attempts in short time
+
+**Data Binding:**
+- GET /captcha/challenge → new captcha challenge
+- POST /captcha/verify → validate response
+
+================================================================================
+📱 CUSTOMER APP — SEAT SELECTION (F002)
+================================================================================
+
+4.1 SEAT MAP (Atomic Group Locking)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK        SELECT SEATS   │
+├──────────────────────────────┤
+│                              │
+│  🎸 DEWA 19 FEAT. MAHADEWI   │
+│  Section: CAT 1 (VIP)        │
+│  Price: Rp 1,000,000/ticket  │
+│                              │
+│  ─── Seat Map ───            │
+│  ┌──────────────────────────┐│
+│  │    STAGE                 ││
+│  │  ████████████████████   ││
+│  │  ██ AVAILABLE           ││
+│  │  ██ TAKEN               ││
+│  │  ██ SELECTED (YOURS)    ││
+│  │  ██ LOCKED (Others)     ││
+│  │                         ││
+│  │   A1 A2 A3 A4 A5 A6     ││
+│  │   A7 A8 A9 A10 A11 A12  ││
+│  │   B1 B2 B3 B4 B5 B6     ││
+│  │   B7 B8 B9 B10 B11 B12  ││
+│  │   C1 C2 C3 C4 C5 C6     ││
+│  └──────────────────────────┘│
+│                              │
+│  Selected: 4 seats           │
+│  ┌──────────────────────────┐│
+│  │ A4, A5, A6, A7          ││
+│  └──────────────────────────┘│
+│                              │
+│  ⏰ Lock expires in: 02:45   │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   CONTINUE TO PAYMENT   ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+**Data Binding:**
+- GET /sections/{section_id}/seats → available seats (from Redis bitmask)
+- POST /bookings → lock seats via Lua script (F002)
+
+================================================================================
+
+4.2 SEAT COLLISION TOAST/ALERT (NEW v1.1 — F002 Edge Case)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK        SELECT SEATS   │
+├──────────────────────────────┤
+│                              │
+│  🎸 DEWA 19 FEAT. MAHADEWI   │
+│  Section: CAT 1 (VIP)        │
+│                              │
+│  ────────────────────────────│
+│  ⚠️ SEAT CONFLICT!           │
+│  ┌──────────────────────────┐│
+│  │ ❌ Seat A5 was just      ││
+│  │    taken by another user.││
+│  │                          ││
+│  │ We released all your     ││
+│  │ selected seats.          ││
+│  │                          ││
+│  │ Please select again.     ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │   SELECT AGAIN           ││
+│  └──────────────────────────┘│
+│                              │
+│  ─── Seat Map ───            │
+│  ┌──────────────────────────┐│
+│  │   [Seat map with         ││
+│  │    updated availability] ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+**Trigger:**
+- POST /bookings returns `status = 'CONFLICT'` from Lua script
+
+**Data Binding:**
+- Automatic refresh: GET /sections/{section_id}/seats → updated availability
+
+================================================================================
+📱 CUSTOMER APP — PAYMENT (F003)
+================================================================================
+
+5.1 PAYMENT MODE SELECTION
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK        PAYMENT MODE   │
+├──────────────────────────────┤
+│                              │
+│  🎫 4 Tickets                │
+│  Section: CAT 1              │
+│  Total: Rp 4,000,000         │
+│                              │
+│  How would you like to pay?  │
+│                              │
+│  ┌──────────────────────────┐│
+│  │ 👤 SPLIT PAY             ││
+│  │ Each member pays own     ││
+│  │ 4 links sent to group    ││
+│  │ ⏰ 3 minutes to pay      ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │ 👑 BULK PAY              ││
+│  │ Leader pays all          ││
+│  │ One payment total        ││
+│  │ ✅ Instant confirmed     ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │   SELECT PAYMENT MODE   ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+5.2 SPLIT PAY — LINKS SENT
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK        SPLIT PAY      │
+├──────────────────────────────┤
+│                              │
+│  ✅ Payment links sent!      │
+│                              │
+│  ─── Group Members ───       │
+│  ┌──────────────────────────┐│
+│  │ ✅ Budi (Leader)         ││
+│  │    Rp 1,000,000          ││
+│  │    Status: PAID          ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ ⏳ Andi                  ││
+│  │    Rp 1,000,000          ││
+│  │    Status: PENDING       ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ ⏳ Cinta                 ││
+│  │    Rp 1,000,000          ││
+│  │    Status: PENDING       ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ ⏳ Dedi                  ││
+│  │    Rp 1,000,000          ││
+│  │    Status: PENDING       ││
+│  └──────────────────────────┘│
+│                              │
+│  ⏰ Time remaining: 02:15    │
+│                              │
+│  ┌──────────────────────────┐│
+│  │ 📱 Share link to group   ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+5.3 BULK TICKET ASSIGNMENT SCREEN (NEW v1.1 — F003 Bulk Mode)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK        ASSIGN TICKETS │
+├──────────────────────────────┤
+│                              │
+│  👑 Bulk Payment Complete!   │
+│  4 tickets purchased.        │
+│                              │
+│  Assign tickets to group:    │
+│                              │
+│  ┌──────────────────────────┐│
+│  │ Seat A4                  ││
+│  │ ┌──────────────────────┐ ││
+│  │ │ [Email/Phone]        │ ││
+│  │ └──────────────────────┘ ││
+│  │ [ASSIGN]                 ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ Seat A5                  ││
+│  │ ┌──────────────────────┐ ││
+│  │ │ [Email/Phone]        │ ││
+│  │ └──────────────────────┘ ││
+│  │ [ASSIGN]                 ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ Seat A6 — 🔄 Pending    ││
+│  │ ┌──────────────────────┐ ││
+│  │ │ [Email/Phone]        │ ││
+│  │ └──────────────────────┘ ││
+│  │ [ASSIGN]                 ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ Seat A7 — 🔄 Pending    ││
+│  │ ┌──────────────────────┐ ││
+│  │ │ [Email/Phone]        │ ││
+│  │ └──────────────────────┘ ││
+│  │ [ASSIGN]                 ││
+│  └──────────────────────────┘│
+│                              │
+│  ⏰ You have 7 days to       │
+│     assign all tickets.      │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   SKIP (Assign Later)    ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+**Data Binding:**
+- GET /tickets?booking_id={id}&is_assigned=false → unassigned tickets
+- PATCH /tickets/{id}/assign → assign ticket to user (F003)
+
+================================================================================
+📱 CUSTOMER APP — MY TICKETS (F004)
+================================================================================
+
+6.1 TICKET LIST
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK        MY TICKETS     │
+├──────────────────────────────┤
+│                              │
+│  ─── Active (3) ───          │
+│  ┌──────────────────────────┐│
+│  │ 🎫 DEWA 19               ││
+│  │ CAT 1 — Seat A4          ││
+│  │ 📅 2026-12-20 19:00      ││
+│  │ 🟢 CONFIRMED             ││
+│  │                          ││
+│  │ ┌──────────────────────┐ ││
+│  │ │  VIEW TICKET         │ ││
+│  │ └──────────────────────┘ ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ 🎫 DEWA 19               ││
+│  │ CAT 1 — Seat A5          ││
+│  │ 🟡 RESALE_PENDING        ││
+│  │                          ││
+│  │ ┌──────────────────────┐ ││
+│  │ │  VIEW TICKET         │ ││
+│  │ └──────────────────────┘ ││
+│  └──────────────────────────┘│
+│                              │
+│  ─── Used (1) ───            │
+│  ┌──────────────────────────┐│
+│  │ 🎫 DEWA 19               ││
+│  │ CAT 1 — Seat A6          ││
+│  │ ⚪ USED                  ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+6.2 TICKET DETAIL — DYNAMIC QR + FALLBACK PIN
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK        TICKET DETAIL  │
+├──────────────────────────────┤
+│                              │
+│  🎫 DEWA 19 FEAT. MAHADEWI   │
+│  CAT 1 — Seat A4             │
+│  📅 2026-12-20 19:00          │
+│  📍 GBK Stadium              │
+│                              │
+│  ─── QR Code ───             │
+│  ┌──────────────────────────┐│
+│  │                          ││
+│  │     [QR CODE IMAGE]     ││
+│  │                          ││
+│  │   🔄 Refreshes in 28s   ││
+│  └──────────────────────────┘│
+│                              │
+│  ─── Fallback PIN ───        │
+│  ⚠️ If QR fails, use:       │
+│  ┌──────────────────────────┐│
+│  │  A3F8K9L2M1N4           ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │ 📤 Share PIN via SMS    ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │ 💰 Resell Ticket         ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+**Data Binding (FIXED v1.1):**
+- GET /tickets/{ticket_id} → ticket details, **fallback_pin (plain-text string, 12 chars)** — transmitted over TLS
+- GET /tickets/{ticket_id}/qr → dynamic QR (refreshes every 30s) (F004)
+- POST /tickets/{ticket_id}/resale → list for resale (F005)
+
+================================================================================
+📱 CUSTOMER APP — RESALE MARKETPLACE (F005)
+================================================================================
+
+7.1 LIST TICKET FOR RESALE
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK        RESALE TICKET  │
+├──────────────────────────────┤
+│                              │
+│  🎫 DEWA 19 — Seat A4        │
+│  Original Price: Rp 1,000,000│
+│                              │
+│  💰 Resale Price             │
+│  ┌──────────────────────────┐│
+│  │ Rp 1,050,000            ││
+│  │ (max +10% = Rp 1,100,000)││
+│  └──────────────────────────┘│
+│                              │
+│  Platform Fee: Rp 0         │
+│  You Receive: Rp 1,050,000  │
+│                              │
+│  ⚠️ Price cap: max +10%     │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   LIST FOR RESALE       ││
+│  └──────────────────────────┘│
+│                              │
+│  ────────────────────────────│
+│  🔄 Your listing will appear │
+│  in marketplace              │
+└──────────────────────────────┘
+
+7.2 BROWSE RESALE TICKETS
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      RESALE MARKET    │
+├──────────────────────────────┤
+│                              │
+│  🔍 Search tickets...        │
+│                              │
+│  ┌──────────────────────────┐│
+│  │ 🎫 DEWA 19 — Seat B2     ││
+│  │ Seller: Andi             ││
+│  │ Price: Rp 1,050,000      ││
+│  │ (Original: Rp 1,000,000) ││
+│  │ ⭐ Seller rating: 4.8   ││
+│  │                          ││
+│  │ ┌──────────────────────┐ ││
+│  │ │  BUY TICKET          │ ││
+│  │ └──────────────────────┘ ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ 🎫 DEWA 19 — Seat C7     ││
+│  │ Seller: Cinta            ││
+│  │ Price: Rp 1,080,000      ││
+│  │ (Original: Rp 1,000,000) ││
+│  │ ⭐ Seller rating: 4.5   ││
+│  │                          ││
+│  │ ┌──────────────────────┐ ││
+│  │ │  BUY TICKET          │ ││
+│  │ └──────────────────────┘ ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+7.3 CANCEL RESALE LISTING (NEW v1.1 — F005 Edge Case)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      MY RESALE LIST   │
+├──────────────────────────────┤
+│                              │
+│  🎫 DEWA 19 — Seat A4        │
+│  Listed: Rp 1,050,000        │
+│  Status: 🟡 PENDING          │
+│  Views: 45                   │
+│                              │
+│  ┌──────────────────────────┐│
+│  │ 🔄 Edit Price           ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │ ❌ Cancel Listing        ││
+│  └──────────────────────────┘│
+│                              │
+│  ────────────────────────────│
+│  ⚠️ Confirm Cancellation     │
+│  ┌──────────────────────────┐│
+│  │ Are you sure you want    ││
+│  │ to remove this ticket    ││
+│  │ from marketplace?        ││
+│  │                          ││
+│  │ [YES, CANCEL] [NO]      ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+**Data Binding:**
+- PATCH /resale/{resale_id}/cancel → cancel listing (trigger handle_resale_lifecycle → CANCELLED)
+
+================================================================================
+👨‍💼 EVENT ORGANIZER APP — DASHBOARD
+================================================================================
+
+8.1 EO DASHBOARD (REAL-TIME)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│☰ E-TIX FLASH EO   🔔   👤   │
+├──────────────────────────────┤
+│                              │
+│  🎸 DEWA 19 FEAT. MAHADEWI   │
+│  📅 2026-12-20 19:00         │
+│  Status: ON SALE 🔥          │
+│                              │
+│  ─── KPIs ───                │
+│  ┌──────┬──────┬──────┐     │
+│  │ 4,523 │ 12.3K │  32% │     │
+│  │Sold   │ RPS  │Conv.│     │
+│  └──────┴──────┴──────┘     │
+│                              │
+│  ─── Revenue ───             │
+│  Rp 4.5B / Rp 5.0B (90%)    │
+│  ████████████████████░░░░    │
+│                              │
+│  ─── Anti-Bot Report ───     │
+│  ✅ Blocked: 1.2M (95.2%)    │
+│  ⚠️ Suspicious: 12,450      │
+│                              │
+│  ─── Pending Orders ───      │
+│  🔴 12 orders waiting       │
+│                              │
+│  ┌──────────────────────────┐│
+│  │  🚨 EMERGENCY TOOLS     ││
+│  └──────────────────────────┘│
+├─ HOME ─ EVENT ─ ANALYTICS ─  │
+└──────────────────────────────┘
+
+**Data Binding:**
+- GET /events/{event_id}/dashboard → real-time KPIs
+- GET /events/{event_id}/anti-bot → blocked requests, suspicious IPs
+
+================================================================================
+👨‍💼 EVENT ORGANIZER APP — POST-EVENT ANALYTICS (F004b)
+================================================================================
+
+9.1 POST-EVENT REPORT
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      POST-EVENT       │
+├──────────────────────────────┤
+│                              │
+│  📊 DEWA 19 — Post-Event     │
+│  📅 2026-12-20              │
+│                              │
+│  ─── Attendance ───          │
+│  Total Tickets: 5,000       │
+│  ✅ Used: 4,523 (90.5%)     │
+│  ❌ No-Show: 477 (9.5%)     │
+│                              │
+│  ─── Peak Entry Time ───    │
+│  🕐 19:00 - 19:30 (3,200)   │
+│  🕐 18:30 - 19:00 (1,000)   │
+│  🕐 19:30 - 20:00 (323)     │
+│                              │
+│  ─── Gate Utilization ───   │
+│  Gate A: 1,523 (34%)        │
+│  Gate B: 2,100 (46%) ⚠️    │
+│  Gate C: 900 (20%)          │
+│                              │
+│  ─── Insights ───           │
+│  💡 Gate B is too busy!     │
+│     Add 2 more staff next   │
+│     time.                   │
+│                              │
+│  ┌──────────────────────────┐│
+│  │  📥 Export CSV/Excel     ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+**Data Binding:**
+- GET /events/{event_id}/analytics → post-event report (F004b)
+- GET /events/{event_id}/insights → recommendations
+
+================================================================================
+👨‍💼 EVENT ORGANIZER APP — EMERGENCY TOOLS (F006)
+================================================================================
+
+10.1 BULK CANCELLATION (Emergency)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      EMERGENCY        │
+├──────────────────────────────┤
+│                              │
+│  🚨 EMERGENCY TOOLS          │
+│                              │
+│  ⚠️ Confirm Bulk Cancellation│
+│                              │
+│  Event: DEWA 19              │
+│  Tickets: 4,523 to cancel   │
+│  Refund Total: Rp 4.5B      │
+│                              │
+│  Reason:                     │
+│  ┌──────────────────────────┐│
+│  │ Price error              ││
+│  └──────────────────────────┘│
+│                              │
+│  ⚠️ This action is IRREVERSIBLE│
+│  All buyers will be notified │
+│  and refunded.              │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   CONFIRM CANCELLATION  ││
+│  │   (2FA Required)        ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │  🔙 GO BACK              ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+**Data Binding:**
+- POST /admin/events/{event_id}/bulk-cancel → bulk cancellation (F006)
+- Requires X-Admin-2FA-Token header
+
+================================================================================
+🚪 GATE STAFF APP — SCANNER
+================================================================================
+
+11.1 QR SCAN (Primary Method)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│☰ E-TIX FLASH GATE   🔔      │
+├──────────────────────────────┤
+│                              │
+│  🎫 QR SCANNER               │
+│                              │
+│  ┌──────────────────────────┐│
+│  │                          ││
+│  │   📷 CAMERA VIEW        ││
+│  │                          ││
+│  │   [Scan QR Code]         ││
+│  │                          ││
+│  └──────────────────────────┘│
+│                              │
+│  ─── Last Scan ───           │
+│  ✅ VALID — Seat A4          │
+│     Budi Santoso             │
+│     Gate A — 19:15:23       │
+│                              │
+│  ┌──────────────────────────┐│
+│  │  ⌨️ Manual PIN Entry     ││
+│  └──────────────────────────┘│
+│                              │
+│  📶 Online (sync)            │
+├─ SCAN ─ HISTORY ─ SETTINGS ─ │
+└──────────────────────────────┘
+
+11.2 FALLBACK PIN ENTRY (Secondary Method)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK        PIN ENTRY      │
+├──────────────────────────────┤
+│                              │
+│  ⚠️ QR scan failed?          │
+│  Enter Fallback PIN          │
+│                              │
+│  ┌──────────────────────────┐│
+│  │  _ _ _ _ _ _ _ _ _ _ _ _ ││
+│  │                          ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌─────┬─────┬─────┐        │
+│  │  1  │  2  │  3  │        │
+│  ├─────┼─────┼─────┤        │
+│  │  4  │  5  │  6  │        │
+│  ├─────┼─────┼─────┤        │
+│  │  7  │  8  │  9  │        │
+│  ├─────┼─────┼─────┤        │
+│  │  *  │  0  │  #  │        │
+│  └─────┴─────┴─────┘        │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   VERIFY PIN             ││
+│  └──────────────────────────┘│
+│                              │
+│  💡 PIN is 12-digit          │
+│  alphanumeric.               │
+│  Example: A3F8K9L2M1N4      │
+└──────────────────────────────┘
+
+11.3 OFFLINE SYNC INDICATOR (NEW v1.1 — F004b)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│☰ E-TIX FLASH GATE   🔔      │
+├──────────────────────────────┤
+│                              │
+│  ⚠️ OFFLINE MODE             │
+│  ┌──────────────────────────┐│
+│  │ 📡 Connection lost.      ││
+│  │ Scans are saved locally. ││
+│  │                          ││
+│  │ 🔄 Pending sync: 12      ││
+│  │ ┌──────────────────────┐ ││
+│  │ │ ██████████░░░░░░░░░ │ ││
+│  │ │ 60% synced           │ ││
+│  │ └──────────────────────┘ ││
+│  │                          ││
+│  │ ⏳ Last sync: 2 min ago ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │  📷 QR SCANNER          ││
+│  └──────────────────────────┘│
+│                              │
+│  📶 🔴 Offline (12 pending)  │
+├─ SCAN ─ HISTORY ─ SETTINGS ─ │
+└──────────────────────────────┘
+
+**Data Binding:**
+- Local storage: SQLite for offline scan logs
+- POST /gate/sync → sync offline scans when online (F004b)
+
+================================================================================
+👨‍💼 ADMIN WEB PANEL — LEDGER & RECONCILIATION
+================================================================================
+
+12.1 LEDGER AUDIT TRAIL
+────────────────────────────────────────────────────────────────────────────────
+
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ E-TIX FLASH ADMIN        🔔 3 Alerts        👤 Admin                       │
+├────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                │
+│  💰 LEDGER AUDIT TRAIL                                                       │
+│                                                                                │
+│  Filters:                                                                     │
+│  Date: [2026-12-20]  Status: [All ▼]  Search: [...]                         │
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────────┐│
+│  │ Transaction ID │ User    │ Type    │ Amount   │ Status │ Reference       ││
+│  ├──────────────────────────────────────────────────────────────────────────┤│
+│  │ TXN-001        │ Budi S. │ CREDIT  │ +1.0M    │ ✅      │ Booking-123     ││
+│  │ TXN-002        │ Andi    │ DEBIT   │ -1.0M    │ ✅      │ Booking-123     ││
+│  │ TXN-003        │ Budi S. │ CREDIT  │ +1.05M   │ ⚠️ PEND │ Resale-456      ││
+│  └──────────────────────────────────────────────────────────────────────────┘│
+│                                                                                │
+│  ✅ Ledger Balance: DEBIT 5.0M = CREDIT 5.0M (BALANCED)                    │
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────────┐│
+│  │  [Manual Reconciliation]  [Force Refund]  [Export CSV]                 ││
+│  └──────────────────────────────────────────────────────────────────────────┘│
+└────────────────────────────────────────────────────────────────────────────────┘
+
+**Data Binding:**
+- GET /admin/ledger → ledger entries
+- POST /admin/ledger/reverse → transaction reversal (F006)
+
+================================================================================
+👨‍💼 ADMIN WEB PANEL — USER & BLACKLIST MANAGEMENT (NEW v1.1)
+================================================================================
+
+12.2 ADMIN USER & BLACKLIST MANAGEMENT (F001/F006)
+────────────────────────────────────────────────────────────────────────────────
+
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ E-TIX FLASH ADMIN        🔔 3 Alerts        👤 Admin                       │
+├────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                │
+│  👥 USER & BLACKLIST MANAGEMENT                                             │
+│                                                                                │
+│  ─── Users ───                                                               │
+│  ┌──────────────────────────────────────────────────────────────────────────┐│
+│  │ User ID │ Name    │ Role     │ Status   │ Tickets │ Actions             ││
+│  ├──────────────────────────────────────────────────────────────────────────┤│
+│  │ USR-001 │ Budi S. │ Customer │ ACTIVE   │ 3       │ [Suspend] [Freeze] ││
+│  │ USR-002 │ Andi    │ Customer │ SUSPENDED│ 1       │ [Unsuspend]        ││
+│  │ USR-003 │ Cinta   │ EO       │ ACTIVE   │ 0       │ [Suspend]          ││
+│  └──────────────────────────────────────────────────────────────────────────┘│
+│                                                                                │
+│  ─── Blacklist ───                                                           │
+│  ┌──────────────────────────────────────────────────────────────────────────┐│
+│  │ Type  │ Value          │ Reason          │ Added By │ Expires           ││
+│  ├──────────────────────────────────────────────────────────────────────────┤│
+│  │ IP    │ 203.0.113.42   │ Bot detected     │ System   │ 2027-01-20       ││
+│  │ Device│ abc-123-def    │ Suspicious login │ Admin    │ Permanent         ││
+│  └──────────────────────────────────────────────────────────────────────────┘│
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────────┐│
+│  │  [Add IP to Blacklist]  [Remove]  [Add Device Fingerprint]              ││
+│  └──────────────────────────────────────────────────────────────────────────┘│
+└────────────────────────────────────────────────────────────────────────────────┘
+
+**Data Binding:**
+- GET /admin/users → list all users
+- PATCH /admin/users/{id}/suspend → suspend user
+- PATCH /admin/users/{id}/unsuspend → unsuspend user
+- GET /admin/blacklist → list blacklisted IPs/devices
+- POST /admin/blacklist → add IP/device
+- DELETE /admin/blacklist/{id} → remove from blacklist
+
+================================================================================
+👨‍💼 ADMIN WEB PANEL — FORCE SEAT RELEASE TOOL (NEW v1.1)
+================================================================================
+
+12.3 ADMIN FORCE SEAT RELEASE TOOL (F006)
+────────────────────────────────────────────────────────────────────────────────
+
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ E-TIX FLASH ADMIN        🔔 3 Alerts        👤 Admin                       │
+├────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                │
+│  🔓 FORCE SEAT RELEASE TOOL                                                 │
+│                                                                                │
+│  ⚠️ Use this tool only when seat locks are stuck.                            │
+│                                                                                │
+│  ─── Stuck Locks ───                                                         │
+│  ┌──────────────────────────────────────────────────────────────────────────┐│
+│  │ Booking ID │ Section │ Seats   │ Locked Since │ Status                  ││
+│  ├──────────────────────────────────────────────────────────────────────────┤│
+│  │ BKG-123    │ CAT 1   │ A4,A5   │ 2 hours ago  │ 🔴 STUCK               ││
+│  │ BKG-456    │ CAT 2   │ B7      │ 1 hour ago   │ 🔴 STUCK               ││
+│  └──────────────────────────────────────────────────────────────────────────┘│
+│                                                                                │
+│  ─── Release Seats ───                                                       │
+│  ┌──────────────────────────────────────────────────────────────────────────┐│
+│  │ Booking ID: [BKG-123]  Reason: [Lock stuck after timeout]              ││
+│  │                                                                          ││
+│  │ ⚠️ This will:                                                            ││
+│  │ - Release ALL seats in this booking                                      ││
+│  │ - Set booking status to CANCELLED                                       ││
+│  │ - Log to admin_actions                                                  ││
+│  │                                                                          ││
+│  │ ┌──────────────────────────────────────────────────────────────────────┐ ││
+│  │ │  [RELEASE SEATS (2FA Required)]                                    │ ││
+│  │ └──────────────────────────────────────────────────────────────────────┘ ││
+│  └──────────────────────────────────────────────────────────────────────────┘│
+└────────────────────────────────────────────────────────────────────────────────┘
+
+**Data Binding:**
+- GET /admin/stuck-locks → list bookings with expired locks still active
+- POST /admin/force-release → force release seats (F006)
+
+================================================================================
+📱 RESPONSIVE DESIGN BREAKPOINTS
+================================================================================
+
+| Breakpoint | Size | Layout |
+|------------|------|--------|
+| **Mobile** | 320px - 767px | Single column, bottom navigation |
+| **Tablet** | 768px - 1023px | Sidebar (collapsible), 2-column grid |
+| **Desktop** | 1024px+ | Full sidebar, multi-column dashboard |
+
+================================================================================
+🎯 SCREEN INVENTORY SUMMARY (UPDATED v1.1)
+================================================================================
+
+| Module | Screen | Purpose | Key Components | Backend Sync | Status |
+|--------|--------|---------|----------------|--------------|--------|
+| **Auth** | Login | Sign in | Email, password | POST /auth/login | ✅ |
+| **Auth** | Register | Create account | Name, email, phone, role | POST /auth/register | ✅ NEW |
+| **Auth** | OTP | Verify phone | 6-digit OTP | POST /auth/verify-otp | ✅ NEW |
+| **Customer** | Home | Dashboard | Event list, quick actions | GET /events, GET /users/me | ✅ |
+| **Customer** | Waiting Room | Queue | Position, tier, wait time | WebSocket / Polling | ✅ |
+| **Customer** | CAPTCHA Modal | Bot verification | Image challenge, timer | POST /captcha/verify | ✅ NEW |
+| **Customer** | Seat Map | Select seats | Section map, group selection | POST /bookings | ✅ |
+| **Customer** | Seat Collision Alert | Conflict notification | Toast/alert, retry | GET /sections/{id}/seats | ✅ NEW |
+| **Customer** | Payment | Split/Bulk | Payment mode, links, status | POST /bookings/{id}/payments | ✅ |
+| **Customer** | Bulk Assignment | Assign tickets | Email/phone input, assign button | PATCH /tickets/{id}/assign | ✅ NEW |
+| **Customer** | My Tickets | Ticket list | Active/Used/Resold | GET /tickets | ✅ |
+| **Customer** | Ticket Detail | QR + PIN | Dynamic QR, Fallback PIN | GET /tickets/{id} | ✅ |
+| **Customer** | Resale List | List ticket | Price cap, confirmation | POST /resale | ✅ |
+| **Customer** | Resale Market | Browse & buy | Available tickets, buy | GET /resale, POST /resale/{id}/buy | ✅ |
+| **Customer** | Cancel Resale | Cancel listing | Confirmation modal | PATCH /resale/{id}/cancel | ✅ NEW |
+| **EO** | Dashboard | Real-time sales | KPIs, anti-bot, orders | GET /events/{id}/dashboard | ✅ |
+| **EO** | Post-Event | Analytics | Attendance, gate stats | GET /events/{id}/analytics | ✅ |
+| **EO** | Emergency | Bulk cancel | Confirmation, 2FA | POST /admin/events/{id}/bulk-cancel | ✅ |
+| **Gate Staff** | Scanner | QR scan | Camera, scan result | POST /gate/scan-qr | ✅ |
+| **Gate Staff** | PIN Entry | Fallback PIN | PIN pad, verification | POST /gate/verify-pin | ✅ |
+| **Gate Staff** | Offline Sync | Sync status | Connection indicator, pending | POST /gate/sync | ✅ NEW |
+| **Admin** | Ledger | Audit trail | Transactions, reconciliation | GET /admin/ledger | ✅ |
+| **Admin** | User & Blacklist | Management | Suspend, blacklist IP | GET/PATCH /admin/users, /admin/blacklist | ✅ NEW |
+| **Admin** | Force Release | Stuck locks | Release tool, 2FA | POST /admin/force-release | ✅ NEW |
+
+================================================================================
+📊 UI STATE MACHINE — CUSTOMER JOURNEY (UPDATED v1.1)
+================================================================================
+
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                     CUSTOMER JOURNEY STATE MACHINE                           │
+└────────────────────────────────────────────────────────────────────────────────┘
+
+   [Home] ──(Click Buy)──▶ [Waiting Room] ──(Queue Done)──▶ [Seat Map]
+        │                          │                          │
+        │                          │                          │
+        │                          └──(Tier 3/Score<50)──▶ [CAPTCHA Modal]
+        │                                                     │
+        │                                                     ├──(Success)──▶ [Seat Map]
+        │                                                     └──(Fail)──▶ [CAPTCHA Retry]
+        │
+        └──(View Tickets)──▶ [My Tickets]
+                               │
+                               └──(Click Ticket)──▶ [Ticket Detail]
+                                                       │
+                                                       └──(Resell)──▶ [Resale List]
+                                                       └──(Cancel Resale)──▶ [Confirm Modal]
+                                                       │
+   [Seat Map] ──(Select Seats)──▶ [Payment Mode]            │
+        │                           │                       │
+        │                           ├──(SPLIT)──▶ [Split Pay Links]
+        │                           │              │        │
+        │                           │              ├──(All Paid)──▶ [Ticket Detail]
+        │                           │              │
+        │                           │              └──(Timeout)──▶ [Rollback → Home]
+        │                           │
+        │                           └──(BULK)──▶ [Bulk Pay]──▶ [Bulk Assignment]──▶ [Ticket Detail]
+        │
+        ├──(Seat Conflict)──▶ [Seat Collision Alert]──▶ [Seat Map] (retry)
+        │
+        └──(Timeout Lock)──▶ [Seat Map] (release + retry)
+
+================================================================================
+📌 STATUS CHECKLIST (FINAL — 100% SYNCHRONIZED)
+================================================================================
+
+✅ PRD v6.0-FINAL:
+   - F001 (Behavioral Ingress) → Waiting Room + Priority Tier + CAPTCHA Modal ✅
+   - F002 (Bitmask Locking) → Seat Map + Atomic Lock + Collision Alert ✅
+   - F003 (Split-Pay) → Payment Mode + Split/Bulk + Bulk Assignment ✅
+   - F004 (Dynamic QR + PIN) → Ticket Detail + QR/PIN (FIXED data binding) ✅
+   - F004b (Gate Analytics) → Post-Event Report + Offline Sync ✅
+   - F005 (Resale Market) → Resale List + Marketplace + Cancel Listing ✅
+   - F006 (Admin Tools) → Emergency Bulk Cancel + Force Release + User Management ✅
+
+✅ DATABASE SCHEMA v2.9-FINAL:
+   - users → Profile, Loyalty Tier, Suspend/Unsuspend ✅
+   - events → Event List, Dashboard ✅
+   - sections → Seat Map ✅
+   - bookings → Booking flow ✅
+   - payment_obligations → Split-Pay status ✅
+   - tickets → Ticket Detail, QR, PIN, is_assigned ✅
+   - ticket_scans → Gate scanner, Offline sync ✅
+   - resale_transactions → Resale Marketplace, Cancel listing ✅
+   - admin_actions → Admin audit, Force release ✅
+   - insights → Post-Event Analytics ✅
+   - blacklist → IP/Device blacklist management ✅
+
+✅ LOGIC FLOW v1.4-FINAL:
+   - F002 → Native Redis Bitmap, seat locking UI, collision alert ✅
+   - F003 → Event-driven payment, bulk assignment UI ✅
+   - F004 → Hashed PIN (server), plain-text PIN (client UI) ✅
+   - F005 → Resale reservation TTL, cancel listing UI ✅
+
+✅ All user roles covered (Customer, EO, Gate Staff, Admin) ✅
+✅ Mobile-first responsive design ✅
+✅ Offline capability for gate scanner with sync indicator ✅
+✅ All 9 missing screens added (v1.1) ✅
+✅ Data binding fix applied (fallback_pin plain-text) ✅
+
+================================================================================
+📌 VERSION HISTORY
+================================================================================
+
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0-FINAL | 2026-09-08 | M. Arif Aulia | Initial HALAMAN document for E-Tix Flash. |
+| 1.1-FINAL | 2026-09-08 | M. Arif Aulia | **9 missing screens added:** 1) Register Screen, 2) OTP Verification, 3) CAPTCHA Modal, 4) Seat Collision Alert, 5) Bulk Ticket Assignment, 6) Cancel Resale Listing, 7) Offline Sync Indicator, 8) Admin User & Blacklist Management, 9) Admin Force Seat Release. Fixed data binding in Ticket Detail (fallback_pin plain-text). Updated Screen Inventory & State Machine. |
+
+================================================================================
+END OF HALAMAN v1.1-FINAL
+================================================================================
+
+✅ 100% PRODUCTION-READY — LOCKED
+✅ Synchronized with PRD v6.0-FINAL
+✅ Synchronized with DATABASE SCHEMA v2.9-FINAL
+✅ Synchronized with LOGIC FLOW v1.4-FINAL
+✅ All 9 missing screens added
+✅ Data binding fixed
+✅ Ready for DESIGN.MD (Visual Design) and TDD (Technical Design)
+
+Last Updated: 2026-09-08 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED.

@@ -1,0 +1,1802 @@
+================================================================================
+SECURITY SPEC: E-Tix Flash (Smart Ticketing Platform) (v1.4-FINAL)
+================================================================================
+
+Version:         1.4-FINAL
+Last Updated:    2026-09-10
+Author:          M. Arif Aulia
+Status:          ✅ 100% PRODUCTION-READY — LOCKED FOR DEPLOYMENT
+Platform:        Golang (Gin) + PostgreSQL (Supabase) + Redis (Upstash) + RabbitMQ
+
+================================================================================
+📌 BISMILLAH — SECURITY SPECIFICATION FINAL VERSION (POST-GEMINI REVIEW #5)
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. Executive Summary & Threat Model
+2. Authentication & Authorization
+3. Data Protection & Encryption
+4. API Security & Input Validation
+5. Database Security & Access Control
+6. Financial Transaction Security
+7. Denial of Service (DoS) Prevention
+8. Anti-Bot & Anti-Scalping Security
+9. Logging, Monitoring & Incident Response
+10. Deployment Security
+11. Compliance & Audit Trail
+12. Security Checklist & Testing
+13. Incident Response Procedures
+
+================================================================================
+1. EXECUTIVE SUMMARY & THREAT MODEL
+================================================================================
+
+SECURITY OBJECTIVES (CIA Triad)
+
+Confidentiality: Protect sensitive data (PII, balances, auth tokens, ticket ownership)
+Integrity: Prevent data corruption, unauthorized modification, and ticket forgery
+Availability: Ensure 99.9% uptime during flash sale events and resist DoS/DDoS attacks
+
+THREAT LANDSCAPE (Based on Ticketing SaaS + High-Concurrency System)
+
+┌──────────────────────┬────────────────────┬────────────────────────────────┐
+│ Threat Category      │ Risk Level         │ Mitigation                     │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ Scalper Bot Attacks  │ CRITICAL           │ Behavioral Ingress + Fan Score │
+│ (Ticket Hoarding)    │ (Revenue Loss)     │ + Queue Token Single-Use       │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ Race Condition       │ CRITICAL           │ Redis Lua Atomic Bitmask       │
+│ (Double-Booking)     │ (Data Integrity)   │ + FOR UPDATE with ORDER BY id  │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ Payment Fraud        │ CRITICAL           │ Payment Gateway Integration    │
+│ (Fake Webhook/Replay)│ (Loss: Rp ∞)       │ + Idempotency + Signature HMAC │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ Account Compromise   │ CRITICAL           │ JWT + Refresh Rotation         │
+│ (Credential Theft)   │ (User Funds)       │ + Token Blacklist + 2FA Admin  │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ Ticket Forgery       │ HIGH               │ Dynamic HMAC QR                │
+│ (Screenshot/Piracy)  │ (Revenue Loss)     │ + Static Fallback PIN (hash)   │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ Injection Attacks    │ CRITICAL           │ Parameterized Queries          │
+│ (SQL/NoSQL/Command)  │ (Data Breach)      │ + Strict Input Validation      │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ IDOR / BOLA          │ HIGH               │ JWT-based ownership            │
+│ (Privilege Escalation)│ (Data Leak)       │ + Row-Level Security (RLS)     │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ DDoS / API Abuse     │ HIGH               │ Rate Limiting (Token Bucket)   │
+│ (Service Down)       │ (Availability)     │ + Circuit Breaker              │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ Data Exposure        │ HIGH               │ TLS 1.3 + Encryption at Rest   │
+│ (Network Sniffing)   │ (PII Leak)         │ + PII Masking in Logs          │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ Replay Attack        │ MEDIUM             │ X-Idempotency-Key + JTI        │
+│ (Duplicate Request)  │ (False Trans.)     │ + X-Queue-Token single-use     │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ Cache Poisoning      │ MEDIUM             │ Redis ACL + No untrusted input │
+│ (Stale Bitmask)      │ (Wrong Seats)      │ + TTL enforcement              │
+├──────────────────────┼────────────────────┼────────────────────────────────┤
+│ Business Logic Bypass│ MEDIUM             │ Formal State Machine           │
+│ (Exploitable Flows)  │ (Loss: Rp ∞)       │ + Mandatory Rule Checks        │
+└──────────────────────┴────────────────────┴────────────────────────────────┘
+
+SECURITY PRINCIPLES
+
+✅ Defense in Depth: Multiple layers (auth → validation → encryption → logging)
+✅ Least Privilege: Users only access what they need (RBAC + RLS)
+✅ Zero Trust: Validate everything (token, payload, rate limit, signature)
+✅ Fail Secure: Errors default to deny (not allow)
+✅ Audit Trail: Every mutation logged with user_id + timestamp
+✅ Payment Gateway as Source of Truth: All financial mutations verifiable via
+   external_transaction_id + webhook signature; no internal wallet/ledger.
+✅ Data Minimization: Only collect and retain what's needed
+
+================================================================================
+2. AUTHENTICATION & AUTHORIZATION
+================================================================================
+
+2.1 AUTHENTICATION STRATEGY
+────────────────────────────────────────────────────────────────────────────────
+
+METHOD: JWT (JSON Web Token) with RS256 (asymmetric, RSA 2048-bit minimum)
+ALGORITHM: RS256 (NOT HS256 — asymmetric keys allow public key distribution)
+EXPIRATION:
+  - access_token: 1 hour
+  - refresh_token: 7 days (with rotation)
+
+TOKEN CLAIMS (JWT Payload)
+{
+  "sub": "uuid-user-id",                    // Subject (user ID)
+  "email": "user@example.com",
+  "role": "customer|event_organizer|gate_staff|admin",
+  "tier": "TIER_1|TIER_2|TIER_3",           // Fan Score tier
+  "token_type": "access|refresh",           // Token type validation
+  "jti": "uuid-unique-jti",                 // JWT ID for blacklist
+  "iat": 1723637400,                        // Issued at
+  "exp": 1723641000,                        // Expiration
+  "iss": "e-tix-flash"
+}
+
+TOKEN STORAGE (PWA)
+🔒 Browser (PWA):
+  - access_token: In-memory (cleared on browser close) or sessionStorage
+  - refresh_token: HttpOnly cookie (immune to XSS) — recommended
+  - Never store in localStorage (XSS vulnerable)
+  - Service Worker cache: NO tokens cached
+
+REFRESH TOKEN FLOW (With Rotation)
+
+1. Client stores refresh_token in secure storage
+2. After access_token expires (1 hour), client calls:
+   POST /auth/refresh-token
+   Body: { "refresh_token": "..." }
+3. Backend validates:
+   - Verify signature (RS256 public key)
+   - Check expiration
+   - Check token_type == "refresh"
+   - Check jti is NOT blacklisted in Redis
+4. **Rotate tokens**:
+   - Blacklist old refresh_token jti in Redis (TTL = remaining expiry, minimum 1 second)
+   - Generate new access_token + new refresh_token
+5. Return new token pair
+6. If refresh fails → Force re-login
+
+2.2 RBAC (ROLE-BASED ACCESS CONTROL)
+────────────────────────────────────────────────────────────────────────────────
+
+4 ROLES (From users.user_role_enum)
+
+┌───────────────┬──────────────────────────────────┬──────────────────────┐
+│ Role          │ Capabilities                     │ Data Access          │
+├───────────────┼──────────────────────────────────┼──────────────────────┤
+│ customer      │ Browse events, book seats,       │ Own bookings,        │
+│               │ split-pay, view tickets, resale  │ own tickets, own     │
+│               │                                  │ resale listings      │
+├───────────────┼──────────────────────────────────┼──────────────────────┤
+│ event_organizer│ Manage events, view analytics,  │ Own events,          │
+│               │ emergency bulk cancel            │ own event analytics  │
+├───────────────┼──────────────────────────────────┼──────────────────────┤
+│ gate_staff    │ Scan QR, verify PIN, offline sync│ Ticket scans (valid) │
+├───────────────┼──────────────────────────────────┼──────────────────────┤
+│ admin         │ Full system access, ledger audit,│ All data (read) +    │
+│               │ user management, transaction     │ system writes        │
+│               │ reversal (2FA required)          │                      │
+└───────────────┴──────────────────────────────────┴──────────────────────┘
+
+RBAC ENFORCEMENT LAYERS
+
+Layer 1: HTTP Middleware (Gin)
+  func AuthMiddleware(blacklist *TokenBlacklistService) gin.HandlerFunc {
+    return func(c *gin.Context) {
+      token := extractToken(c)
+      claims, err := jwtService.ValidateAccessToken(token)
+      if err != nil {
+        c.JSON(401, ErrorResponse("UNAUTHORIZED"))
+        c.Abort()
+        return
+      }
+      // Enforce token_type
+      if claims.TokenType != "access" {
+        c.JSON(401, ErrorResponse("TOKEN_TYPE_MISMATCH"))
+        c.Abort()
+        return
+      }
+      // Check blacklist
+      blacklisted, _ := blacklist.IsBlacklisted(ctx, claims.JTI)
+      if blacklisted {
+        c.JSON(401, ErrorResponse("TOKEN_BLACKLISTED"))
+        c.Abort()
+        return
+      }
+      c.Set("user_id", claims.UserID)
+      c.Set("role", claims.Role)
+      c.Set("tier", claims.Tier)
+      c.Next()
+    }
+  }
+
+Layer 2: Endpoint-Level Check (RBAC Middleware)
+  func RBACMiddleware(allowedRoles ...string) gin.HandlerFunc {
+    return func(c *gin.Context) {
+      role := c.GetString("role")
+      for _, r := range allowedRoles {
+        if role == r {
+          c.Next()
+          return
+        }
+      }
+      c.JSON(403, ErrorResponse("FORBIDDEN"))
+      c.Abort()
+    }
+  }
+
+  // Usage
+  router.POST("/admin/events/:id/bulk-cancel",
+    AuthMiddleware(blacklist),
+    RBACMiddleware("admin", "event_organizer"),
+    adminHandler.BulkCancel,
+  )
+
+Layer 3: Database RLS (Row-Level Security)
+  CREATE POLICY "Users can view own tickets" ON tickets
+    FOR SELECT USING (owner_user_id = auth.uid());
+  
+  CREATE POLICY "Admins can view all tickets" ON tickets
+    FOR SELECT USING ((auth.jwt() ->> 'role') IN ('admin', 'event_organizer'));
+
+Example: IDOR Prevention (from API Contract v1.1)
+  POST /resale/{resale_id}/buy
+  → buyer_user_id is extracted from JWT claims (sub), NOT from request body
+  → Prevents buyer impersonation attack
+
+2.3 PASSWORD SECURITY
+────────────────────────────────────────────────────────────────────────────────
+
+PASSWORD HASHING
+  - Algorithm: bcrypt (cost factor ≥ 12)
+  - Never transmitted over HTTP (HTTPS only)
+  - Stored in users.password_hash (VARCHAR 255)
+
+PASSWORD REQUIREMENTS
+  - Minimum: 8 characters
+  - Complexity: Mix of upper, lower, numbers, symbols
+  - No common patterns (123456, password, etc.)
+  - Max: 128 characters (bcrypt truncates at 72, so limit input)
+
+NOTE (v1.3): Password change / forgot-password / reset-password endpoints
+  adalah OUT OF SCOPE untuk MVP v1.0 sesuai API_CONTRACT v1.1 (hanya
+  register, login, verify-otp, refresh-token, logout, users/me). Jika di
+  masa depan ditambahkan, wajib melalui revisi API_CONTRACT terlebih dahulu.
+
+================================================================================
+3. DATA PROTECTION & ENCRYPTION
+================================================================================
+
+3.1 ENCRYPTION IN TRANSIT (Network)
+────────────────────────────────────────────────────────────────────────────────
+
+PROTOCOL: TLS 1.3 (mandatory, TLS 1.2 minimum fallback)
+CIPHER SUITES (Modern):
+  - TLS_AES_256_GCM_SHA384
+  - TLS_CHACHA20_POLY1305_SHA256
+  - TLS_AES_128_GCM_SHA256
+
+CERTIFICATE:
+  - Obtained via Let's Encrypt (Render.com auto-managed)
+  - Minimum 2048-bit RSA
+  - HSTS header: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+
+HTTPS ENFORCEMENT
+  All traffic redirected (HTTP → HTTPS)
+  
+  Example Gin Middleware:
+  func HTTPSRedirect() gin.HandlerFunc {
+    return func(c *gin.Context) {
+      if c.Request.Header.Get("X-Forwarded-Proto") != "https" && os.Getenv("ENV") == "production" {
+        c.Redirect(301, "https://"+c.Request.Host+c.Request.RequestURI)
+        c.Abort()
+        return
+      }
+      c.Next()
+    }
+  }
+
+3.2 ENCRYPTION AT REST (Database)
+────────────────────────────────────────────────────────────────────────────────
+
+DATABASE ENCRYPTION (Supabase PostgreSQL)
+  - Automatically encrypted at disk level (AES-256)
+  - Master keys managed by Supabase (AWS KMS)
+  - Backups encrypted with same keys
+  - No manual encryption needed at application layer
+
+SENSITIVE FIELDS (Additional Application-Level Hashing)
+
+| Field                          | Protection              | Reason                |
+|--------------------------------|-------------------------|-----------------------|
+| users.password_hash            | bcrypt (cost=12)        | Never store plain     |
+| tickets.fallback_pin_hash      | SHA-256 (hashed)        | Anti-leak on read     |
+| tickets.qr_secret_key          | Stored plain + UUID v4  | Random per ticket     |
+| payment_obligations.external_transaction_id | Stored plain | For gateway lookup |
+| users.phone                    | Masked in logs/response | PII protection        |
+
+3.3 SENSITIVE DATA MASKING
+────────────────────────────────────────────────────────────────────────────────
+
+IN LOGS (Prevent PII leakage)
+  ✅ DO LOG:
+    - user_id (UUID)
+    - booking_id, ticket_id, transaction_id
+    - HTTP status code, endpoint
+    - Error code (INSUFFICIENT_BALANCE, etc.)
+    - IP address (for security audit)
+  
+  ❌ NEVER LOG:
+    - Full email or phone
+    - Password or password_hash
+    - JWT tokens (log jti only, never full token)
+    - QR secret keys
+    - Fallback PIN (plain-text)
+
+HEADER SANITIZATION RULES (Middleware Log Masking)
+  ✅ WAJIB: Middleware logging/recovery harus melakukan redaction otomatis pada header sensitif:
+    - Authorization: Bearer <token> → Authorization: Bearer [REDACTED]
+    - X-Admin-2FA-Token: <token> → X-Admin-2FA-Token: [REDACTED]
+    - X-Queue-Token: <token> → X-Queue-Token: [REDACTED]
+    - X-Idempotency-Key: boleh dicatat untuk audit, tetapi tidak boleh dikombinasikan dengan payload sensitif.
+  ✅ DILARANG: menulis raw JWT, raw queue token, raw 2FA token ke log aggregator (stdout, file, Sentry, dsb).
+  ✅ Implementasi: fungsi `SanitizeHeaders(http.Header) map[string]string` dipanggil sebelum logger menulis request/response.
+
+IN API RESPONSES (Prevent data over-sharing)
+  ✅ RETURN:
+    - user_id, email (owner only)
+    - ticket_id, status, event_name, seat_position
+    - booking_id, total_amount, payment_status
+  
+  ❌ NEVER RETURN:
+    - password_hash
+    - Other users' data (enforced by RLS)
+    - JWT tokens in response body (only at login/refresh)
+
+Example Response (List Users - Admin):
+{
+  "user_id": "uuid-123",
+  "name": "Budi Santoso",
+  "email": "budi@example.com",
+  "phone": "****5678",       // Masked in list
+  "status": "ACTIVE"
+  // NOT included:
+  // "password_hash": "..."
+}
+
+================================================================================
+4. API SECURITY & INPUT VALIDATION
+================================================================================
+
+4.1 INPUT VALIDATION (Defense Against Injection)
+────────────────────────────────────────────────────────────────────────────────
+
+PRINCIPLE: Whitelist & Type Enforcement
+
+String Fields
+  Email: RFC 5322 regex
+    Pattern: ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$
+    Max length: 255 characters
+    Validation library: github.com/go-playground/validator/v10
+
+  Phone: International format
+    Pattern: ^\+?[0-9]{10,15}$
+    Max length: 20
+    Allowed: +62812345678 or 08123456789
+
+  UUID: RFC 4122 v4
+    Pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+    Validation: uuid.Parse(val)
+
+  Name: Alphanumeric + spaces/hyphens
+    Pattern: ^[a-zA-Z0-9\s\-']{3,255}$
+    Max length: 255
+
+  Fallback PIN: 12-digit alphanumeric
+    Pattern: ^[A-Z0-9]{12}$
+    Case-sensitive, uppercase only
+
+Numeric Fields
+  Amount: Non-negative integer (IDR)
+    Range: 0 to 999,999,999,999 (Rp 999T)
+    Type: int64 (for JSON) → decimal.Decimal (for calculation)
+    Decimal places: Exactly 2
+
+  Seat Position: Positive integer
+    Range: 1 to total_seats
+
+Enum Fields (Strict Matching)
+  Status: Only values in database ENUM
+    Example: ticket_status ∈ {AVAILABLE, LOCKED, PENDING_SPLIT_PAY, CONFIRMED, RESALE_PENDING, RESOLD, CANCELLED, USED}
+    Validation: if !contains(validStatuses, input) { return error }
+
+Date/Time
+  Format: ISO 8601 with timezone
+    Example: 2026-09-10T10:30:45.123Z
+    Validation: time.Parse("2006-01-02T15:04:05.000Z07:00", input)
+    Timezone: UTC only (reject other TZ)
+
+PARAMETERIZED QUERIES (SQL Injection Prevention)
+
+❌ NEVER:
+  query := fmt.Sprintf("SELECT * FROM tickets WHERE id = '%s'", ticketID)
+
+✅ ALWAYS:
+  var ticket Ticket
+  err := db.QueryRow("SELECT * FROM tickets WHERE id = $1", ticketID).
+    Scan(&ticket.ID, &ticket.Status, ...)
+
+Library: pgx/v5 (prepared statements built-in)
+
+4.2 RATE LIMITING (DoS & API Abuse Prevention)
+────────────────────────────────────────────────────────────────────────────────
+
+ALGORITHM: Token Bucket (Redis-backed)
+WINDOW: Rolling 1-minute
+
+LIMITS BY ENDPOINT (From API Contract Section 5)
+
+Authentication:
+  POST /auth/signup: 10 req/hour per IP
+  POST /auth/login: 5 req/min per IP (anti-brute-force)
+  POST /auth/verify-otp: 5 req/15min per IP
+  POST /auth/refresh-token: 10 req/15min per user
+
+Queue:
+  POST /queue/verify-captcha: 3 req/5min per IP
+
+Read Operations:
+  GET * (events, tickets, bookings, resale): 100 req/min per user/IP
+
+Write Operations:
+  POST /bookings (all): 10 req/min per user
+  POST /resale (all): 10 req/min per user
+  POST /admin (all): 30 req/min per admin
+
+Gate Operations:
+  POST /gate (all): 180 req/min per gate staff
+
+IMPLEMENTATION (Redis-backed Token Bucket)
+  func RateLimitMiddleware(limit int, window time.Duration) gin.HandlerFunc {
+    return func(c *gin.Context) {
+      key := "rate:" + getClientID(c)  // user_id or IP
+      
+      val, _ := redisClient.Incr(ctx, key).Result()
+      if val == 1 {
+        redisClient.Expire(ctx, key, window)
+      }
+      
+      remaining := limit - int(val)
+      c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
+      c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
+      c.Header("X-RateLimit-Reset", strconv.Itoa(int(time.Now().Add(window).Unix())))
+      
+      if val > int64(limit) {
+        c.JSON(429, ErrorResponse("RATE_LIMIT_EXCEEDED"))
+        c.Abort()
+        return
+      }
+      c.Next()
+    }
+  }
+
+GRACEFUL DEGRADATION
+  If Redis down:
+    - Fail OPEN (allow request) with warning log
+    - Continue without rate limiting (availability > security)
+    - Alert admin to fix Redis
+
+4.3 CORS (Cross-Origin Resource Sharing)
+────────────────────────────────────────────────────────────────────────────────
+
+BACKEND CORS POLICY
+
+  AllowOrigins: [
+    "https://app.e-tix-flash.com",           // Customer app
+    "https://admin.e-tix-flash.com",         // Admin panel
+    "https://eo.e-tix-flash.com",            // EO portal
+    "https://gate.e-tix-flash.com",          // Gate scanner
+    "http://localhost:3000"                  // Local dev (development only)
+  ]
+  
+  AllowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
+  
+  AllowHeaders: [
+    "Authorization",
+    "Content-Type",
+    "X-Idempotency-Key",
+    "X-Queue-Token",
+    "X-Admin-2FA-Token",
+    "X-Request-ID"
+  ]
+  
+  ExposeHeaders: [
+    "X-RateLimit-Limit",
+    "X-RateLimit-Remaining",
+    "X-RateLimit-Reset"
+  ]
+  
+  AllowCredentials: true  // For cookies (refresh token)
+  MaxAge: 3600            // Preflight cache 1 hour
+
+PWA: Service Worker respects CORS — ensure preflight cached appropriately
+
+================================================================================
+5. DATABASE SECURITY & ACCESS CONTROL
+================================================================================
+
+5.1 ROW-LEVEL SECURITY (RLS)
+────────────────────────────────────────────────────────────────────────────────
+
+RLS ENFORCEMENT (PostgreSQL)
+  All 12 tables in DATABASE_SCHEMA v2.9 have RLS enabled
+  Policies enforce: SELECT, INSERT, UPDATE, DELETE per role
+
+Tables covered: users, events, sections, bookings, payment_obligations,
+  tickets, ticket_scans, resale_transactions, admin_actions, insights,
+  blacklist, system_config.
+
+Example Policies (From DATABASE_SCHEMA v2.9-FINAL)
+
+USERS TABLE:
+  CREATE POLICY "Users can view own data" ON users
+    FOR SELECT USING (id = auth.uid() OR (auth.jwt() ->> 'role') IN ('admin', 'event_organizer'));
+  
+  CREATE POLICY "Users can update own data" ON users
+    FOR UPDATE USING (id = auth.uid());
+  
+  CREATE POLICY "Admins can manage all users" ON users
+    FOR ALL USING ((auth.jwt() ->> 'role') = 'admin');
+
+TICKETS TABLE:
+  CREATE POLICY "Users can view own tickets" ON tickets
+    FOR SELECT USING (owner_user_id = auth.uid());
+  
+  CREATE POLICY "Gate staff can view tickets for scanning" ON tickets
+    FOR SELECT USING ((auth.jwt() ->> 'role') = 'gate_staff');
+  
+  CREATE POLICY "Admins can view all tickets" ON tickets
+    FOR SELECT USING ((auth.jwt() ->> 'role') IN ('admin', 'event_organizer'));
+
+RESALE_TRANSACTIONS TABLE:
+  CREATE POLICY "Users can view own resale transactions" ON resale_transactions
+    FOR SELECT USING (seller_user_id = auth.uid() OR buyer_user_id = auth.uid());
+  
+  CREATE POLICY "Anyone can view pending resale tickets" ON resale_transactions
+    FOR SELECT USING (status = 'PENDING');
+  
+  CREATE POLICY "Buyer can complete resale purchase" ON resale_transactions
+    FOR UPDATE
+    USING (
+      (seller_user_id = auth.uid() AND status = 'PENDING') OR
+      ((buyer_user_id IS NULL OR buyer_user_id = auth.uid()) AND status = 'PENDING')
+    )
+    WITH CHECK (
+      status IN ('PENDING', 'COMPLETED', 'CANCELLED')
+    );
+
+PAYMENT_OBLIGATIONS TABLE:
+  CREATE POLICY "Users can view own obligations" ON payment_obligations
+    FOR SELECT USING (user_id = auth.uid());
+  
+  CREATE POLICY "Users can update own obligations (payment)" ON payment_obligations
+    FOR UPDATE USING (user_id = auth.uid() AND status = 'PENDING');
+  
+  CREATE POLICY "Admins can view all obligations" ON payment_obligations
+    FOR SELECT USING ((auth.jwt() ->> 'role') IN ('admin', 'event_organizer'));
+
+ADMIN_ACTIONS TABLE (Immutable Audit):
+  CREATE POLICY "Admins can view all actions" ON admin_actions
+    FOR SELECT USING ((auth.jwt() ->> 'role') = 'admin');
+  
+  CREATE POLICY "Admins can insert actions" ON admin_actions
+    FOR INSERT WITH CHECK ((auth.jwt() ->> 'role') = 'admin');
+
+5.2 QUERY SECURITY & DEADLOCK PREVENTION
+────────────────────────────────────────────────────────────────────────────────
+
+STATEMENT TIMEOUT (Prevent Hanging Locks)
+
+  BEGIN;
+    SET LOCAL statement_timeout = '3000ms';  -- 3-second timeout
+    SELECT * FROM bookings WHERE id = $1 FOR UPDATE;
+    -- ... transaction logic
+  COMMIT;
+
+  If lock cannot be acquired in 3s → Connection timeout
+  → Automatic retry in application layer (3x max)
+
+DEADLOCK PREVENTION (Golang Implementation)
+
+  // CRITICAL: Sort resource IDs to prevent circular lock ordering
+  obligationIDs := []uuid.UUID{obligationA, obligationB}
+  sort.Slice(obligationIDs, func(i, j int) bool {
+    return obligationIDs[i].String() < obligationIDs[j].String()
+  })
+  
+  rows, err := tx.QueryContext(ctx, `
+    SELECT id, amount, status FROM payment_obligations
+    WHERE id = ANY($1)
+    ORDER BY id ASC
+    FOR UPDATE
+  `, pq.Array(obligationIDs))
+
+  Retry Strategy:
+    - On SQLSTATE 40P01 (deadlock detected): retry with exponential backoff (3x)
+    - Base backoff: 100ms, multiplier: 2x (100ms → 200ms → 400ms)
+
+5.3 PREPARED STATEMENTS & PARAMETERIZATION
+────────────────────────────────────────────────────────────────────────────────
+
+ALL queries use parameterized prepared statements via pgx:
+
+  ✅ CORRECT:
+    err := db.QueryRow(
+      "SELECT amount, status FROM payment_obligations WHERE id = $1",
+      obligationID,
+    ).Scan(&amount, &status)
+
+  ❌ WRONG:
+    query := fmt.Sprintf("SELECT amount FROM payment_obligations WHERE id = '%s'", obligationID)
+    err := db.QueryRow(query).Scan(&amount)
+
+Automatic: pgx prepares and caches prepared statements
+
+================================================================================
+6. FINANCIAL TRANSACTION SECURITY
+================================================================================
+
+6.1 IDEMPOTENCY (Prevent Duplicate Transactions)
+────────────────────────────────────────────────────────────────────────────────
+
+IDEMPOTENCY KEY MECHANISM (API Contract Section 4.1)
+
+Required Headers for Financial Operations:
+  POST /bookings/{id}/payments
+  POST /payments/bulk/assign
+  POST /resale
+  POST /resale/{id}/buy
+  POST /admin/* (all mutations)
+  POST /webhook/payment
+
+Example:
+  X-Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
+
+Implementation (Dual-Layer):
+
+  L1 (Redis — Fast Lookup):
+    GET "idempotency:{key}" → cached response (TTL 24 hours)
+    IF found → RETURN cached response
+  
+  L2 (PostgreSQL — Persistent):
+    Column: payment_obligations.idempotency_key (UNIQUE)
+    IF duplicate → conflict detected
+    Store response body + status code in idempotency cache
+
+  Timeout: 24 hours (idempotency cache expires_at = NOW() + INTERVAL '24 hours')
+
+6.2 PAYMENT FLOW SECURITY (Payment Gateway as Source of Truth)
+────────────────────────────────────────────────────────────────────────────────
+
+PRINCIPLE (From PRD v6.0 — Out of Scope):
+  E-Tix Flash TIDAK memiliki internal wallet atau ledger. Seluruh transaksi
+  keuangan diproses melalui Payment Gateway. Sumber kebenaran (source of
+  truth) untuk status pembayaran adalah:
+    1. payment_obligations.status  (internal mirror)
+    2. Payment Gateway API         (external authority)
+  Keduanya direkonsiliasi via Webhook + Webhook Reconciliation Worker.
+
+BOOKING HOLD FLOW (Seat Lock, Bukan Financial Escrow)
+
+Step 1: Customer submits booking request
+  - Seat di-lock di Redis bitmap (bit = 1) dengan TTL 180 detik
+  - INSERT bookings (payment_status = 'PENDING')
+  - INSERT payment_obligations (status = 'PENDING') per member (SPLIT) atau
+    satu obligation (BULK)
+
+Step 2: Payment Gateway initiation
+  - Backend memanggil Payment Gateway API untuk membuat payment link
+  - Simpan `external_transaction_id` ke payment_obligations
+  - Kirim link ke setiap user (push/email/SMS)
+
+Step 3: Webhook SUCCESS (authoritative)
+  - Validasi signature HMAC dari Payment Gateway
+  - Validasi idempotency (jika webhook duplikat → no-op)
+  - UPDATE payment_obligations SET status = 'PAID' WHERE status = 'PENDING'
+  - DB trigger `check_booking_payment_complete()` men-generate tickets
+
+Step 4: Webhook FAILURE / TIMEOUT → Delayed Message (T+3 min)
+  - Idempotent Lazy-Check pattern (LOGIC_FLOW v1.4 Section 4.3)
+  - Jika masih PENDING: release seats di Redis (granular SETBIT),
+    set payment_obligations.status = 'EXPIRED',
+    refund via Payment Gateway untuk obligation yang sudah PAID,
+    log ke admin_actions (action_type = 'FORCE_RELEASE_SEAT')
+
+WEBHOOK RECONCILIATION WORKER (Fallback — LOGIC_FLOW v1.4 Section 4.5)
+  - Berjalan setiap 10 menit
+  - Cari payment_obligations.status = 'PENDING' dengan created_at > 10 menit
+  - Panggil Payment Gateway API `GET /transactions/{external_transaction_id}`
+  - Jika gateway_status = 'PAID' → UPDATE status = 'PAID' + log ke admin_actions
+  - Jika gateway_status = 'FAILED' → UPDATE status = 'FAILED' + trigger rollback
+  - Jika gateway_status = 'PENDING' → skip (tunggu webhook)
+
+FINANCIAL INTEGRITY INVARIANTS
+
+  ✅ Semua transaksi keuangan HARUS memiliki external_transaction_id yang
+     dapat diverifikasi ke Payment Gateway.
+  ✅ Tidak ada mutasi status pembayaran tanpa bukti webhook ATAU hasil
+     rekonsiliasi ke Payment Gateway API.
+  ✅ Semua aksi admin yang mengubah status pembayaran WAJIB dicatat ke
+     admin_actions (immutable audit trail).
+  ✅ Idempotency key mencegah double-charge.
+  ✅ Sumber kebenaran eksternal (Payment Gateway) TIDAK PERNAH digantikan
+     oleh perhitungan internal.
+
+6.3 ADMIN FINANCIAL ACTIONS (Admin 2FA Required)
+────────────────────────────────────────────────────────────────────────────────
+
+ADMIN REVERSAL / MANUAL RECONCILIATION FLOW (API Contract Section 14.3)
+
+  POST /admin/ledger/reverse
+  Headers:
+    - Authorization: Bearer <admin_token>
+    - X-Admin-2FA-Token: <2fa_token>
+  Body:
+    { "transaction_id": "uuid-payment-obligation-id", "reason": "Customer dispute" }
+
+  Processing:
+    1. Validate 2FA token (lockout: 3 failed → 15 min)
+    2. Validate payment_obligation exists and status != 'REFUNDED'
+    3. Trigger Payment Gateway refund via `external_transaction_id`
+    4. UPDATE payment_obligations SET status = 'REFUNDED', refunded_at = NOW()
+    5. (Trigger) Cancellation handling menyesuaikan tickets.status
+    6. Audit log ke admin_actions (action_type = 'MANUAL_REFUND')
+
+  Security Note:
+    - 2FA mandatory for all admin financial mutations
+    - Lockout after 3 failed 2FA attempts (Redis + PostgreSQL)
+    - Semua aksi tercatat di admin_actions (immutable) dengan admin_id,
+      reason, changes_before, changes_after, ip_address, user_agent
+    - Idempotency key wajib untuk mencegah reversal ganda
+
+================================================================================
+7. DENIAL OF SERVICE (DoS) PREVENTION
+================================================================================
+
+7.1 RATE LIMITING (Token Bucket)
+────────────────────────────────────────────────────────────────────────────────
+
+See Section 4.2 (Rate Limiting)
+
+7.2 REQUEST SIZE LIMITS
+────────────────────────────────────────────────────────────────────────────────
+
+Gin Configuration:
+
+  router.MaxMultipartMemory = 8 * 1024 * 1024  // 8 MB for multipart (not used in MVP)
+  // Gin doesn't have MaxRequestBodySize — implement via middleware
+  func BodySizeLimit(maxBytes int64) gin.HandlerFunc {
+    return func(c *gin.Context) {
+      c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+      c.Next()
+    }
+  }
+  
+  // Global: 1 MB
+  router.Use(BodySizeLimit(1 * 1024 * 1024))
+
+JSON Payload Limits (E-Tix Flash Domain):
+  - Max seats per booking: 10 kursi (sesuai system_config.max_group_seats)
+  - Max split-pay members: 10 pengguna (sesuai system_config.max_group_seats)
+  - Max bulk ticket assignments per request: 10 assignments (sesuai max_group_seats)
+  - Max batch ticket scans (offline sync): 500 scans per batch
+  - Max seat_positions array length: 10
+
+7.3 CONNECTION POOLING & TIMEOUT
+────────────────────────────────────────────────────────────────────────────────
+
+Database Connection Pool (pgxpool):
+
+  pgxConfig, _ := pgxpool.ParseConfig(connString)
+  pgxConfig.MaxConns = 15               // Supabase free tier limit
+  pgxConfig.MinConns = 2
+  pgxConfig.MaxConnIdleTime = 5 * time.Minute
+  pgxConfig.MaxConnLifetime = 30 * time.Minute
+  pgxConfig.HealthCheckPeriod = 1 * time.Minute
+  pgxConfig.ConnConfig.RuntimeParams["statement_timeout"] = "3000ms"
+  
+  pool, _ := pgxpool.NewWithConfig(ctx, pgxConfig)
+
+HTTP Server Timeouts (Gin):
+
+  server := &http.Server{
+    Addr:              ":8080",
+    Handler:           router,
+    ReadTimeout:       15 * time.Second,
+    WriteTimeout:      15 * time.Second,
+    IdleTimeout:       60 * time.Second,
+    MaxHeaderBytes:    1 << 20,            // 1 MB headers
+    ReadHeaderTimeout: 10 * time.Second,
+  }
+
+PWA Client Timeouts:
+
+  const dio = Dio(BaseOptions(
+    connectTimeout: const Duration(seconds: 60),  // Cold start tolerance
+    receiveTimeout: const Duration(seconds: 30),
+    sendTimeout: const Duration(seconds: 30),
+  ));
+
+7.4 CIRCUIT BREAKER (Graceful Degradation)
+────────────────────────────────────────────────────────────────────────────────
+
+FULL SPECIFICATION (From TDD v1.10 Section 7)
+
+  | Parameter              | Value              | Description                    |
+  |------------------------|--------------------|--------------------------------|
+  | Interval               | 5 seconds          | Rolling window reset period    |
+  | Failure Threshold      | 3 failures in 5s   | Opens circuit on threshold     |
+  | Timeout                | 30 seconds         | OPEN duration before recovery  |
+  | Half-Open MaxRequests  | 5                  | Test requests in HALF_OPEN     |
+  | Recovery Condition     | 5 successful       | Closes circuit                 |
+  | Fallback Action        | PostgreSQL FIFO    | Requests queue in DB queue     |
+  | Recovery Worker        | DBQueueSyncWorker  | Drains DB queue when CLOSED    |
+
+Implementation:
+
+  cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+    Name:        "Redis",
+    MaxRequests: 5,
+    Interval:    5 * time.Second,
+    Timeout:     30 * time.Second,
+    ReadyToTrip: func(counts gobreaker.Counts) bool {
+      failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+      return counts.Requests >= 3 && failureRatio >= 0.6
+    },
+  })
+
+================================================================================
+8. ANTI-BOT & ANTI-SCALPING SECURITY
+================================================================================
+
+8.1 BEHAVIORAL INGRESS ENGINE (F001)
+────────────────────────────────────────────────────────────────────────────────
+
+2-STAGE PIPELINE (From LOGIC_FLOW v1.4 Section 2)
+
+Stage 1 (Synchronous — <1ms):
+  - Rate Limiter (Token Bucket) per IP/User ID
+  - Header validation (User-Agent, Accept-Language)
+  - Blacklist IP check (memory cache, updated from Redis every 60s)
+  - Read Base Score from Redis (Pre-Computed)
+
+Stage 2 (Asynchronous — Background Worker):
+  - Dynamic Score calculation based on:
+    * Request interval (too fast → minus)
+    * Click patterns (human vs bot)
+    * Device fingerprint (known bot patterns)
+  - Final Score = Base Score + Dynamic Score
+  - If Final Score < 50 → CAPTCHA trigger + alert admin
+  - If bot pattern detected → add to blacklist
+
+FAN SCORE TIERS (From PRD v6.0 Section F001)
+
+  | Tier   | Score Range | Priority Access               |
+  |--------|-------------|-------------------------------|
+  | TIER_1 | > 90        | VIP — First in queue          |
+  | TIER_2 | 70-90       | Regular — Normal access       |
+  | TIER_3 | < 70        | Low priority / CAPTCHA        |
+
+8.2 QUEUE TOKEN (Anti-Replay)
+────────────────────────────────────────────────────────────────────────────────
+
+QUEUE TOKEN LIFECYCLE
+
+  1. Issued: POST /queue/verify-captcha OR GET /queue/status
+  2. Payload:
+     {
+       "user_id": "uuid",
+       "tier": "TIER_2",
+       "final_score": 85,
+       "jti": "uuid-jti-123",
+       "exp": 1723641300,  // 5 minutes
+       "iss": "e-tix-flash-queue"
+     }
+  3. Single-Use Guard:
+     - On use: SET queue_token:used:{jti} 1 NX EX 300
+     - If return nil (already exists) → HTTP 409 TOKEN_ALREADY_USED
+  4. Required in: POST /events/{eid}/sections/{sid}/seats
+     Header: X-Queue-Token: <jwt-queue-token>
+
+8.3 CAPTCHA MODAL (From HALAMAN v1.1 Section 3.2)
+────────────────────────────────────────────────────────────────────────────────
+
+TRIGGER CONDITIONS
+  - Final Score < 50
+  - Multiple failed booking attempts in short time
+  - Suspicious device fingerprint
+
+FLOW
+  1. Client detects challenge required → shows CAPTCHA modal
+  2. User solves challenge
+  3. POST /queue/verify-captcha
+     Body: { "challenge_id": "uuid", "solution": "traffic_lights" }
+  4. Backend validates:
+     - Solution correct?
+     - Not expired?
+     - Attempts < 3?
+  5. If valid → return queue_token (JWT with jti)
+  6. If invalid → increment failed attempts
+     - 3 failures → 15 min lockout (Redis)
+
+8.4 OFFLINE GATE QR VALIDATION
+────────────────────────────────────────────────────────────────────────────────
+
+Konteks:
+  Gate staff dapat bekerja dalam mode offline (HALAMAN 11.3). Device scanner tetap harus
+  memvalidasi Dynamic HMAC QR tanpa HTTP call ke backend.
+
+Mekanisme:
+  1. Saat sync awal (online), device gate staff menerima dan menyimpan:
+     - Event Public Key (untuk verifikasi signature QR), ATAU
+     - HMAC Secret Key temporer (jika skema QR menggunakan HMAC simetris).
+  2. Key disimpan di secure local storage yang terenkripsi (Keychain/Keystore/IndexedDB terenkripsi).
+  3. Saat offline, device:
+     - Decode QR → ticket_id + signature.
+     - Hitung ulang HMAC-SHA256 dengan key lokal + timestamp block tolerance (±30s).
+     - Bandingkan signature secara lokal.
+     - Jika valid → simpan scan log ke local queue (SQLite/IndexedDB) dengan scan_id UUIDv4.
+     - Jika invalid → simpan log invalid untuk audit, tampilkan pesan INVALID.
+  4. Saat koneksi pulih → batch sync via POST /gate/sync (max 500 scans per batch).
+  5. Key lokal memiliki TTL dan dihapus setelah event selesai atau logout device.
+  6. Secret key tidak pernah ditulis ke log, tidak pernah dikirim ke pihak ketiga.
+  7. Conflict Resolution during Batch Sync (POST /gate/sync):
+     - Jika ticket_id yang di-sync offline sudah berstatus 'USED' di database
+       (akibat dipindai di gate lain secara offline):
+       a. Record pindaian pertama yang masuk ke database diakui sebagai 'USED'.
+       b. Record pindaian berikutnya yang masuk belakangan ditandai sebagai
+          'ALREADY_USED' pada ticket_scans (sesuai scan_status_enum di DATABASE_SCHEMA v2.9)
+          beserta device_id dan timestamp pindaian.
+       c. Server mengembalikan response 200 OK dengan ringkasan status:
+          {
+            "synced": <N>,
+            "duplicates": <M>,
+            "failed": 0,
+            "conflicts": [
+              {
+                "scan_id": "uuid-scan-late",
+                "ticket_id": "uuid-ticket",
+                "status": "ALREADY_USED",
+                "winner_device_id": "uuid-device-first",
+                "winner_scanned_at": "2026-09-10T19:15:23Z",
+                "loser_device_id": "uuid-device-second",
+                "loser_scanned_at": "2026-09-10T19:15:25Z"
+              }
+            ],
+            "errors": []
+          }
+       d. Prinsip determinisme: record dengan scanned_at paling awal (earliest timestamp)
+          dianggap pemenang. Jika timestamp identik (equal), tie-breaker = scan_id terkecil
+          (lexicographic UUID ASC).
+       e. Semua keputusan konflik dicatat ke ticket_scans untuk audit dan analytics EO.
+       f. Gate staff pada device yang "kalah" tetap melihat notifikasi lokal
+          "Duplicate scan detected — ticket already used at <winner_gate_id>".
+       g. Notifikasi admin dikirim jika jumlah konflik > threshold (mis. 10 per batch).
+
+Security Note:
+  - Ini melengkapi F004 (Dynamic HMAC QR) dan F004b (Offline Sync).
+  - Idempotency tetap dijaga via scan_id UUIDv4 + ON CONFLICT DO NOTHING.
+  - Conflict resolution TIDAK menggunakan row-level lock secara global (hindari bottleneck);
+    mengandalkan transactional check + conditional UPDATE dengan status guard
+    (WHERE status = 'CONFIRMED' — sesuai ticket_status_enum DATABASE_SCHEMA v2.9).
+
+================================================================================
+9. LOGGING, MONITORING & INCIDENT RESPONSE
+================================================================================
+
+9.1 AUDIT LOGGING (Immutable Transaction Log)
+────────────────────────────────────────────────────────────────────────────────
+
+ADMIN_ACTIONS TABLE (From DATABASE_SCHEMA v2.9-FINAL)
+
+  CREATE TABLE admin_actions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    admin_id UUID NOT NULL,
+    action_type admin_action_type_enum NOT NULL,
+    target_user_id UUID,
+    target_resource_type VARCHAR(50),
+    target_resource_id UUID,
+    description TEXT,
+    reason TEXT NOT NULL,
+    changes_before JSONB,
+    changes_after JSONB,
+    ip_address INET,
+    user_agent TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  action_type ENUM values (from schema):
+    'BULK_CANCEL', 'MANUAL_PAID', 'MANUAL_REFUND', 'FORCE_RELEASE_SEAT',
+    'UPDATE_EVENT_PRICE', 'SUSPEND_USER', 'UNSUSPEND_USER',
+    'BLACKLIST_IP', 'REMOVE_BLACKLIST_IP'
+
+LOGGED ACTIONS
+  ✅ Financial:
+    - Bulk cancellation (admin_id, event_id, cancelled_tickets)
+    - Manual refund (admin_id, payment_obligation_id, reason)
+    - Manual paid reconciliation (admin_id, payment_obligation_id, reason)
+    - Force release seat (admin_id, booking_id, reason)
+  
+  ✅ Access Control:
+    - User login/logout (user_id, ip_address, user_agent)
+    - User suspension / unsuspension (admin_id, target_user_id, reason)
+  
+  ✅ Account Management:
+    - User suspension (admin_id, target_user_id, reason)
+    - Profile update (user_id, field_changed, old_value, new_value)
+  
+  ✅ Emergency:
+    - 2FA lockout (admin_id, timestamp, failed_attempts)
+    - Circuit breaker state change (from → to)
+
+SENSITIVE FIELD MASKING (Prevent PII Leakage)
+  - Never log: password_hash, full tokens, full PII, PIN (plain)
+  - Log masked: phone (****5678)
+
+9.2 STRUCTURED LOGGING
+────────────────────────────────────────────────────────────────────────────────
+
+LOGGER: uber-go/zap (Production JSON)
+
+  logger.Info("booking created",
+    zap.String("booking_id", bookingID.String()),
+    zap.String("user_id", userID),
+    zap.Int("total_seats", totalSeats),
+    zap.String("payment_mode", paymentMode),
+    zap.Duration("latency_ms", latency),
+  )
+
+LOG LEVELS
+
+  ERROR:   Critical failures (database down, transaction failed)
+  WARN:    Suspicious activity (rate limit hit, failed login, 2FA lockout)
+  INFO:    Normal operations (booking created, payment settled)
+  DEBUG:   Detailed tracing (development only, never in production)
+
+HEADER SANITIZATION IN LOGGER
+  - Middleware logger WAJIB memanggil `SanitizeHeaders()` sebelum menulis request/response.
+  - Header yang di-redact menjadi `[REDACTED]`:
+      * Authorization
+      * X-Admin-2FA-Token
+      * X-Queue-Token
+  - X-Idempotency-Key boleh dicatat untuk audit, tetapi tidak boleh dipasangkan dengan payload sensitif.
+  - Dilarang menulis raw JWT, raw queue token, raw 2FA token ke stdout, file, atau agregator log.
+
+LOG ROTATION
+  - Managed by Render.com (stdout → log aggregation)
+  - Retention: 30 days
+  - Structured JSON for parsing
+
+9.3 MONITORING & ALERTS
+────────────────────────────────────────────────────────────────────────────────
+
+METRICS EXPOSED (Prometheus)
+
+  GET /metrics
+  Content-Type: text/plain
+
+  Metrics:
+  - http_request_duration_seconds{method, endpoint} (histogram)
+  - http_requests_total{method, endpoint, status} (counter)
+  - redis_operations_total{operation, status} (counter)
+  - booking_lock_conflicts_total (counter)
+  - circuit_breaker_state{name} (gauge) — 0=CLOSED, 1=OPEN, 2=HALF_OPEN
+  - token_blacklist_hits_total (counter)
+  - payment_webhook_reconciliation_pending (gauge) — obligations awaiting reconciliation
+  - offline_scan_conflicts_total (counter)
+
+ALERTING RULES (CRITICAL)
+
+  Alert: PaymentReconciliationBacklog
+    Condition: payment_webhook_reconciliation_pending > 50 for > 15 min
+    Severity: WARNING
+    Notification: Slack #alerts
+
+  Alert: HighRateOfFailures
+    Condition: Error rate > 5% in 5-minute window
+    Severity: WARNING
+    Notification: Slack #alerts
+
+  Alert: DatabaseConnectionPoolExhausted
+    Condition: Active connections >= 14 (of 15 max)
+    Severity: WARNING
+    Notification: Slack #alerts
+
+  Alert: CircuitBreakerOpen
+    Condition: circuit_breaker_state == 1 (OPEN)
+    Severity: CRITICAL
+    Notification: PagerDuty + Slack
+
+  Alert: Admin2FALockout
+    Condition: admin_lockouts > 0
+    Severity: WARNING
+    Notification: Slack #alerts
+
+  Alert: QueueTokenReplayAttempts
+    Condition: token_blacklist_hits_total > 100 in 10 min
+    Severity: WARNING
+    Notification: Slack #alerts
+
+  Alert: LargeTransactionValue
+    Condition: Single payment_obligation > Rp 50,000,000
+    Severity: INFO (for audit)
+    Notification: Log to admin_actions
+
+  Alert: OfflineScanConflictSpike
+    Condition: offline_scan_conflicts_total > 10 in a single batch sync
+    Severity: WARNING
+    Notification: Slack #alerts
+
+================================================================================
+10. DEPLOYMENT SECURITY
+================================================================================
+
+10.1 ENVIRONMENT VARIABLES (Secrets Management)
+────────────────────────────────────────────────────────────────────────────────
+
+NEVER commit secrets to Git. Use environment variables or secret manager.
+
+Render.com Secrets (Dashboard → Environment):
+  DATABASE_URL=postgresql://user:pass@host/db
+  REDIS_URL=redis://user:pass@host:port
+  RABBITMQ_URL=amqp://user:pass@host:5672
+  JWT_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----...
+  JWT_PUBLIC_KEY=-----BEGIN RSA PUBLIC KEY-----...
+  PAYMENT_GATEWAY_API_KEY=xxx
+  TWILIO_ACCOUNT_SID=xxx
+  TWILIO_AUTH_TOKEN=xxx
+  SENDGRID_API_KEY=xxx
+  SYSTEM_USER_UUID=00000000-0000-0000-0000-000000000000
+
+.env.local (Local Development Only — Never Git)
+  DATABASE_URL=postgresql://postgres:password@localhost:15432/etix_flash_dev
+  REDIS_URL=redis://localhost:16379
+  JWT_PRIVATE_KEY=dev-private-key
+  JWT_PUBLIC_KEY=dev-public-key
+  ENV=development
+
+.env.example (Template for developers)
+  DATABASE_URL=postgresql://user:password@host/dbname
+  REDIS_URL=redis://user:password@host:port
+  JWT_PRIVATE_KEY=<generate-with-openssl-rsa-2048>
+  JWT_PUBLIC_KEY=<extract-public-key>
+  ENV=production
+
+10.2 SECRET ROTATION
+────────────────────────────────────────────────────────────────────────────────
+
+JWT SIGNING KEY ROTATION (Quarterly)
+
+  1. Generate new key pair (RSA 2048-bit)
+     openssl genrsa -out private_key.pem 2048
+     openssl rsa -in private_key.pem -pubout -out public_key.pem
+
+  2. Deploy new public key (backward compatible)
+     - Old key still validates existing tokens
+     - New tokens signed with new private key
+
+  3. Wait 1 hour grace period (token expiry)
+
+  4. Rotate private key (active signing key)
+     - Only new tokens use new private key
+
+REFRESH TOKEN ROTATION (Every Use)
+
+  POST /auth/refresh-token
+    Old refresh_token: abc123xyz
+    → Validate old token (signature, expiry, token_type, jti not blacklisted)
+    → Blacklist old jti (TTL = remaining expiry)
+    → Generate NEW refresh_token with new jti
+    → Return new pair
+
+Payment Gateway API Key Rotation (Semi-Annual)
+
+  1. Generate new API key di dashboard Payment Gateway
+  2. Update PAYMENT_GATEWAY_API_KEY env var
+  3. Restart backend servers (blue-green deploy)
+  4. Revoke old API key
+
+Database Credentials Rotation (Annual)
+
+  1. Create new Supabase backup
+  2. Generate new database user + password
+  3. Update DATABASE_URL env var
+  4. Restart backend servers
+  5. Delete old database user
+
+10.3 IMAGE SECURITY (Docker)
+────────────────────────────────────────────────────────────────────────────────
+
+Dockerfile (Multi-stage build)
+
+  FROM golang:1.22-alpine AS builder
+  WORKDIR /app
+  COPY go.mod go.sum ./
+  RUN go mod download
+  COPY . .
+  RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o e-tix-flash ./cmd/api
+  
+  FROM alpine:latest
+  RUN apk --no-cache add ca-certificates
+  RUN adduser -D -u 1000 appuser
+  WORKDIR /root/
+  COPY --from=builder /app/e-tix-flash .
+  COPY --from=builder /app/migrations ./migrations
+  USER appuser  # Non-root user
+  EXPOSE 8080
+  CMD ["./e-tix-flash"]
+
+Security Hardening:
+  - Non-root user (appuser, UID 1000)
+  - Minimal base image (alpine)
+  - CVE scanning (trivy) — automated in CI/CD
+  - No secrets in image (all via env vars)
+
+10.4 DEPLOYMENT CHECKLIST
+────────────────────────────────────────────────────────────────────────────────
+
+Before Go-Live:
+
+  ✅ Security
+    - [ ] All secrets in env vars (not hardcoded)
+    - [ ] HTTPS enforced (HTTP redirect to HTTPS)
+    - [ ] CORS configured (only trusted domains)
+    - [ ] Rate limiting active
+    - [ ] Database RLS policies enabled
+    - [ ] Admin 2FA mandatory
+    - [ ] Queue token single-use enforced
+    - [ ] Idempotency key required for mutations
+    - [ ] Header sanitization middleware active
+
+  ✅ Database
+    - [ ] DATABASE_SCHEMA.sql executed (all 12 tables)
+    - [ ] RLS policies tested
+    - [ ] Indexes created (hot queries)
+    - [ ] Backups configured (daily snapshots)
+    - [ ] Connection pool tuned (MaxConns=15)
+    - [ ] system_config seeded (7 config keys)
+    - [ ] SYSTEM_USER_UUID seeded
+
+  ✅ Monitoring
+    - [ ] Logging configured (Zap JSON)
+    - [ ] Metrics endpoint live (/metrics)
+    - [ ] Alert rules deployed
+    - [ ] Dashboards set up (Grafana)
+    - [ ] PagerDuty integration active
+
+  ✅ Testing
+    - [ ] Integration tests passed (10+ scenarios)
+    - [ ] Load test passed (k6: 20,000 RPS target)
+    - [ ] Race condition test passed (10 concurrent users)
+    - [ ] OWASP Top 10 tested
+    - [ ] BOLA/IDOR tested
+    - [ ] PII masking validated
+    - [ ] Offline QR validation tested
+    - [ ] Offline multi-device conflict resolution tested
+    - [ ] Payment webhook reconciliation tested
+
+================================================================================
+11. COMPLIANCE & AUDIT TRAIL
+================================================================================
+
+11.1 DATA RETENTION & PRIVACY
+────────────────────────────────────────────────────────────────────────────────
+
+RETENTION POLICY (GDPR-Inspired for Indonesia)
+
+  User Data:
+    - Active account: Keep indefinitely
+    - Deleted account (30-day grace): Soft delete (deleted_at flag), then purge
+    - Personal data (email, phone): Mask on deletion
+
+  Financial Records:
+    - Ticketing Transactions (bookings, tickets, resale_transactions, payment_obligations): Keep 7 years (tax/legal compliance)
+    - Transaction receipts: Keep 1 year (customer support)
+    - Payment gateway logs: Keep 1 year (PCI compliance)
+
+  Logs & Activity:
+    - User login/logout: Keep 90 days
+    - Admin actions: Keep permanently (audit)
+    - Error logs: Keep 30 days
+
+DELETION & ANONYMIZATION
+
+  On User Deletion (30-day grace period):
+
+  1. Soft delete:
+     UPDATE users SET deleted_at = NOW() WHERE id = $user_id
+
+  2. Hard delete (after 30 days):
+     DELETE FROM users WHERE deleted_at < NOW() - INTERVAL '30 days'
+
+  3. Anonymization (retain order history without PII):
+     UPDATE tickets SET owner_user_id = NULL WHERE owner_user_id = $user_id
+     UPDATE bookings SET leader_user_id = NULL WHERE leader_user_id = $user_id
+
+11.2 AUDIT TRAIL (Non-Repudiation)
+────────────────────────────────────────────────────────────────────────────────
+
+IMMUTABLE AUDIT LOG (admin_actions table)
+
+  Every sensitive action recorded:
+  - Who: admin_id
+  - What: action_type (ENUM value from schema)
+  - On what: target_resource_type + target_resource_id
+  - Changes: changes_before + changes_after (JSONB)
+  - When, where: created_at + ip_address
+
+Example: Admin Issues Manual Refund
+
+  INSERT INTO admin_actions (
+    admin_id, action_type, target_resource_type,
+    target_resource_id, description, reason,
+    changes_before, changes_after, ip_address, user_agent
+  ) VALUES (
+    'uuid-admin-111',
+    'MANUAL_REFUND',
+    'payment_obligation',
+    'uuid-obligation-001',
+    'Refund issued due to customer dispute',
+    'Customer claim: unable to attend, ticket refunded per policy',
+    '{"status": "PAID"}',
+    '{"status": "REFUNDED", "refunded_at": "2026-09-10T10:41:00Z"}',
+    '203.0.113.42',
+    'Mozilla/5.0...'
+  );
+
+AUDIT REPORT (Admin Panel)
+
+  GET /admin/ledger?date_from=2026-09-01&date_to=2026-09-30
+    Response: Paginated list of payment/reconciliation events sourced from
+    payment_obligations + admin_actions (no internal ledger table)
+    Export: CSV/JSON download for regulatory compliance
+
+================================================================================
+12. SECURITY CHECKLIST & TESTING
+================================================================================
+
+12.1 PRE-DEPLOYMENT CHECKLIST
+────────────────────────────────────────────────────────────────────────────────
+
+Authentication & Authorization:
+  ✅ JWT validation working (expired tokens rejected)
+  ✅ token_type validation (refresh vs access)
+  ✅ Refresh token rotation working
+  ✅ RBAC enforced (customer cannot access admin endpoints)
+  ✅ RLS policies blocking unauthorized access
+  ✅ Admin 2FA mandatory + lockout after 3 fails
+  ✅ Password hashing verified (bcrypt cost ≥ 12)
+
+Data Protection:
+  ✅ HTTPS only (HTTP redirects to HTTPS)
+  ✅ TLS 1.3 (TLS 1.2 minimum fallback)
+  ✅ Sensitive data masked in logs (no full PII)
+  ✅ Header sanitization for Authorization, X-Admin-2FA-Token, X-Queue-Token
+  ✅ Encryption at rest (Supabase AES-256)
+  ✅ Parameterized queries (no SQL injection)
+  ✅ Fallback PIN stored as SHA-256 hash
+
+API Security:
+  ✅ Input validation (email, phone, UUID, amounts)
+  ✅ Rate limiting (5-180 req/min per endpoint)
+  ✅ CORS restricted (trusted domains only)
+  ✅ Idempotency (X-Idempotency-Key prevents duplicates)
+  ✅ Queue token single-use (X-Queue-Token header)
+  ✅ Error messages don't leak sensitive info
+
+Financial Security:
+  ✅ All payments via Payment Gateway (external_transaction_id tracked)
+  ✅ Webhook signature validation (HMAC)
+  ✅ Webhook Reconciliation Worker active (10 min interval)
+  ✅ No double-booking (Redis Lua script atomic)
+  ✅ No double-spending (FOR UPDATE locking)
+  ✅ Cancellation refunds processed via Payment Gateway
+  ✅ Admin financial actions logged to admin_actions (immutable)
+
+Anti-Bot Security:
+  ✅ Fan Score computed (base + dynamic)
+  ✅ CAPTCHA triggered for score < 50
+  ✅ Queue token single-use (jti + Redis SETNX)
+  ✅ Blacklist IP enforced
+  ✅ Rate limiting per IP/user
+
+Resilience:
+  ✅ Database connection pool configured
+  ✅ Statement timeouts prevent hanging locks
+  ✅ Deadlock retry logic (3x exponential backoff)
+  ✅ Circuit Breaker with DB queue fallback
+  ✅ DBQueueSyncWorker for recovery
+  ✅ Graceful shutdown (30s drain + server close)
+  ✅ Monitoring alerts configured
+  ✅ Offline gate QR validation locally verified
+  ✅ Offline multi-device conflict resolution (earliest timestamp wins)
+
+12.2 SECURITY TESTING
+────────────────────────────────────────────────────────────────────────────────
+
+UNIT TESTS
+
+  TestPasswordHashVerification()
+    ✅ Valid password verified correctly
+    ✅ Invalid password rejected
+    ✅ Bcrypt cost ≥ 12
+
+  TestInputValidation()
+    ✅ Invalid email rejected
+    ✅ Invalid phone rejected
+    ✅ Negative amounts rejected
+    ✅ Non-UUID values rejected
+    ✅ Invalid PIN format rejected
+
+  TestJWTValidation()
+    ✅ Expired token rejected
+    ✅ Invalid signature rejected
+    ✅ Missing claims rejected
+    ✅ Refresh token used as access → rejected (TOKEN_TYPE_MISMATCH)
+    ✅ Blacklisted jti rejected
+
+INTEGRATION TESTS
+
+  TestRaceConditionOnSeatLock()
+    // 10 concurrent users try to lock same seat
+    // Only 1 succeeds, 9 get 409 CONFLICT
+    // No double-booking
+
+  TestQueueTokenReplay()
+    // Same queue token used twice
+    // Second use → 409 TOKEN_ALREADY_USED
+
+  TestIdempotencyCache()
+    // Same request 5 times (same X-Idempotency-Key)
+    // Verify: Identical response 5 times
+    // Only 1 database mutation
+
+  TestRBACEnforcement()
+    // Customer tries to access admin endpoints
+    // Result: 403 FORBIDDEN
+    // EO tries to modify other's events
+    // Result: 403 FORBIDDEN
+
+  TestPaymentWebhookReconciliation()
+    // Simulate missing webhook
+    // Reconciliation worker polls Payment Gateway
+    // Verify payment_obligations.status updated correctly
+
+  TestIDORResale()
+    // Try to buy resale with another user's ID in body
+    // Body has no buyer_user_id
+    // Buyer identified from JWT claims only
+
+  TestOfflineQRValidation()
+    // Device offline validates HMAC QR locally
+    // Valid scan queued with UUIDv4 scan_id
+    // Sync to /gate/sync succeeds idempotently
+
+  TestOfflineMultiDeviceConflict()
+    // Device A and Device B both scan same ticket offline
+    // Both queue locally with different scan_id
+    // Device A syncs first → ticket becomes USED
+    // Device B syncs later → server marks ALREADY_USED
+    // Winner = earliest scanned_at; tie-breaker = smallest scan_id
+    // Response includes conflicts[] with winner/loser details
+
+PENETRATION TESTING (Pre-Launch)
+
+  SQL Injection Tests
+    TestSQLInjectionOnPaymentQuery()
+      obligationID := "uuid'; DROP TABLE payment_obligations; --"
+      Result: 404 NOT_FOUND (safe, parameterized query)
+
+  XSS Tests
+    TestXSSOnUserProfile()
+      Input: <script>alert('xss')</script>
+      Result: Escaped/stored safely
+
+  Rate Limit Bypass
+    TestRateLimitBypass()
+      Send 50 requests in 1 minute (limit 10)
+      Result: HTTP 429 after 10th request
+
+  Replay Attack Prevention
+    TestReplayAttack()
+      Capture idempotent POST request
+      Replay 3 times with same X-Idempotency-Key
+      Result: 1 transaction, 3 identical responses
+
+  IDOR Test (Resale Buy)
+    TestIDOROnResaleBuy()
+      Send POST /resale/{id}/buy with body containing victim's user_id
+      Result: Body ignored, buyer identified from JWT
+      Status: Buyer = JWT owner, no impersonation
+
+  Header Log Leak Test
+    TestHeaderSanitization()
+      Trigger request with Authorization, X-Admin-2FA-Token, X-Queue-Token
+      Verify logs contain [REDACTED], not raw token
+
+================================================================================
+13. INCIDENT RESPONSE PROCEDURES
+================================================================================
+
+13.1 INCIDENT CLASSIFICATION
+────────────────────────────────────────────────────────────────────────────────
+
+SEVERITY LEVELS
+
+  CRITICAL (P0 — 15 min response)
+    - Database down (service down)
+    - Unauthorized access incident
+    - Large payment fraud (> Rp 1,000,000)
+    - Scalper bot bypass (mass ticket hoarding)
+    Response: Full team, incident commander
+
+  HIGH (P1 — 1 hour response)
+    - Rate limiting not working (DoS risk)
+    - Authentication failures (> 10%)
+    - Multiple user account compromises
+    - Circuit Breaker stuck OPEN
+    Response: On-call engineer + team lead
+
+  MEDIUM (P2 — 4 hour response)
+    - Single account compromise
+    - Minor data inconsistency
+    - Performance degradation
+    Response: Primary engineer assigned
+
+  LOW (P3 — Business day response)
+    - Cosmetic bugs
+    - Documentation outdated
+    - Non-critical monitoring gap
+    Response: Add to backlog
+
+13.2 INCIDENT RESPONSE WORKFLOW
+────────────────────────────────────────────────────────────────────────────────
+
+Step 1: DETECT & ALERT (Automated)
+  - Alert fired (payment backlog, high error rate, etc.)
+  - Slack notification to #incidents
+  - PagerDuty alerts on-call engineer (P0-P1)
+
+Step 2: ACKNOWLEDGE & ASSESS (5 min)
+  - Incident commander notified
+  - Gather initial information:
+    * What is the issue?
+    * Who is affected?
+    * Financial impact?
+  - Create incident ticket
+
+Step 3: IMMEDIATE MITIGATION (15 min)
+  For Critical Incidents:
+    - Pause high-risk operations (if needed)
+    - Collect logs (last 1 hour)
+    - Take database snapshot (for forensics)
+    - Notify customers (if service down)
+
+Step 4: INVESTIGATION (30-60 min)
+  - Root cause analysis
+  - Query logs/metrics
+  - Reproduce issue in staging
+  - Identify fix
+
+Step 5: IMPLEMENT FIX
+  - Deploy hotfix (if coding required)
+  - Coordinate with team
+  - Verify fix in production
+
+Step 6: VERIFY RESOLUTION (15 min)
+  - Test affected functionality
+  - Monitor metrics (error rate, latency)
+  - Verify Payment Gateway reconciliation (if financial)
+  - Customer communication (if needed)
+
+Step 7: POST-INCIDENT (Next day)
+  - Write incident report
+  - Root cause analysis
+  - Action items to prevent recurrence
+  - Update runbooks/documentation
+
+13.3 RUNBOOKS (Quick Reference)
+────────────────────────────────────────────────────────────────────────────────
+
+RUNBOOK: Payment Webhook Reconciliation Backlog
+
+  Severity: HIGH
+
+  1. Alert: payment_webhook_reconciliation_pending > 50 for > 15 min
+  2. Check Pending Obligations:
+     SELECT id, user_id, external_transaction_id, amount, created_at
+     FROM payment_obligations
+     WHERE status = 'PENDING'
+     AND created_at < NOW() - INTERVAL '10 minutes'
+     ORDER BY created_at ASC
+     LIMIT 100;
+  3. Verify Against Payment Gateway:
+     - Login ke dashboard Payment Gateway
+     - Cek status external_transaction_id satu per satu (sample 5-10)
+  4. If Gateway Says PAID but internal PENDING:
+     - Trigger manual reconciliation (Webhook Reconciliation Worker)
+     - Log ke admin_actions (action_type = 'MANUAL_PAID')
+  5. If Gateway Says FAILED:
+     - Let worker update status to FAILED
+     - Verify seats released in Redis
+  6. Monitor backlog size until normal
+  7. Post-mortem: why webhooks missed? (network, gateway, signature mismatch)
+
+RUNBOOK: Redis Circuit Breaker Open
+
+  Severity: HIGH
+
+  1. Alert: circuit_breaker_state == 1 (OPEN)
+  2. Check Redis status:
+     redis-cli -h <host> PING
+  3. If Redis down:
+     - Backend automatically falls back to DB queue
+     - DBQueueSyncWorker will drain queue when Redis recovers
+  4. If Redis slow:
+     - Check Redis metrics (latency, memory)
+     - Consider scaling Upstash plan
+  5. Monitor circuit breaker state for recovery
+  6. Once CLOSED: verify queued bookings processed
+  7. Post-mortem: why did Redis fail?
+
+RUNBOOK: Mass Queue Token Replay Attempt
+
+  Severity: CRITICAL
+
+  1. Alert: token_blacklist_hits_total > 100 in 10 min
+  2. Identify source IPs:
+     SELECT ip_address, COUNT(*) FROM admin_actions
+     WHERE action_type = 'BLACKLIST_IP'
+     AND created_at > NOW() - INTERVAL '10 minutes'
+     GROUP BY ip_address ORDER BY COUNT(*) DESC;
+  3. Blacklist IPs:
+     POST /admin/blacklist { type: 'ip', value: '...', reason: 'Replay attack' }
+  4. Investigate if scalper bot:
+     - Check device fingerprints
+     - Check user accounts involved
+  5. Add signatures to bot pattern blacklist
+  6. Notify security team
+
+RUNBOOK: Offline Multi-Device Scan Conflict Spike
+
+  Severity: MEDIUM
+
+  1. Alert: offline_scan_conflicts_total > 10 in single batch
+  2. Investigate devices involved:
+     SELECT scanner_device_id, gate_id, COUNT(*) FROM ticket_scans
+     WHERE scan_status = 'ALREADY_USED'
+     AND created_at > NOW() - INTERVAL '30 minutes'
+     GROUP BY scanner_device_id, gate_id;
+  3. Cross-check gate staff schedule — apakah ada gate duplikat / device tidak sah.
+  4. Jika device tidak dikenal → revoke key lokal + force re-sync.
+  5. Review ticket ownership log untuk indikasi fraud (screenshot QR dibagikan).
+  6. Notify security team jika pola mencurigakan.
+
+================================================================================
+📋 SECURITY SYNC CHECKLIST (100% COMPLIANCE)
+================================================================================
+
+✅ PRD Sync (v6.0-FINAL):
+  - F001 Behavioral Ingress → Fan Score + CAPTCHA + Queue Token
+  - F002 Bitmask Locking → Redis Lua atomic + FOR UPDATE
+  - F003 Split-Pay → Idempotency + Webhook reconciliation
+  - F004 Dynamic QR + PIN → HMAC-SHA256 + hashed PIN
+  - F004b Gate Analytics → Scan logs + feedback loop + offline sync
+  - F005 Resale → Price cap + IDOR prevention
+  - F006 Admin Tools → 2FA + audit trail + reversal
+  - Out of Scope "Internal wallet/ledger" → RESPECTED (all finance via Payment Gateway)
+
+✅ DATABASE_SCHEMA Sync (v2.9-FINAL):
+  - RLS policies documented for all 12 tables
+  - NO references to wallets / ledger_entries / bank_account_number / national_id / is_settled
+  - user_role_enum ENUM (customer, event_organizer, gate_staff, admin)
+  - ticket_status_enum used correctly ('CONFIRMED' — valid enum value, NOT 'ISSUED')
+  - scan_status_enum used correctly ('ALREADY_USED' — valid enum value, NOT 'DUPLICATE_SCAN_REJECTED')
+  - admin_action_type_enum used consistently (MANUAL_REFUND, BULK_CANCEL, FORCE_RELEASE_SEAT, ...)
+  - admin_actions audit table complete
+  - SYSTEM_USER_UUID seeded
+
+✅ LOGIC_FLOW Sync (v1.4-FINAL):
+  - Queue token single-use guard (Redis SETNX)
+  - Circuit Breaker (5s interval, 30s timeout)
+  - Idempotent Lazy-Check pattern
+  - ORDER BY id ASC deadlock prevention
+  - Refresh Token Rotation
+  - Webhook Reconciliation Worker (Section 4.5)
+  - Offline sync idempotent (scan_id UUIDv4 + ON CONFLICT DO NOTHING)
+
+✅ HALAMAN Sync (v1.1-FINAL):
+  - CAPTCHA Modal (Screen 3.2)
+  - QR Scanner + PIN Entry (Screens 11.1, 11.2)
+  - Offline Sync (Screen 11.3)
+  - Admin 2FA for Bulk Cancel (Screen 10.1)
+  - User & Blacklist Mgmt (Screen 12.2)
+
+✅ TDD Sync (v1.10-FINAL):
+  - Redis Lua scripts for bitmask
+  - Circuit Breaker full spec
+  - external_transaction_id in payment_obligations
+  - Token type claim (access vs refresh)
+  - SystemUserUUID constant
+  - DBQueueSyncWorker for recovery
+
+✅ API_CONTRACT Sync (v1.1-FINAL):
+  - X-Queue-Token required for booking
+  - X-Admin-2FA-Token for admin ops
+  - X-Idempotency-Key for mutations
+  - IDOR patched (buyer_user_id from JWT)
+  - Error codes (401, 403, 409, 422, 429, 503)
+  - NO ghost endpoints (change-password, forgot-password, reset-password)
+
+✅ POST-GEMINI v1.1 FIXES:
+  - Section 7.2: E-Tix domain payload limits (10 seats/members).
+  - Section 8.4: Offline Gate QR Validation.
+  - Section 3.3 & 9.2: Header Sanitization Rules.
+
+✅ POST-GEMINI v1.2 FIXES:
+  - Section 10.1: Renamed DB in .env.local (etix_flash_dev).
+  - Section 11.1: Removed ride/food/send artifacts.
+  - Section 8.4: Multi-Device Offline Scan Conflict Resolution.
+  - Section 9.3: offline_scan_conflicts_total metric + alert.
+  - Section 12.2: TestOfflineMultiDeviceConflict.
+  - Section 13.3: Runbook for offline scan conflict spike.
+
+✅ POST-GEMINI v1.3 FIXES (DRIFT CLEANUP):
+  - Section 2.3: Removed ghost endpoints (change-password, forgot-password, reset-password).
+  - Section 3.2: Removed users.bank_account_number ghost column.
+  - Section 5.1: Removed LEDGER_ENTRIES table RLS block.
+  - Section 5.2: Replaced wallets deadlock example with payment_obligations.
+  - Section 5.3: Replaced wallets prepared-statement example with payment_obligations.
+  - Section 6.2: Removed Double-Entry Bookkeeping + Admin Audit (ledger imbalance). Replaced with Payment Gateway source-of-truth flow.
+  - Section 6.3: Reworded to Payment Gateway refund + admin_actions log (no ledger compensation).
+  - Section 9.3: Removed ledger_balance_check metric + LedgerImbalance alert. Added payment_webhook_reconciliation_pending + PaymentReconciliationBacklog alert.
+  - Section 11.1: Removed "Ledger entries: Keep permanently".
+  - Section 11.2: Fixed example (MANUAL_REFUND enum, payment_obligation resource, no ledger_entries).
+  - Section 12.1 & 12.2: Removed ledger balance verification / TestLedgerBalance.
+  - Section 13.3: Removed Ledger Imbalance runbook. Added Payment Webhook Reconciliation Backlog runbook.
+  - Removed all references to users.national_id and bookings.is_settled.
+
+✅ POST-GEMINI v1.4 FIXES:
+  - Section 8.4 (poin 7.b, 7.c): Replaced 'DUPLICATE_SCAN_REJECTED' → 'ALREADY_USED'
+    (sesuai scan_status_enum DATABASE_SCHEMA v2.9).
+  - Section 12.2 TestOfflineMultiDeviceConflict: Updated expected status to 'ALREADY_USED'.
+  - Section 4.1: Explicit ticket_status_enum listed (including 'CONFIRMED').
+  - ⚠️ REJECTED Gemini Fix #1: 'CONFIRMED' → 'ISSUED'. Verification showed 'CONFIRMED' IS a valid enum value in DATABASE_SCHEMA v2.9; 'ISSUED' does NOT exist. Applied TRUTH FROM FOUNDATION rule — kept 'CONFIRMED'.
+
+================================================================================
+📌 VERSION HISTORY
+================================================================================
+
+| Version | Date       | Author       | Changes                                                    |
+|---------|------------|--------------|------------------------------------------------------------|
+| 1.0-FINAL | 2026-09-10 | M. Arif Aulia | Initial SECURITY_SPEC document for E-Tix Flash. Synchronized with PRD v6.0, DATABASE_SCHEMA v2.9, LOGIC_FLOW v1.4, HALAMAN v1.1, TDD v1.10, API_CONTRACT v1.1. |
+| 1.1-FINAL | 2026-09-10 | M. Arif Aulia | **Post-Gemini review fixes #1:** 1) Section 7.2 cleaned from non-ticketing payload limits. 2) Added Section 8.4 Offline Gate QR Validation. 3) Added Header Sanitization Rules in Section 3.3 & 9.2. 4) Updated deployment checklist, testing, and sync checklist. |
+| 1.2-FINAL | 2026-09-10 | M. Arif Aulia | **Post-Gemini review fixes #2:** 1) Section 10.1 renamed DB (etix_flash_dev). 2) Section 11.1 removed ride/food/send artifacts. 3) Section 8.4 added Multi-Device Offline Scan Conflict Resolution. 4) Section 9.3 added offline_scan_conflicts_total metric + alert. 5) Section 12.2 added TestOfflineMultiDeviceConflict. 6) Section 13.3 added runbook. |
+| 1.3-FINAL | 2026-09-10 | M. Arif Aulia | **Post-Gemini review fixes #3 (DRIFT CLEANUP):** Cleaned wallet/ledger drift, ghost endpoints, ghost columns. See POST-GEMINI v1.3 FIXES above for details. |
+| 1.4-FINAL | 2026-09-10 | M. Arif Aulia | **Post-Gemini review fixes #4:** 1) Section 8.4 poin 7.b & 7.c: replaced 'DUPLICATE_SCAN_REJECTED' → 'ALREADY_USED' to match scan_status_enum. 2) Section 12.2 TestOfflineMultiDeviceConflict updated. 3) Section 13.3 runbook aligned. 4) REJECTED Gemini's Fix #1 ('CONFIRMED'→'ISSUED'): 'CONFIRMED' verified as valid enum in DATABASE_SCHEMA v2.9; 'ISSUED' does not exist. TRUTH FROM FOUNDATION applied — no drift, no ghost artifacts remaining. |
+
+================================================================================
+END OF SECURITY_SPEC v1.4-FINAL
+================================================================================
+
+✅ 100% PRODUCTION-READY — LOCKED
+✅ Synchronized with ALL foundation documents
+✅ NO wallet/ledger drift (Out of Scope respected)
+✅ NO ghost endpoints (API_CONTRACT 1:1)
+✅ NO ghost columns (DATABASE_SCHEMA 1:1)
+✅ NO residual artifacts from other projects
+✅ Enum values verified against DATABASE_SCHEMA v2.9 ('CONFIRMED', 'ALREADY_USED')
+✅ Threat model complete (12 threat categories)
+✅ All authentication & authorization layers documented
+✅ Full encryption strategy (in-transit + at-rest)
+✅ Anti-bot security (Fan Score + CAPTCHA + Queue Token)
+✅ Financial transaction security via Payment Gateway (idempotency + webhook + reconciliation)
+✅ DoS prevention (Rate Limit + Circuit Breaker + DB Queue)
+✅ Audit trail + Incident Response procedures
+✅ Ready for DRP.md, STP.md, ROADMAP.md
+
+Last Updated: 2026-09-10 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED.

@@ -1,0 +1,1304 @@
+================================================================================
+ROADMAP FASE (0): FOUNDATION SETUP — E-Tix Flash (Smart Ticketing Platform)
+================================================================================
+
+Version:         1.1-FINAL
+Last Updated:    2026-09-11
+Author:          M. Arif Aulia
+Status:          ⏳ NOT STARTED (Ready to Execute)
+Blueprint Ref:   BLUEPRINT ROADMAP v1.0-FINAL, FASE 0
+
+================================================================================
+📌 BISMILLAH — ROADMAP FASE 0 FINAL VERSION (POST-GEMINI REVIEW #1)
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. FASE IDENTITY
+2. SCOPE & OBJECTIVES
+3. FOUNDATION DISTILLATION
+4. TASK BREAKDOWN
+5. DELIVERABLES
+6. ACCEPTANCE CRITERIA
+7. RISKS & MITIGATIONS
+8. SECURITY CONSIDERATIONS
+9. DEFINITION OF DONE (DoD)
+10. NOTES & REFERENCES
+
+================================================================================
+SECTION 1 — FASE IDENTITY
+================================================================================
+
+Fase ID:           FASE 0
+Nama Fase:         Foundation Setup
+Fitur Utama:       Prerequisite (tidak ada fitur bisnis — murni infrastruktur)
+Estimasi Durasi:   Week 1 (1 minggu, ~40 jam kerja)
+Dependencies:      None (fase pertama)
+Status:            ⏳ Not Started
+
+Ringkasan:
+  Setup seluruh fondasi teknis: Git repo, Docker Compose, Go module, database 
+  schema migration (12 tabel + 7 active triggers + RLS), Redis + RabbitMQ 
+  provisioning, Next.js PWA skeleton, CI/CD pipeline, deployment ke cloud 
+  (Render + Vercel + Supabase + Upstash + CloudAMQP), dan monitoring 
+  (Prometheus + Grafana).
+
+  Fase ini TIDAK menulis fitur bisnis apa pun. Tujuannya: memastikan 
+  "hello world" deployment sudah jalan end-to-end sebelum masuk FASE 1.
+
+================================================================================
+SECTION 2 — SCOPE & OBJECTIVES
+================================================================================
+
+2.1 SCOPE — IN
+────────────────────────────────────────────────────────────────────────────────
+
+✅ Repository & Version Control:
+   - Git init + .gitignore + .env.example
+   - GitHub private repo (e-tix-flash)
+   - Branch strategy: main (prod), develop (staging), feature/* (dev)
+
+✅ Backend Skeleton (Golang):
+   - Go 1.22+ module init
+   - Folder structure (Clean Architecture — TDD §3)
+   - Gin HTTP server dengan /healthz/liveness + /healthz/readiness
+   - pgx/v5 connection pool (MaxConns=15, statement_timeout=3000ms)
+   - Zap logger (JSON production mode)
+   - Config loader (env vars)
+
+✅ Database Setup:
+   - Supabase project (Singapore region)
+   - Migration 001_initial_schema: 12 tabel + 10 ENUMs + indexes + RLS + 
+     7 active triggers + system_config seed + SYSTEM_USER_UUID
+   - Migration tool: golang-migrate/v4
+
+✅ Cache & Message Broker:
+   - Upstash Redis (Singapore region, TLS)
+   - CloudAMQP RabbitMQ (Singapore region)
+   - Plugin rabbitmq_delayed_message_exchange enabled
+   - Exchange: delayed_exchange (type: x-delayed-message)
+   - Queues: fan_score, release_seat_check, resale_expiry_check, 
+             report_generation, reconciliation_cycle
+
+✅ Frontend Skeleton (Next.js 14 PWA):
+   - Next.js App Router + TypeScript + Tailwind CSS
+   - PWA config (next-pwa + Workbox)
+   - Root layout + landing page (placeholder)
+   - API client (Axios with interceptors)
+
+✅ CI/CD Pipeline (GitHub Actions):
+   - Stage 1: Lint (golangci-lint)
+   - Stage 2: Unit tests + coverage → CodeCov
+   - Stage 3: Integration tests (testcontainers)
+   - Stage 4: Build (Docker image)
+   - Stage 5: Security scan (govulncheck + gitleaks)
+   - Stage 6: Deploy staging (Render)
+   - Stage 7: API tests (Newman)
+   - Stage 8: Notify
+
+✅ Deployment:
+   - Backend: Render.com (Singapore, Docker, auto-deploy from main)
+   - Frontend: Vercel (PWA, global CDN)
+   - Database: Supabase (Singapore)
+   - Cache: Upstash (Singapore)
+   - Message Broker: CloudAMQP (Singapore)
+   - DNS: Cloudflare (e-tix-flash.com) — optional untuk portfolio
+
+✅ Monitoring & Observability:
+   - /metrics endpoint (Prometheus format)
+   - Prometheus + Grafana self-hosted (Render container)
+   - Alerts: PagerDuty/Slack webhook (baseline)
+
+✅ Secrets Management:
+   - .env.example (template, no secrets)
+   - Bitwarden backup untuk semua secrets
+   - Render Environment Variables (encrypted)
+
+2.2 SCOPE — OUT
+────────────────────────────────────────────────────────────────────────────────
+
+❌ Fitur bisnis (F001-F006) → FASE 1-8
+❌ Auth endpoints → FASE 1
+❌ Any user-facing features → FASE 1+
+❌ Wallet/ledger → NEVER (PRD Out of Scope)
+❌ Physical infrastructure → NEVER (cloud-only)
+
+2.3 OBJECTIVES (MEASURABLE)
+────────────────────────────────────────────────────────────────────────────────
+
+1. `docker-compose up -d` → 3 services running (PostgreSQL, Redis, RabbitMQ)
+2. `migrate -path ./migrations -database $DATABASE_URL up` → success
+3. `psql $DATABASE_URL -c "\dt"` → 12 tabel ter-deploy
+4. `go build -o e-tix-flash ./cmd/api` → success
+5. `curl https://api-staging.e-tix-flash.com/healthz/readiness` → 200 
+   dengan `{"checks":{"database":"ok","redis":"ok","rabbitmq":"ok"}}`
+6. CI/CD pipeline green di PR pertama
+7. Grafana dashboard live dengan minimal 3 panel
+8. Zero secrets leaked di Git history (gitleaks pass)
+
+2.4 SUCCESS CRITERIA
+────────────────────────────────────────────────────────────────────────────────
+
+Mengacu pada PRD §Success Metrics + STP §8.1 DoD:
+
+- [x] Infrastruktur 100% reproducible via docker-compose
+- [x] Deployment staging berhasil end-to-end
+- [x] Health check (liveness + readiness) return 200
+- [x] CI/CD pipeline green (lint + unit + integration + build + security)
+- [x] Zero secrets in Git history
+- [x] All 12 tables + 7 active triggers + RLS policies ter-deploy
+- [x] Monitoring (Prometheus + Grafana) live
+- [x] Backup baseline ter-config (Supabase automated + Bitwarden secrets)
+
+================================================================================
+SECTION 3 — FOUNDATION DISTILLATION
+================================================================================
+
+Distilasi dari 9 dokumen fondasi. Bagian ini SELF-CONTAINED — eksekutor tidak 
+perlu membuka fondasi untuk menyelesaikan FASE 0.
+
+────────────────────────────────────────────────────────────────────────────────
+3.1 FROM TDD v1.10 §2, §3, §4 — TECH STACK & STRUCTURE
+────────────────────────────────────────────────────────────────────────────────
+
+TECH STACK (Backend):
+  - Language:         Go 1.22+
+  - HTTP Framework:   Gin Gonic 1.10+
+  - DB Driver:        pgx/v5 5.5+ (pure Go, prepared statements)
+  - Decimal:          shopspring/decimal 1.4.0
+  - JWT:              golang-jwt/v5 (RS256)
+  - Password:         golang.org/x/crypto (bcrypt cost=12)
+  - Logger:           uber-go/zap 1.27+ (JSON production)
+  - Circuit Breaker:  sony/gobreaker 0.5+
+  - Task Queue:       hibiken/asynq 0.24+
+  - Migration:        golang-migrate/v4 4.16+
+
+TECH STACK (Frontend):
+  - Framework:        Next.js 14+ (App Router)
+  - UI:               React 18+
+  - Styling:          Tailwind CSS 3.4+
+  - PWA:              next-pwa / Workbox
+  - State:            Zustand 4.4+
+  - Fetching:         React Query / SWR
+  - HTTP Client:      Axios 1.6+
+  - Form:             React Hook Form 7.0+
+  - UI Components:    shadcn/ui
+  - Offline Storage:  localForage / Dexie
+
+TECH STACK (Infrastructure):
+  - Primary DB:       PostgreSQL 15+ (Supabase)
+  - Cache:            Redis 7+ (Upstash)
+  - Message Broker:   RabbitMQ 3.12+ (CloudAMQP)
+  - Backend Host:     Render.com (Singapore)
+  - Frontend Host:    Vercel (Global CDN)
+  - DNS:              Cloudflare
+
+BACKEND FOLDER STRUCTURE:
+
+  e-tix-flash-backend/
+  ├── cmd/api/main.go                    # Entry point + graceful shutdown
+  ├── internal/
+  │   ├── auth/                          # FASE 1: JWT, RBAC, blacklist
+  │   │   ├── jwt.go, middleware.go, rbac.go, blacklist.go, model.go
+  │   ├── booking/                       # FASE 3: Booking, Locking
+  │   │   ├── handler.go, service.go, repository.go, lua_scripts.go, model.go
+  │   ├── payment/                       # FASE 4: Payment obligations, webhook
+  │   ├── ticket/                        # FASE 5: QR, PIN, Ticket lifecycle
+  │   ├── gate/                          # FASE 6: Scan, Analytics, Offline sync
+  │   ├── resale/                        # FASE 7: Controlled Resale Market
+  │   ├── admin/                         # FASE 8: Emergency Tools, 2FA lockout
+  │   ├── worker/                        # Background workers
+  │   │   ├── booking_expiry.go, webhook_reconciliation.go, resale_expiry.go,
+  │   │   ├── report_generator.go, feedback_loop.go, db_queue_sync.go
+  │   ├── db/
+  │   │   ├── postgres.go                # pgxpool (MaxConns=15, statement_timeout=3000ms)
+  │   │   ├── migration.go
+  │   │   └── fixtures.go
+  │   ├── redis/
+  │   │   ├── client.go, bitmask.go, idempotency.go, lock.go, blacklist.go
+  │   ├── queue/
+  │   │   ├── publisher.go, consumer.go, delayed.go
+  │   ├── middleware/
+  │   │   ├── logger.go, cors.go, rate_limit.go, auth.go, recovery.go, circuit_breaker.go
+  │   ├── model/
+  │   │   ├── user.go, event.go, booking.go, ticket.go, error.go, constants.go
+  │   ├── util/
+  │   │   ├── validator.go, hash.go, idempotency.go, errors.go, decimal.go
+  │   └── config/config.go
+  ├── migrations/
+  │   ├── 001_initial_schema.up.sql      # 12 tabel + ENUMs + RLS + triggers
+  │   ├── 001_initial_schema.down.sql
+  │   ├── 002_resale_reservation.up.sql
+  │   └── ...
+  ├── tests/
+  │   ├── integration/                   # Testcontainers
+  │   ├── unit/                          # Go testing + testify
+  │   └── fixtures/seed.sql
+  ├── scripts/migrate.sh, deploy.sh
+  ├── docs/                              # PRD, DATABASE_SCHEMA, dst.
+  ├── .env.example
+  ├── docker-compose.yml
+  ├── Dockerfile                         # Multi-stage build (non-root appuser UID 1000)
+  ├── go.mod, go.sum
+  └── README.md
+
+FRONTEND FOLDER STRUCTURE:
+
+  e-tix-flash-frontend/
+  ├── app/
+  │   ├── layout.tsx                     # Root layout (PWA meta tags)
+  │   ├── page.tsx                       # Landing / Home
+  │   ├── auth/                          # login, register, verify-otp
+  │   ├── customer/                      # dashboard, waiting-room, seat-map, payment, my-tickets, ticket, resale
+  │   ├── eo/                            # dashboard, analytics, emergency
+  │   ├── gate/                          # scanner, pin-entry
+  │   ├── admin/                         # ledger, users, blacklist, force-release
+  │   └── api/proxy/[...slug]/route.ts   # API proxy
+  ├── components/                        # common, auth, customer, eo, gate, ui
+  ├── lib/
+  │   ├── api/client.ts                  # Axios with interceptors
+  │   ├── hooks/, stores/, utils/, pwa/
+  ├── public/icons/, manifest.json
+  ├── styles/globals.css
+  ├── next.config.js                     # PWA config
+  ├── tailwind.config.js
+  ├── tsconfig.json
+  └── package.json
+
+CONNECTION POOL CONFIG (Go):
+
+  config, _ := pgxpool.ParseConfig(connString)
+  config.MaxConns = 15
+  config.MinConns = 2
+  config.MaxConnIdleTime = 5 * time.Minute
+  config.MaxConnLifetime = 30 * time.Minute
+  config.HealthCheckPeriod = 1 * time.Minute
+  config.ConnConfig.RuntimeParams["statement_timeout"] = "3000ms"
+
+SYSTEM_USER_UUID (constant di internal/model/constants.go):
+
+  const SystemUserUUID = "00000000-0000-0000-0000-000000000000"
+
+DOCKERFILE (Multi-stage, non-root — sesuai SECURITY_SPEC v1.4 §10.3 + TDD v1.10):
+
+  FROM golang:1.22-alpine AS builder
+  WORKDIR /app
+  COPY go.mod go.sum ./
+  RUN go mod download
+  COPY . .
+  RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o e-tix-flash ./cmd/api
+
+  FROM alpine:latest
+  RUN apk --no-cache add ca-certificates
+  RUN adduser -D -u 1000 appuser          # Non-root user UID 1000 (bukan 10001)
+  WORKDIR /root/
+  COPY --from=builder /app/e-tix-flash .
+  COPY --from=builder /app/migrations ./migrations
+  USER appuser                            # Non-root user
+  EXPOSE 8080
+  CMD ["./e-tix-flash"]
+
+────────────────────────────────────────────────────────────────────────────────
+3.2 FROM DATABASE_SCHEMA v2.9 — FULL SCHEMA (12 TABEL + 7 ACTIVE TRIGGERS + RLS)
+────────────────────────────────────────────────────────────────────────────────
+
+DELIVERABLE FASE 0: file `migrations/001_initial_schema.up.sql`
+
+KONTEN MIGRATION (ringkas — full DDL):
+
+  -- Extensions
+  CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+  -- ENUMs (10 total):
+  CREATE TYPE user_role_enum AS ENUM ('customer', 'event_organizer', 'admin', 'gate_staff');
+  CREATE TYPE user_status_enum AS ENUM ('ACTIVE', 'SUSPENDED', 'FROZEN', 'DELETED');
+  CREATE TYPE ticket_status_enum AS ENUM (
+    'AVAILABLE', 'LOCKED', 'PENDING_SPLIT_PAY', 'CONFIRMED',
+    'RESALE_PENDING', 'RESOLD', 'CANCELLED', 'USED'
+  );
+  CREATE TYPE payment_status_enum AS ENUM ('PENDING', 'PAID', 'EXPIRED', 'FAILED', 'REFUNDED', 'CANCELLED');
+  CREATE TYPE payment_mode_enum AS ENUM ('SPLIT', 'BULK');
+  CREATE TYPE payment_method_enum AS ENUM ('VA', 'E_WALLET', 'CREDIT_CARD');
+  CREATE TYPE resale_status_enum AS ENUM ('PENDING', 'COMPLETED', 'CANCELLED', 'PENDING_PAYOUT');
+  CREATE TYPE scan_status_enum AS ENUM ('VALID', 'INVALID', 'EXPIRED', 'ALREADY_USED');
+  CREATE TYPE admin_action_type_enum AS ENUM (
+    'BULK_CANCEL', 'MANUAL_PAID', 'MANUAL_REFUND', 'FORCE_RELEASE_SEAT',
+    'UPDATE_EVENT_PRICE', 'SUSPEND_USER', 'UNSUSPEND_USER',
+    'BLACKLIST_IP', 'REMOVE_BLACKLIST_IP'
+  );
+  CREATE TYPE event_status_enum AS ENUM ('DRAFT', 'PUBLISHED', 'ON_SALE', 'SOLD_OUT', 'COMPLETED', 'CANCELLED');
+  CREATE TYPE insight_type_enum AS ENUM ('GATE_STAFFING', 'PRICE_RECOMMENDATION', 'BOT_BLACKLIST', 'PEAK_TIME');
+
+  -- Tables (12 total) — CREATE TABLE IF NOT EXISTS:
+  -- 1. users              (id, email, phone, name, password_hash, role, status,
+  --                        base_score, total_purchases, first_purchase_at,
+  --                        last_purchase_at, profile_photo_url, created_at,
+  --                        updated_at, deleted_at)
+  -- 2. events             (id, organizer_id, name, description, venue_name,
+  --                        venue_address, event_date, event_start_time,
+  --                        event_end_time, seat_layout_version, status,
+  --                        banner_url, created_at, updated_at, published_at)
+  -- 3. sections           (id, event_id, name, price, total_seats, bitmask_key,
+  --                        layout_version, created_at, updated_at)
+  -- 4. bookings           (id, event_id, section_id, leader_user_id,
+  --                        seat_positions JSONB, total_seats, total_amount,
+  --                        payment_mode, payment_status, expires_at,
+  --                        created_at, updated_at)
+  -- 5. payment_obligations (id, booking_id, user_id, seat_position, amount,
+  --                        status, payment_method, payment_link,
+  --                        external_transaction_id, webhook_received_at,
+  --                        idempotency_key, refunded_at, refund_transaction_id,
+  --                        created_at, updated_at)
+  -- 6. tickets            (id, booking_id, payment_obligation_id, owner_user_id,
+  --                        section_id, seat_position, status, is_assigned,
+  --                        qr_secret_key, last_qr_generated_at, fallback_pin,
+  --                        fallback_pin_used_at, fallback_pin_used,
+  --                        original_owner_user_id, resale_transaction_id,
+  --                        created_at, updated_at)
+  -- 7. ticket_scans       (id, ticket_id, gate_id, scanner_device_id,
+  --                        scanner_user_id, scan_status, scan_method,
+  --                        scanned_at, latitude, longitude, ip_address,
+  --                        is_peak_time, created_at)
+  -- 8. resale_transactions (id, ticket_id, event_id, seller_user_id, buyer_user_id,
+  --                        original_price, resale_price, platform_fee,
+  --                        seller_payout, status, payment_transaction_id,
+  --                        payout_transaction_id, created_at, completed_at,
+  --                        cancelled_at)
+  -- 9. admin_actions      (id, admin_id, action_type, target_user_id,
+  --                        target_resource_type, target_resource_id, description,
+  --                        reason, changes_before JSONB, changes_after JSONB,
+  --                        ip_address, user_agent, created_at)
+  -- 10. insights          (id, event_id, insight_type, title, description,
+  --                        recommendation JSONB, is_applied, applied_at,
+  --                        applied_by, generated_at, expires_at)
+  -- 11. blacklist         (id, type, value, reason, detected_by_insight_id,
+  --                        added_by, added_at, expires_at)
+  -- 12. system_config     (id, key, value JSONB, description, updated_at, updated_by)
+
+  -- CRITICAL CONSTRAINTS (excerpt — full di DATABASE_SCHEMA v2.9):
+  -- users: email UNIQUE, phone UNIQUE, base_score 0-100
+  -- payment_obligations: idempotency_key UNIQUE, payment_link UNIQUE
+  -- tickets: fallback_pin UNIQUE, partial unique index on (booking_id, seat_position)
+  --          WHERE status NOT IN ('RESOLD', 'CANCELLED')
+  -- resale_transactions: resale_price <= original_price * 1.10, seller != buyer
+  --          UNIQUE partial index on ticket_id WHERE status = 'PENDING'
+
+  -- RLS ENABLED on all 12 tables:
+  ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE events ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE sections ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE payment_obligations ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE ticket_scans ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE resale_transactions ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE admin_actions ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE insights ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE blacklist ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE system_config ENABLE ROW LEVEL SECURITY;
+
+  -- RLS POLICIES (excerpt — 1 per table sebagai representasi):
+  CREATE POLICY "Users can view own data" ON users
+    FOR SELECT USING (id = auth.uid() OR (auth.jwt() ->> 'role') IN ('admin', 'event_organizer'));
+  CREATE POLICY "Anyone can view published events" ON events
+    FOR SELECT USING (status IN ('PUBLISHED', 'ON_SALE', 'SOLD_OUT', 'COMPLETED'));
+  CREATE POLICY "Anyone can view pending resale tickets" ON resale_transactions
+    FOR SELECT USING (status = 'PENDING');
+  -- (... dst. 30+ policies total, semua dari DATABASE_SCHEMA v2.9)
+
+  -- =========================================================================
+  -- TRIGGERS: 7 AKTIF (Slot #2 REMOVED sesuai DATABASE_SCHEMA v2.9)
+  -- =========================================================================
+  --
+  -- Daftar trigger AKTIF (7 total), di-list eksplisit untuk DDL migration:
+  --
+  -- [Slot #1] check_booking_payment_complete
+  --           AFTER UPDATE ON payment_obligations
+  --           → Generate tickets saat semua obligation PAID
+  --           (dengan FOR UPDATE + status guard)
+  --
+  -- [Slot #2] REMOVED — auto_expire_bookings
+  --           Alasan: Auto-expire via Message Broker (F003) — TIDAK ada 
+  --           trigger ini di DATABASE_SCHEMA v2.9. Slot numbering tetap 
+  --           berlanjut untuk konsistensi historis migration.
+  --
+  -- [Slot #3] update_user_loyalty_score
+  --           AFTER INSERT ON tickets
+  --           → Update total_purchases, last_purchase_at
+  --
+  -- [Slot #4] generate_post_event_report
+  --           AFTER UPDATE ON events (WHEN status = 'COMPLETED')
+  --           → Auto-generate insight dengan gate stats
+  --
+  -- [Slot #5] handle_resale_lifecycle
+  --           AFTER INSERT OR UPDATE ON resale_transactions
+  --           → INSERT: ticket → RESALE_PENDING
+  --           → COMPLETED: old ticket RESOLD, new ticket untuk buyer
+  --           → CANCELLED: ticket back to CONFIRMED
+  --
+  -- [Slot #6] update_ticket_status_on_scan
+  --           AFTER INSERT ON ticket_scans (WHEN scan_status = 'VALID')
+  --           → Ticket status → USED
+  --
+  -- [Slot #7] handle_ticket_cancellation_on_refund
+  --           AFTER UPDATE ON payment_obligations
+  --           → Ticket status → CANCELLED saat refund/failed
+  --
+  -- [Slot #8] handle_booking_cancellation
+  --           AFTER UPDATE ON bookings (WHEN payment_status = 'CANCELLED')
+  --           → Ticket status → CANCELLED
+  --
+  -- CATATAN: Migration DDL hanya declare 7 trigger AKTIF. Slot #2 sengaja 
+  -- kosong (historical numbering dari DATABASE_SCHEMA v2.9).
+
+  -- SYSTEM_USER_UUID SEED:
+  INSERT INTO users (id, email, name, password_hash, phone, role, status, created_at)
+  VALUES (
+    '00000000-0000-0000-0000-000000000000',
+    'system@e-tix-flash.internal',
+    'System',
+    '$2a$12$SYSTEM_USER_NO_LOGIN_ACCOUNT_DUMMY_HASH',
+    '+000000000000',
+    'admin',       -- ENUM-compatible (bukan 'system' — fix dari TDD v1.10 §4)
+    'ACTIVE',
+    NOW()
+  ) ON CONFLICT (id) DO NOTHING;
+
+  -- SYSTEM_CONFIG SEED (7 keys dari DATABASE_SCHEMA v2.9):
+  INSERT INTO system_config (key, value, description) VALUES
+    ('seat_lock_ttl_seconds', '180', 'TTL untuk lock kursi (detik)'),
+    ('split_pay_timeout_minutes', '3', 'Batas waktu split-pay (menit)'),
+    ('resale_price_cap_percent', '10', 'Batas maksimum harga resale (%)'),
+    ('post_event_report_timeout_minutes', '60', 'Batas generate post-event report (menit)'),
+    ('max_group_seats', '10', 'Maksimum kursi per grup'),
+    ('fan_score_threshold_vip', '90', 'Batas skor untuk Tier 1 (VIP)'),
+    ('fan_score_threshold_regular', '70', 'Batas skor untuk Tier 2 (Regular)')
+  ON CONFLICT (key) DO NOTHING;
+
+CATATAN:
+  - File migration WAJIB match 1:1 dengan DATABASE_SCHEMA v2.9.
+  - Kalau ada inkonsistensi, DATABASE_SCHEMA menang (TRUTH FROM FOUNDATION).
+  - Sistem TIDAK punya tabel wallet / ledger (PRD Out of Scope).
+  - Trigger AKTIF = 7 (slot #2 removed). Jangan declare trigger #2 di migration.
+
+────────────────────────────────────────────────────────────────────────────────
+3.3 FROM SECURITY_SPEC v1.4 §10 — DEPLOYMENT SECURITY
+────────────────────────────────────────────────────────────────────────────────
+
+ENVIRONMENT VARIABLES (WAJIB di-set):
+
+  # Database
+  DATABASE_URL=postgresql://user:pass@host:5432/dbname
+  DB_MAX_CONNECTIONS=15
+  DB_STATEMENT_TIMEOUT=3000ms
+
+  # Redis
+  REDIS_URL=redis://user:pass@host:6379
+  REDIS_MAX_RETRIES=3
+
+  # RabbitMQ
+  RABBITMQ_URL=amqp://user:pass@host:5672
+
+  # JWT (BOTH KEYS required for RS256 — TDD v1.10 fix)
+  JWT_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----
+  JWT_PUBLIC_KEY=-----BEGIN RSA PUBLIC KEY-----\n...\n-----END RSA PUBLIC KEY-----
+
+  # Payment Gateway
+  PAYMENT_GATEWAY_URL=https://api.midtrans.com/v2
+  PAYMENT_GATEWAY_API_KEY=xxx
+
+  # SMS/Email
+  TWILIO_ACCOUNT_SID=xxx
+  TWILIO_AUTH_TOKEN=xxx
+  SENDGRID_API_KEY=xxx
+
+  # Frontend
+  FRONTEND_URL=https://e-tix-flash.vercel.app
+  CORS_ORIGINS=https://e-tix-flash.vercel.app
+
+  # Observability
+  LOG_LEVEL=info
+  SENTRY_DSN=xxx
+
+  # Circuit Breaker
+  CIRCUIT_BREAKER_INTERVAL=5s
+  CIRCUIT_BREAKER_TIMEOUT=30s
+  CIRCUIT_BREAKER_MAX_REQUESTS=5
+
+  # Resale Platform Fee
+  RESALE_PLATFORM_FEE_RATE=0.025
+
+  # System
+  SYSTEM_USER_UUID=00000000-0000-0000-0000-000000000000
+
+  # Environment
+  ENV=production
+
+JWT KEY GENERATION:
+
+  openssl genrsa -out private_key.pem 2048
+  openssl rsa -in private_key.pem -pubout -out public_key.pem
+
+.gitignore (WAJIB ada sebelum commit pertama):
+
+  # Env
+  .env
+  .env.local
+  .env.*.local
+  !.env.example
+
+  # Keys
+  *.pem
+  private_key.pem
+  public_key.pem
+
+  # Go
+  /vendor/
+  *.exe
+  *.out
+  e-tix-flash
+
+  # Node
+  node_modules/
+  .next/
+  out/
+  dist/
+
+  # IDE
+  .idea/
+  .vscode/
+  *.swp
+
+  # Logs
+  *.log
+  logs/
+
+  # OS
+  .DS_Store
+  Thumbs.db
+
+SECRETS BACKUP:
+  - Semua secrets diexport ke Bitwarden (encrypted vault)
+  - Backup lokal di-encrypt (gpg) jika perlu
+  - DILARANG commit secrets ke Git
+
+────────────────────────────────────────────────────────────────────────────────
+3.4 FROM DRP v1.2 §4 — BACKUP & REDUNDANCY BASELINE
+────────────────────────────────────────────────────────────────────────────────
+
+BACKUP BASELINE (Setup FASE 0):
+
+  - Supabase: automated daily backup (default, gratis tier)
+  - Supabase Pro (opsional): PITR up to 7 days
+  - Manual export: ke AWS S3 (different region) — weekly (setelah production)
+  - Bitwarden: secrets backup (bulanan)
+  - GitHub: code repo (real-time) + local bare clone
+
+REDUNDANCY BASELINE:
+  - Backend: Render.com auto-scale (stateless)
+  - Frontend: Vercel Edge Network (auto)
+  - Database: Supabase managed replica
+  - Redis: Upstash multi-AZ
+  - RabbitMQ: CloudAMQP managed cluster
+
+────────────────────────────────────────────────────────────────────────────────
+3.5 FROM STP v1.1 §3.1 — TEST ENVIRONMENT BASELINE
+────────────────────────────────────────────────────────────────────────────────
+
+TEST ENVIRONMENT (Setup FASE 0):
+
+  LOCAL:
+    - PostgreSQL: docker-compose, port 15432, dbname=etix_flash_dev
+    - Redis:      docker-compose, port 16379
+    - RabbitMQ:   docker-compose, port 5672
+    - .env.local  (TEST_MODE=true)
+
+  CI (GitHub Actions):
+    - testcontainers-go (PG + Redis + RabbitMQ auto-spawn)
+    - 4 parallel runners (unit + integration)
+
+  STAGING:
+    - Render.com staging (auto from develop branch)
+    - Supabase staging project
+    - Upstash staging
+    - CloudAMQP staging
+    - Midtrans Sandbox / Xendit Sandbox
+
+────────────────────────────────────────────────────────────────────────────────
+3.6 FROM PRD v6.0 §Cost Efficiency — INFRA BUDGET
+────────────────────────────────────────────────────────────────────────────────
+
+BUDGET BASELINE (Free Tier untuk portfolio):
+
+  - Render.com:         $0 (Free tier) — cukup untuk MVP
+  - Supabase:           $0 (Free tier) — cukup 10.000 tiket
+  - Upstash:            $0 (Free tier) — cukup untuk dev/staging
+  - CloudAMQP:          $0 (Little Lemur) — cukup untuk delayed messages
+  - Vercel:             $0 (Hobby)
+  - Cloudflare:         $0 (Free tier)
+  - GitHub:             $0 (Public repo)
+
+  Total Baseline: ~$0/bulan (portfolio)
+  Estimate Production: ~$50-350/bulan (jika di-scale)
+
+================================================================================
+SECTION 4 — TASK BREAKDOWN
+================================================================================
+
+9 EPICS, 41 TASKS. Estimasi total ~40 jam (1 minggu).
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E1: REPOSITORY & VERSION CONTROL
+────────────────────────────────────────────────────────────────────────────────
+
+E1-S1-T1 [30 min] — Init Git repo + .gitignore + README skeleton
+   Deliverable: Git repo lokal dengan commit pertama
+   DoD: `git log` menampilkan 1 commit
+
+E1-S1-T2 [15 min] — Push ke GitHub private repo
+   Deliverable: github.com/{user}/e-tix-flash-backend
+   DoD: repo live, .gitignore efektif (node_modules, .env tidak masuk)
+
+E1-S2-T3 [15 min] — Branch strategy setup: main, develop, feature/*
+   Deliverable: branch utama + protection rules
+   DoD: GitHub Branch Protection: main requires PR + CI pass
+
+E1-S2-T4 [15 min] — Setup .env.example (template, no secrets)
+   Deliverable: file .env.example di root
+   DoD: file contains all keys, no values (placeholder only)
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E2: BACKEND SKELETON (GOLANG)
+────────────────────────────────────────────────────────────────────────────────
+
+E2-S1-T5 [30 min] — Init Go module + go.mod (Go 1.22)
+   Deliverable: go.mod, go.sum
+   DoD: `go mod tidy` clean
+
+E2-S1-T6 [2 jam] — Folder structure scaffolding (internal/*, cmd/api)
+   Deliverable: semua folder + empty .go files (matching TDD §3)
+   DoD: `tree` match TDD §3 structure
+
+E2-S2-T7 [2 jam] — Gin HTTP server + /healthz/liveness + /healthz/readiness
+   Deliverable: cmd/api/main.go dengan 2 endpoint health
+   DoD: `curl localhost:8080/healthz/liveness` → 200
+
+E2-S2-T8 [1 jam] — pgx/v5 connection pool (MaxConns=15, timeout 3000ms)
+   Deliverable: internal/db/postgres.go
+   DoD: connect ke docker-compose PG, `SELECT 1` works
+
+E2-S2-T9 [1 jam] — Zap logger + config loader
+   Deliverable: internal/config/config.go + logger setup
+   DoD: logs JSON format, env vars loaded
+
+E2-S3-T10 [1 jam] — Middleware skeleton: logger, CORS, recovery
+   Deliverable: internal/middleware/*.go
+   DoD: request log terlihat di console, CORS headers correct
+
+E2-S3-T11 [1 jam] — Readiness check extend (DB + Redis + RabbitMQ)
+   Deliverable: readiness check semua dependency
+   DoD: `/healthz/readiness` → `{"database":"ok","redis":"ok","rabbitmq":"ok"}`
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E3: DATABASE SETUP (SUPABASE + MIGRATIONS)
+────────────────────────────────────────────────────────────────────────────────
+
+E3-S1-T12 [30 min] — Provision Supabase project (Singapore region)
+   Deliverable: Supabase project + connection string
+   DoD: `psql $DATABASE_URL -c "SELECT 1"` works
+
+E3-S1-T13 [15 min] — Setup golang-migrate/v4
+   Deliverable: `migrate` binary di PATH (atau via Docker)
+   DoD: `migrate -version` works
+
+E3-S2-T14 [4 jam] — Write migration 001_initial_schema.up.sql
+   Deliverable: full DDL (12 tabel + 10 ENUMs + indexes + RLS + 7 active 
+                triggers + seeds)
+   DoD: `migrate up` sukses di local dan staging
+   ⚠️ Trigger AKTIF = 7 (slot #2 removed — jangan declare)
+
+E3-S2-T15 [30 min] — Write migration 001_initial_schema.down.sql
+   Deliverable: DROP semua tabel + ENUMs
+   DoD: `migrate down` sukses lalu `up` lagi
+
+E3-S3-T16 [1 jam] — Verify: 12 tabel + 7 triggers + RLS + SYSTEM_USER_UUID
+   Deliverable: verification script
+   DoD: 
+     - `\dt` shows 12 tables
+     - `SELECT tgname FROM pg_trigger WHERE tgname NOT LIKE 'RI_%'` → 7 rows
+     - `SELECT id, role FROM users WHERE id='00000000...'` → admin
+     - `SELECT key, value FROM system_config` → 7 rows
+
+E3-S3-T17 [30 min] — Setup test database + seed.sql (fixtures)
+   Deliverable: tests/fixtures/seed.sql
+   DoD: sample user + event + section siap dipakai
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E4: CACHE & MESSAGE BROKER
+────────────────────────────────────────────────────────────────────────────────
+
+E4-S1-T18 [30 min] — Provision Upstash Redis (Singapore, TLS)
+   Deliverable: REDIS_URL
+   DoD: `redis-cli -u $REDIS_URL PING` → PONG
+
+E4-S1-T19 [30 min] — Provision CloudAMQP RabbitMQ (Singapore)
+   Deliverable: RABBITMQ_URL
+   DoD: connect via amqp client → OK
+
+E4-S2-T20 [30 min] — Enable plugin rabbitmq_delayed_message_exchange
+   Deliverable: plugin aktif di CloudAMQP
+   DoD: `rabbitmq-plugins list` → plugin E* aktif
+   ⚠️ Plugin BUKAN default (WAJIB enable sebelum declare exchange)
+
+E4-S2-T21 [1 jam] — Declare exchange + queues
+   Deliverable: 
+     - Exchange: delayed_exchange (type: x-delayed-message)
+     - Queues: fan_score, release_seat_check, resale_expiry_check,
+               report_generation, reconciliation_cycle
+   DoD: CloudAMQP dashboard shows all queues
+
+E4-S3-T22 [1 jam] — Go clients: Redis + RabbitMQ
+   Deliverable: internal/redis/client.go + internal/queue/publisher.go
+   DoD: simple PING + publish message works
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E5: FRONTEND SKELETON (NEXT.JS PWA)
+────────────────────────────────────────────────────────────────────────────────
+
+E5-S1-T23 [1 jam] — Init Next.js 14 + TypeScript + Tailwind
+   Deliverable: package.json + folder structure (TDD §3 frontend)
+   DoD: `npm run dev` → localhost:3000 works
+
+E5-S1-T24 [1 jam] — PWA config (next-pwa + Workbox)
+   Deliverable: next.config.js + manifest.json + icons
+   DoD: Lighthouse PWA installable
+
+E5-S2-T25 [1 jam] — Root layout + landing page placeholder
+   Deliverable: app/layout.tsx + app/page.tsx
+   DoD: page render dengan Tailwind styling
+
+E5-S2-T26 [1 jam] — API client (Axios + interceptors)
+   Deliverable: lib/api/client.ts
+   DoD: base URL + auth header interceptor setup
+
+E5-S3-T27 [30 min] — Deploy frontend ke Vercel
+   Deliverable: Vercel deployment URL
+   DoD: https://e-tix-flash.vercel.app live
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E6: CI/CD PIPELINE (GITHUB ACTIONS)
+────────────────────────────────────────────────────────────────────────────────
+
+E6-S1-T28 [2 jam] — Write .github/workflows/test.yml (8 stages)
+   Deliverable: workflow file
+   DoD: PR trigger → semua stage jalan
+
+E6-S1-T29 [30 min] — Setup CodeCov integration
+   Deliverable: CodeCov token + badge
+   DoD: coverage report muncul di PR comment
+
+E6-S2-T30 [1 jam] — Setup govulncheck + gitleaks di CI
+   Deliverable: stage security scan
+   DoD: PR dengan secret → CI fail
+
+E6-S3-T31 [1 jam] — Setup Newman (Postman) untuk API tests
+   Deliverable: postman_collection.json + workflow integration
+   DoD: Newman runs di staging (setelah FASE 1+, di FASE 0 cukup skeleton)
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E7: DEPLOYMENT (RENDER.COM)
+────────────────────────────────────────────────────────────────────────────────
+
+E7-S1-T32 [2 jam] — Setup Render.com Web Service (Docker deploy)
+   Deliverable: Dockerfile + Render config
+   Sub-tasks:
+     a. Tulis Dockerfile multi-stage:
+        - Stage 1 (builder): golang:1.22-alpine + CGO_ENABLED=0 build
+        - Stage 2 (runtime): alpine:latest
+        - RUN adduser -D -u 1000 appuser   ← WAJIB non-root user UID 1000
+        - USER appuser                      ← WAJIB switch ke non-root
+        - EXPOSE 8080
+        - CMD ["./e-tix-flash"]
+     b. Konfigurasi Render Web Service: Singapore region, Docker runtime
+     c. Link ke GitHub repo (main branch auto-deploy)
+     d. Set env vars (semua dari .env.example)
+   DoD:
+     - Build via Dockerfile sukses
+     - Container jalan dengan non-root user (verify: `docker exec whoami` → appuser)
+     - Deploy from main branch auto
+     - URL live: https://api-staging.e-tix-flash.com
+   Reference: SECURITY_SPEC v1.4 §10.3 + TDD v1.10 §10.3 (non-root UID 1000)
+
+E7-S1-T33 [30 min] — Set env vars di Render (semua dari .env.example)
+   Deliverable: Render environment variables
+   DoD: logs tidak error saat startup
+
+E7-S2-T34 [30 min] — Verify deployment: /healthz/readiness → 200
+   Deliverable: end-to-end health check
+   DoD: `curl https://api-staging.e-tix-flash.com/healthz/readiness` → 200
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E8: MONITORING & OBSERVABILITY
+────────────────────────────────────────────────────────────────────────────────
+
+E8-S1-T35 [2 jam] — Setup Prometheus + Grafana (Render container)
+   Deliverable: docker-compose untuk monitoring
+   DoD: Grafana live, Prometheus scrape /metrics
+
+E8-S1-T36 [1 jam] — Expose /metrics endpoint (Prometheus format)
+   Deliverable: metrics middleware
+   DoD: 
+     - http_request_duration_seconds
+     - http_requests_total
+     - circuit_breaker_state
+
+E8-S2-T37 [1 jam] — Baseline Grafana dashboard (3 panels)
+   Deliverable: dashboard JSON
+   DoD: 3 panels: request rate, latency p95, error rate
+
+E8-S2-T38 [30 min] — Alert rules (Slack webhook)
+   Deliverable: alertmanager config
+   DoD: test alert muncul di Slack
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E9: CONFIGURATION & SECRETS MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+E9-S1-T39 [1 jam] — Generate JWT RSA key pair (2048-bit)
+   Deliverable: private_key.pem + public_key.pem
+   DoD: 
+     - JWT_PRIVATE_KEY + JWT_PUBLIC_KEY di-set di Render
+     - Backup ke Bitwarden
+
+E9-S1-T40 [30 min] — Bitwarden vault setup
+   Deliverable: semua secrets di Bitwarden
+   DoD: emergency recovery documented
+
+E9-S2-T41 [30 min] — Render secrets rotation schedule
+   Deliverable: calendar reminder (quarterly JWT, annual DB, semi-annual GW)
+   DoD: task tracked
+
+────────────────────────────────────────────────────────────────────────────────
+TASK SUMMARY
+────────────────────────────────────────────────────────────────────────────────
+
+| Epic | Tasks | Est. Duration |
+|------|-------|---------------|
+| E1   | 4     | ~1.5 jam      |
+| E2   | 7     | ~8 jam        |
+| E3   | 6     | ~7 jam        |
+| E4   | 5     | ~4 jam        |
+| E5   | 5     | ~4.5 jam      |
+| E6   | 4     | ~5 jam        |
+| E7   | 3     | ~3 jam        |
+| E8   | 4     | ~5 jam        |
+| E9   | 3     | ~2 jam        |
+|------|-------|---------------|
+| Total| 41    | ~40 jam (1 minggu) |
+
+================================================================================
+SECTION 5 — DELIVERABLES
+================================================================================
+
+5.1 CODE ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+Backend:
+  ✅ e-tix-flash-backend/ (full folder structure per TDD §3)
+  ✅ cmd/api/main.go (Gin + health checks + graceful shutdown)
+  ✅ internal/db/postgres.go (pgxpool with MaxConns=15)
+  ✅ internal/redis/client.go
+  ✅ internal/queue/publisher.go
+  ✅ internal/config/config.go
+  ✅ internal/middleware/{logger,cors,recovery}.go
+  ✅ migrations/001_initial_schema.up.sql (12 tabel + 7 active triggers + RLS)
+  ✅ migrations/001_initial_schema.down.sql
+  ✅ tests/fixtures/seed.sql
+  ✅ Dockerfile (multi-stage build dengan non-root user `appuser` UID 1000 
+                 sesuai SECURITY_SPEC v1.4 §10.3 + TDD v1.10 §10.3)
+  ✅ docker-compose.yml (PG + Redis + RabbitMQ)
+
+Frontend:
+  ✅ e-tix-flash-frontend/ (Next.js 14 + TypeScript)
+  ✅ app/layout.tsx + app/page.tsx
+  ✅ lib/api/client.ts
+  ✅ next.config.js (PWA)
+  ✅ public/manifest.json + icons/
+
+5.2 DOCUMENTATION
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ README.md (backend + frontend) — minimal, akan dilengkapi di FASE 9
+  ✅ .env.example (all keys, no values)
+  ✅ docs/DEPLOYMENT.md (Render + Vercel setup)
+  ✅ docs/LOCAL_SETUP.md (docker-compose + migrate)
+
+5.3 TEST ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ tests/unit/sanity_test.go (placeholder)
+  ✅ tests/integration/sanity_test.go (testcontainers)
+  ✅ .github/workflows/test.yml (8 stages)
+  ✅ postman_collection.json (skeleton)
+
+5.4 DEPLOYMENT ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ Render.com Web Service (backend, Singapore, non-root appuser UID 1000)
+  ✅ Vercel Project (frontend, global CDN)
+  ✅ Supabase Project (DB, Singapore)
+  ✅ Upstash Redis (Singapore)
+  ✅ CloudAMQP RabbitMQ (Singapore)
+  ✅ Grafana dashboard + Prometheus (Render container)
+
+================================================================================
+SECTION 6 — ACCEPTANCE CRITERIA
+================================================================================
+
+6.1 FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] `docker-compose up -d` → 3 services running (PG + Redis + MQ)
+  [ ] `migrate -path ./migrations -database $DATABASE_URL up` → success
+  [ ] `psql $DATABASE_URL -c "\dt"` → 12 tabel
+  [ ] `psql $DATABASE_URL -c "SELECT COUNT(*) FROM system_config"` → 7
+  [ ] `psql $DATABASE_URL -c "SELECT role FROM users WHERE id='00000000-...'"` → admin
+  [ ] `SELECT COUNT(*) FROM pg_trigger WHERE tgname NOT LIKE 'RI_%'` → 7 (active triggers)
+  [ ] `go build -o e-tix-flash ./cmd/api` → success
+  [ ] `go test ./...` → pass (sanity tests)
+  [ ] `curl localhost:8080/healthz/liveness` → 200
+  [ ] `curl localhost:8080/healthz/readiness` → 200 with DB+Redis+MQ ok
+  [ ] `npm run dev` (frontend) → localhost:3000 works
+  [ ] `curl https://api-staging.e-tix-flash.com/healthz/readiness` → 200
+  [ ] `docker exec <container> whoami` → appuser (non-root UID 1000)
+  [ ] Grafana dashboard live dengan 3 panels
+
+6.2 NON-FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] CI pipeline green (all 8 stages pass)
+  [ ] Coverage report uploads to CodeCov
+  [ ] gitleaks pass (no secrets in Git history)
+  [ ] govulncheck pass (no critical CVEs)
+  [ ] Response time /healthz < 50ms (local)
+  [ ] Zero secrets committed
+  [ ] Backup baseline ter-config (Supabase + Bitwarden)
+
+6.3 TEST COVERAGE TARGET
+────────────────────────────────────────────────────────────────────────────────
+
+  Unit tests:          Skeleton only (≥ 50% for scaffolded code)
+  Integration tests:   1 sanity test (DB + Redis + MQ connectivity)
+  API tests:           2 endpoints (healthz liveness + readiness)
+  Security tests:      gitleaks + govulncheck pass
+  Load tests:          N/A (FASE 0 tidak ada fitur untuk load test)
+
+================================================================================
+SECTION 7 — RISKS & MITIGATIONS
+================================================================================
+
+| Risk                                              | Likelihood | Impact | Mitigation                                          |
+|---------------------------------------------------|------------|--------|-----------------------------------------------------|
+| Supabase free tier limit exceeded (500 MB)        | Low        | Med    | Monitor usage, upgrade to Pro jika perlu            |
+| CloudAMQP quota exceeded (Little Lemur: 1M msg/mo)| Medium     | Med    | Monitor queue depth, negotiate upgrade jika perlu   |
+| Render.com free tier spin-down (inactivity)       | Medium     | Low    | Schedule ping via cron (uptime robot)               |
+| Upstash free tier (10k commands/day) exceeded     | Medium     | Med    | Monitor command count, upgrade ke pay-as-you-go     |
+| JWT key accidentally committed                    | Low        | High   | .gitignore + gitleaks di CI (pre-commit hook)       |
+| Migration fails in staging (schema drift)         | Low        | High   | Test migration di local sebelum deploy staging      |
+| Docker build fails on Alpine (CGO issue)          | Medium     | Med    | `CGO_ENABLED=0` untuk static binary                 |
+| PWA config breaks (next-pwa version mismatch)     | Medium     | Low    | Pin versions di package.json                        |
+| DNS propagation slow                              | Low        | Low    | Cloudflare quick propagation (< 60s)                |
+| Plugin rabbitmq_delayed_message_exchange lupa     | Medium     | High   | Task E4-S2-T20 explicit + verification step         |
+| Dockerfile lupa `USER appuser` (root container)   | Low        | Med    | E7-S1-T32 sub-task explicit + AC check `whoami`     |
+
+RESPONSE PER SCENARIO (cross-reference DRP v1.2):
+
+- Supabase down → Playbook #1 (DRP v1.2 §5.2)
+- Redis down → Playbook #2 (DRP v1.2 §5.3)
+- RabbitMQ down → Playbook #3 (DRP v1.2 §5.4)
+- Backend region down → Playbook #4 (DRP v1.2 §5.5)
+- Secrets compromise → Playbook #6 (DRP v1.2 §5.7)
+
+================================================================================
+SECTION 8 — SECURITY CONSIDERATIONS
+================================================================================
+
+8.1 THREATS RELEVANT TO FASE 0
+────────────────────────────────────────────────────────────────────────────────
+
+Dari SECURITY_SPEC v1.4 §1 Threat Model:
+
+| Threat                    | Fase 0 Mitigation                                    |
+|---------------------------|------------------------------------------------------|
+| Account Compromise        | JWT RS256 (2048-bit) — setup only, no auth endpoint  |
+| Data Exposure             | TLS 1.3 (Render + Vercel auto), .env not in Git      |
+| Injection Attacks         | pgx/v5 prepared statements (setup pattern)           |
+| Data Breach               | RLS enabled on all 12 tables (schema-level)          |
+| Secrets Compromise        | Bitwarden + gitleaks CI + .gitignore comprehensive   |
+| Cache Poisoning           | Redis ACL (Upstash default) + no untrusted input     |
+| DDoS (baseline)           | Cloudflare WAF (default protection)                  |
+| Container Escape (baseline)| Non-root user (appuser UID 1000) di Dockerfile     |
+
+8.2 HEADERS REQUIRED (Setup)
+────────────────────────────────────────────────────────────────────────────────
+
+FASE 0 tidak expose business endpoint, tapi framework middleware WAJIB support:
+
+  - X-Request-ID:      untuk tracing (auto-generate jika missing)
+  - X-RateLimit-*:     baseline rate limiter (setup middleware)
+  - Authorization:     placeholder (JWT diimplementasi di FASE 1)
+  - X-Idempotency-Key: placeholder (dipakai di FASE 4)
+  - X-Queue-Token:     placeholder (dipakai di FASE 2-3)
+  - X-Admin-2FA-Token: placeholder (dipakai di FASE 8)
+
+8.3 SECRETS MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ All secrets in Render Environment Variables (encrypted at rest)
+  ✅ Backup di Bitwarden (encrypted vault)
+  ✅ .env tidak pernah di-commit (.gitignore enforced)
+  ✅ gitleaks di CI untuk detect accidental commits
+  ✅ JWT keys: RSA 2048-bit, generate via openssl, rotate quarterly
+
+8.4 BACKUP BASELINE
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ Supabase automated daily (default)
+  ✅ Manual export ke S3 (weekly, setelah production)
+  ✅ Bitwarden secrets backup (bulanan)
+  ✅ GitHub repo (real-time)
+
+8.5 CONTAINER SECURITY (Baseline)
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ Non-root user `appuser` (UID 1000) di Dockerfile — sesuai SECURITY_SPEC 
+     v1.4 §10.3 + TDD v1.10 §10.3
+  ✅ Minimal base image (alpine)
+  ✅ No secrets in image (all via env vars)
+  ✅ CVE scanning (trivy) — di CI (opsional, FASE 6)
+
+================================================================================
+SECTION 9 — DEFINITION OF DONE (DoD)
+================================================================================
+
+9.1 CHECKLIST KELULUSAN FASE
+────────────────────────────────────────────────────────────────────────────────
+
+Infrastructure:
+  [ ] Docker Compose up (PG + Redis + RabbitMQ) — verified
+  [ ] Cloud services provisioned (Supabase + Upstash + CloudAMQP)
+  [ ] Render.com Web Service live (non-root appuser UID 1000)
+  [ ] Vercel project live
+  [ ] Cloudflare DNS (optional)
+
+Code:
+  [ ] Backend Go module + folder structure per TDD §3
+  [ ] Frontend Next.js + TypeScript + Tailwind + PWA
+  [ ] Migration 001 executed (12 tabel + 7 active triggers + RLS + seeds)
+  [ ] SYSTEM_USER_UUID (role='admin') + 7 system_config seeded
+  [ ] /healthz/liveness + /healthz/readiness return 200
+  [ ] Dockerfile multi-stage + non-root appuser UID 1000
+
+CI/CD:
+  [ ] GitHub Actions pipeline (8 stages) green di PR pertama
+  [ ] CodeCov badge visible
+  [ ] gitleaks + govulncheck pass
+
+Monitoring:
+  [ ] Prometheus + Grafana live
+  [ ] /metrics endpoint expose
+  [ ] 3 Grafana panels (rate, latency, error rate)
+  [ ] Slack alert test pass
+
+Secrets:
+  [ ] JWT RSA key pair generated + set di Render
+  [ ] Semua secrets di Bitwarden
+  [ ] .gitignore comprehensive
+  [ ] Zero secrets committed (verified)
+
+Documentation:
+  [ ] README.md (minimal)
+  [ ] docs/LOCAL_SETUP.md
+  [ ] docs/DEPLOYMENT.md
+  [ ] .env.example
+
+9.2 ROLLBACK POINT
+────────────────────────────────────────────────────────────────────────────────
+
+Kalau FASE 0 gagal di tengah:
+  - Semua work di-commit ke branch `feature/fase-0-setup` 
+  - `main` tetap kosong (tidak di-push sampai FASE 0 selesai)
+  - Rollback = hapus branch `feature/fase-0-setup`
+  - Cloud resources (Supabase, Upstash, dst.) bisa di-delete jika perlu
+
+Setelah FASE 0 selesai:
+  - Merge `feature/fase-0-setup` → `develop` → `main`
+  - Tag: `v0.0.1-foundation`
+  - FASE 1 bisa dimulai dengan aman
+
+9.3 SIGN-OFF
+────────────────────────────────────────────────────────────────────────────────
+
+  QA/Verifier:       M. Arif Aulia
+  Date Completed:    [___]
+  Ready for FASE 1:  [ ] YES  [ ] NO
+
+================================================================================
+SECTION 10 — NOTES & REFERENCES
+================================================================================
+
+10.1 NOTES
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 0 ADALAH FONDASI. Kesalahan di sini akan propagate ke FASE 1-9. 
+  Take time, verifikasi setiap task.
+
+- Migration 001 harus SAMA PERSIS dengan DATABASE_SCHEMA v2.9. Kalau ada 
+  inkonsistensi, DATABASE_SCHEMA menang (TRUTH FROM FOUNDATION).
+
+- TRIGGERS: 7 AKTIF (slot #1-8 dengan slot #2 REMOVED karena auto-expire 
+  via Message Broker, bukan trigger). Jangan declare trigger #2 di migration 
+  DDL. Kalau butuh verifikasi: 
+  `SELECT COUNT(*) FROM pg_trigger WHERE tgname NOT LIKE 'RI_%'` → 7.
+
+- Plugin `rabbitmq_delayed_message_exchange` BUKAN default. WAJIB enable 
+  sebelum declare exchange `x-delayed-message`. Kalau lupa, declare akan 
+  gagal dengan error: "unknown exchange type 'x-delayed-message'".
+
+- SYSTEM_USER_UUID WAJIB gunakan role='admin' (bukan 'system'), karena 
+  ENUM user_role_enum tidak punya 'system'. Ini fix dari TDD v1.10 §4.
+
+- DOCKERFILE: WAJIB multi-stage + non-root user `appuser` UID 1000 
+  (sesuai SECURITY_SPEC v1.4 §10.3 + TDD v1.10 §10.3). BUKAN UID 10001 
+  (tidak ada di foundation). Verify: `docker exec <container> whoami` 
+  harus return `appuser`, bukan `root`.
+
+- Semua environment variables WAJIB ada di .env.example. Ini akan jadi 
+  template untuk contributor.
+
+- Deployment free tier (Render, Supabase, Upstash, CloudAMQP) cukup 
+  untuk portfolio. Kalau di-scale ke production, upgrade tier.
+
+10.2 CROSS-REFERENCE FOUNDATION
+────────────────────────────────────────────────────────────────────────────────
+
+| Foundation Doc         | Section Relevan                                |
+|------------------------|------------------------------------------------|
+| PRD v6.0               | §Constraints, §Cost Efficiency, §Scalability   |
+| DATABASE_SCHEMA v2.9   | Full DDL, ENUMs, RLS, Triggers (7 active), Seeds|
+| LOGIC_FLOW v1.4        | §9 Cross-Cutting (Circuit Breaker baseline)    |
+| HALAMAN v1.1           | (Referensi visual nanti di FASE 1+)            |
+| TDD v1.10              | §2 Tech Stack, §3 Structure, §4 DB, §10.3 Docker, §11 Env |
+| API_CONTRACT v1.2      | §15 Health & Observability                     |
+| SECURITY_SPEC v1.4     | §10 Deployment Security (UID 1000), §3.2 Encryption |
+| DRP v1.2               | §4 Backup & Redundancy                         |
+| STP v1.1               | §3.1 Test Environment, §7 CI/CD                |
+
+10.3 CROSS-REFERENCE ROADMAP FASE LAIN
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 1 (Auth & User): depends on FASE 0 backend skeleton + DB
+- FASE 3 (Bitmask Lock): depends on FASE 0 Redis setup
+- FASE 4 (Split-Pay): depends on FASE 0 RabbitMQ (delayed messages)
+- FASE 8 (Admin Tools): depends on FASE 0 monitoring (alerts)
+- FASE 9 (Testing & Polish): depends on FASE 0 CI/CD pipeline
+
+10.4 VERSION HISTORY
+────────────────────────────────────────────────────────────────────────────────
+
+| Version  | Date       | Author       | Changes                                          |
+|----------|------------|--------------|--------------------------------------------------|
+| 1.0-FINAL| 2026-09-11 | M. Arif Aulia| Initial ROADMAP FASE 0. Foundation Setup.        |
+| 1.1-FINAL| 2026-09-11 | M. Arif Aulia| **Post-Gemini review #1:** 1) Section 4 header:  |
+|          |            |              | "~35 TASKS" → "41 TASKS". 2) Section 3.2 trigger |
+|          |            |              | list: disambiguasi → 7 ACTIVE triggers (slot #2  |
+|          |            |              | REMOVED, list eksplisit 7 nama). 3) Task E7-S1-  |
+|          |            |              | T32: explicit non-root user appuser UID 1000 +   |
+|          |            |              | sub-task Dockerfile + AC verify whoami.          |
+|          |            |              | 4) FLAG: Gemini klaim UID 10001 — REJECTED,      |
+|          |            |              | foundation pakai UID 1000 (SEC_SPEC v1.4 §10.3   |
+|          |            |              | + TDD v1.10). 5) FLAG: Gemini klaim 8 triggers — |
+|          |            |              | REJECTED, foundation pakai 7 active (slot #2     |
+|          |            |              | removed).                                        |
+
+================================================================================
+📋 FASE 0 SYNC CHECKLIST (100% COMPLIANCE)
+================================================================================
+
+✅ BLUEPRINT ROADMAP v1.0-FINAL Sync:
+  - FASE 0 = Foundation Setup ✓
+  - Estimasi 1 minggu ✓
+  - Template 10 section diikuti ✓
+  - Dependencies: None (fase pertama) ✓
+
+✅ PRD v6.0 Sync:
+  - 8-10 minggu total timeline respected ✓
+  - Free tier cost baseline ✓
+  - No fitur bisnis di FASE 0 ✓
+
+✅ DATABASE_SCHEMA v2.9 Sync:
+  - 12 tabel + 7 ACTIVE triggers (slot #2 REMOVED) + RLS di migration 001 ✓
+  - SYSTEM_USER_UUID role='admin' (ENUM-compatible) ✓
+  - system_config seed (7 keys) ✓
+
+✅ TDD v1.10 Sync:
+  - Tech stack (Go 1.22, Gin, pgx/v5, Next.js 14) ✓
+  - Folder structure per §3 ✓
+  - Connection pool (MaxConns=15, timeout 3000ms) ✓
+  - Dockerfile multi-stage, non-root user appuser UID 1000 (§10.3) ✓
+
+✅ SECURITY_SPEC v1.4 Sync:
+  - Env vars lengkap (JWT both keys, DB, Redis, MQ, GW, dst.) ✓
+  - .gitignore comprehensive ✓
+  - Bitwarden secrets backup ✓
+  - gitleaks CI ✓
+  - Docker non-root user appuser UID 1000 (§10.3) ✓
+
+✅ DRP v1.2 Sync:
+  - Backup baseline (Supabase daily, Bitwarden monthly) ✓
+  - Cloud region Singapore (consistent) ✓
+
+✅ STP v1.1 Sync:
+  - Test environment (local docker-compose, CI testcontainers, staging) ✓
+  - CI/CD 8 stages ✓
+
+✅ Anti-Drift Guardrails G1-G8:
+  - G1 Traceability: matrix provided ✓
+  - G2 Scope Freeze: no extra scope ✓
+  - G3 No Wallet/Ledger: N/A di FASE 0 ✓
+  - G4 ENUM Consistency: SYSTEM_USER role='admin' ✓
+  - G5 Error Code Consistency: N/A di FASE 0 ✓
+  - G6 Header Consistency: middleware placeholder ✓
+  - G7 Self-Contained: distilasi dari 9 foundation ✓
+  - G8 Acceptance Criteria: 14 functional + 7 non-functional ✓
+
+✅ POST-GEMINI v1.1 FIXES:
+  - Task count 41 (bukan 35) ✓
+  - Trigger list: 7 active (slot #2 removed), clear list ✓
+  - Dockerfile non-root UID 1000 explicit (Task E7-S1-T32 sub-task a) ✓
+  - FLAG #1: Gemini's "UID 10001" → REJECTED, foundation says UID 1000 ✓
+  - FLAG #2: Gemini's "8 triggers" → REJECTED, foundation says 7 active ✓
+
+================================================================================
+END OF ROADMAP FASE (0) v1.1-FINAL
+================================================================================
+
+✅ 100% READY TO EXECUTE
+✅ Self-contained (tidak perlu baca foundation docs)
+✅ 41 tasks across 9 epics, est. ~40 jam (1 minggu)
+✅ 14 functional AC + 7 non-functional AC
+✅ 7 risks identified with mitigations
+✅ Rollback point defined
+✅ Zero drift (no wallet/ledger, no ghost endpoints/columns/error codes)
+✅ Post-Gemini fixes #1 applied (with 2 FLAGS against Gemini)
+
+Last Updated: 2026-09-11 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED.

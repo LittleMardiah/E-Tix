@@ -1,0 +1,1530 @@
+================================================================================
+ROADMAP FASE (6): GATE ANALYTICS & POST-EVENT INTELLIGENCE (F004b) — E-Tix Flash
+================================================================================
+
+Version:         1.0-FINAL
+Last Updated:    2026-09-11
+Author:          M. Arif Aulia
+Status:          ⏳ NOT STARTED (Ready to Execute)
+Blueprint Ref:   BLUEPRINT ROADMAP v1.0-FINAL, FASE 6
+Depends On:      FASE 0 (Foundation) — LOCKED
+                 FASE 1 (Auth & User) — LOCKED
+                 FASE 5 (F004 Dynamic QR + PIN) — LOCKED
+
+================================================================================
+📌 BISMILLAH — ROADMAP FASE 6 FINAL VERSION
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. FASE IDENTITY
+2. SCOPE & OBJECTIVES
+3. FOUNDATION DISTILLATION
+4. TASK BREAKDOWN
+5. DELIVERABLES
+6. ACCEPTANCE CRITERIA
+7. RISKS & MITIGATIONS
+8. SECURITY CONSIDERATIONS
+9. DEFINITION OF DONE (DoD)
+10. NOTES & REFERENCES
+
+================================================================================
+SECTION 1 — FASE IDENTITY
+================================================================================
+
+Fase ID:           FASE 6
+Nama Fase:         Gate Analytics & Post-Event Intelligence (F004b)
+Fitur Utama:       F004b — Gate Analytics + Feedback Loop + Offline Sync
+Estimasi Durasi:   Week 6-7 (1.5 minggu, ~52 jam kerja)
+Dependencies:      FASE 0 (Redis, RabbitMQ, DB)
+                   FASE 1 (auth middleware)
+                   FASE 5 (QR + PIN + fallback_pin_used)
+Status:            ⏳ Not Started
+
+Ringkasan:
+  Implementasi sistem monitoring gate (scan QR + verify PIN + offline sync) 
+  dan analitik post-event (EO dashboard, analytics, post-event report, 
+  feedback loop auto-learning).
+
+  DELIVERABLE UTAMA:
+    - POST /gate/scan-qr                 — QR scan di gate
+    - POST /gate/verify-pin              — Fallback PIN entry
+    - POST /gate/sync                    — Offline scan batch sync
+    - GET  /events/{id}/dashboard        — EO real-time dashboard
+    - GET  /events/{id}/analytics        — EO analytics
+    - GET  /events/{id}/post-event-report — Post-event report (json/csv/pdf-stub)
+    - ReportGeneratorWorker              — Generate report saat event COMPLETED
+    - FeedbackLoopWorker                 — Daily ticker 24h untuk insights
+
+================================================================================
+SECTION 2 — SCOPE & OBJECTIVES
+================================================================================
+
+2.1 SCOPE — IN
+────────────────────────────────────────────────────────────────────────────────
+
+✅ Endpoints (6 total — API_CONTRACT v1.2 §11, §13):
+   - POST /gate/scan-qr                 — Auth (gate_staff), 180 req/min, scan_id idempotency
+   - POST /gate/verify-pin              — Auth (gate_staff), 180 req/min, scan_id idempotency
+   - POST /gate/sync                    — Auth (gate_staff), 60 req/min, max 500 scans
+   - GET  /events/{id}/dashboard        — Auth (EO/admin), 30 req/min
+   - GET  /events/{id}/analytics        — Auth (EO/admin), 30 req/min
+   - GET  /events/{id}/post-event-report — Auth (EO/admin), 10 req/min, format json|csv|pdf-stub
+
+✅ QR Scan Flow (POST /gate/scan-qr):
+   - Verify HMAC-SHA256 (tolerance ±1 block / ±30s)
+   - Validate ticket_id matches request ticket_id (anti-tamper)
+   - Ticket status transition: CONFIRMED → USED
+   - INSERT ticket_scans (scan_status = VALID/INVALID/ALREADY_USED, 
+     scan_method = QR)
+   - Idempotency via scan_id (ON CONFLICT DO NOTHING)
+
+✅ PIN Verify Flow (POST /gate/verify-pin):
+   - Lookup ticket by fallback_pin
+   - Validate fallback_pin_used = FALSE (single-use)
+   - Mark fallback_pin_used = TRUE + fallback_pin_used_at = NOW()
+   - Status transition: CONFIRMED → USED
+   - INSERT ticket_scans (scan_method = PIN)
+   - Idempotency via scan_id
+
+✅ Offline Sync Flow (POST /gate/sync):
+   - Batch input max 500 scans (FLAG #3)
+   - Body max 1MB (BodySizeLimit)
+   - Idempotency per scan_id (ON CONFLICT DO NOTHING)
+   - Conflict resolution: earliest scanned_at wins, tie-breaker smallest scan_id
+   - Loser scans marked as ALREADY_USED + response includes conflicts[]
+   - Atomic per scan (transaction)
+
+✅ Conflict Resolution (FLAG from FASE 5 / SECURITY_SPEC §8.4):
+   - Multi-device offline: 2 devices scan same ticket offline
+   - Winner = earliest scanned_at (deterministic)
+   - Tie-breaker = smallest scan_id (lexicographic UUID ASC)
+   - Loser device sees notification: "Duplicate scan detected"
+
+✅ EO Dashboard (GET /events/{id}/dashboard):
+   - Real-time KPIs (tickets_sold, revenue, gate_status, anti_bot)
+   - Recent activity feed
+   - Alerts (e.g., gate utilization warning)
+
+✅ EO Analytics (GET /events/{id}/analytics):
+   - Attendance rate, no-show rate
+   - Peak entry time
+   - Gate utilization (per gate)
+   - Scan timeline
+   - Loyal vs new customers
+
+✅ Post-Event Report (GET /events/{id}/post-event-report):
+   - Summary (revenue, avg ticket price, platform fee)
+   - Attendance breakdown
+   - Anti-bot stats
+   - Gate performance
+   - Insights (auto-generated recommendations)
+   - Format: json (full), csv (tabular), pdf (STUB — 501)
+
+✅ ReportGeneratorWorker:
+   - Triggered by trigger generate_post_event_report (DB trigger, 
+     AFTER UPDATE ON events WHEN status = 'COMPLETED')
+   - Store insight in insights table
+   - insight_type = PEAK_TIME (default) — trigger inserted
+
+✅ FeedbackLoopWorker (FLAG #2):
+   - Daily ticker (every 24h)
+   - Scan events COMPLETED dalam 24-48 jam terakhir
+   - Generate insights (4 types): GATE_STAFFING, PRICE_RECOMMENDATION, 
+     BOT_BLACKLIST, PEAK_TIME
+   - INSERT insights (idempotent: cek existing insight per event_id + type 
+     sebelum insert)
+
+✅ Database Triggers:
+   - update_ticket_status_on_scan: AFTER INSERT ON ticket_scans
+     WHEN scan_status = 'VALID' → tickets.status = 'USED'
+   - generate_post_event_report: AFTER UPDATE ON events
+     WHEN status transition ke 'COMPLETED' → INSERT insights
+
+2.2 SCOPE — OUT
+────────────────────────────────────────────────────────────────────────────────
+
+❌ QR generation / verification helper (dipakai dari FASE 5) 
+❌ Ticket management → FASE 5
+❌ PDF generation (STUB — 501, future v1.1+ with library) — FLAG #1
+❌ Real-time WebSocket dashboard → polling only (FASE 9 hardening)
+❌ ML-based insights → rule-based only
+❌ Frontend implementation → FASE 9 (skeleton saja)
+❌ Wallet/ledger → NEVER
+❌ Multi-region analytics aggregation → out of scope
+
+2.3 OBJECTIVES (MEASURABLE)
+────────────────────────────────────────────────────────────────────────────────
+
+1. 6 endpoints return expected status codes
+2. QR scan verifies HMAC ±1 block tolerance
+3. PIN verify: single-use enforced (fallback_pin_used)
+4. Offline sync: max 500 scans, conflict resolution deterministic
+5. Conflict: earliest scanned_at wins, tie-breaker smallest scan_id
+6. Report generator: trigger fires on event COMPLETED
+7. Feedback loop: daily ticker generates 4 insight types
+8. Insights idempotent (no duplicate per event+type)
+9. Dashboard latency < 500ms (p95)
+10. Unit + Integration coverage ≥ 90%
+
+2.4 SUCCESS CRITERIA
+────────────────────────────────────────────────────────────────────────────────
+
+- [x] 6 endpoints terimplementasi
+- [x] QR scan + PIN verify flow works
+- [x] Offline sync conflict resolution (earliest wins)
+- [x] EO dashboard + analytics
+- [x] Post-event report (json + csv; pdf stub)
+- [x] ReportGeneratorWorker + FeedbackLoopWorker
+- [x] 2 DB triggers verified
+- [x] Insights idempotent
+- [x] Max 500 batch scans + body 1MB limits enforced
+- [x] No wallet/ledger drift
+
+================================================================================
+SECTION 3 — FOUNDATION DISTILLATION
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+3.1 FROM PRD v6.0 §F004b — GATE ANALYTICS SPEC
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION:
+  Memanfaatkan data scan QR di pintu masuk untuk insight EO setelah acara. 
+  Sistem juga belajar dari data untuk rekomendasi dan otomatisasi konfigurasi.
+
+INPUTS: Ticket ID, Scan Timestamp, Gate ID, Scanner Device ID
+
+PROCESS — A. Data Collection & Post-Event Report:
+  1. Setiap scan dicatat: waktu, gate, device, status, metode
+  2. Post-Event Report untuk EO:
+     - Total Attendance, No-Show Rate, Peak Entry Time
+     - Gate Utilization, Repeat Customer Rate
+     - Scan Attempts Analytics (fraud detection)
+  3. EO bisa export CSV/Excel
+
+PROCESS — B. Feedback Loop:
+  1. Gate Optimization: rekomendasi jumlah petugas per gate
+  2. Bot Pattern Learning: auto-blacklist IP/device
+  3. Ticket Pricing Insight: rekomendasi harga event berikutnya
+  4. Staffing Recommendation: jam shift petugas optimal
+
+OUTPUTS: Post-Event Dashboard, Post-Event Report (PDF/CSV/Excel), 
+         Insight Recommendations, Auto-blacklist IP/device
+
+EDGE CASES:
+  - Multiple scan attempts → catat semua (valid/invalid) untuk fraud detection
+  - Offline scan → tersimpan di scanner, sync saat online
+  - No internet → scanner tetap bekerja offline
+  - Belum cukup data historis → rule-based default (2 staff per gate)
+
+────────────────────────────────────────────────────────────────────────────────
+3.2 FROM DATABASE_SCHEMA v2.9 — TICKET_SCANS + INSIGHTS + TRIGGERS
+────────────────────────────────────────────────────────────────────────────────
+
+ENUMs (relevan):
+  scan_status_enum     : VALID | INVALID | EXPIRED | ALREADY_USED
+  insight_type_enum    : GATE_STAFFING | PRICE_RECOMMENDATION | 
+                         BOT_BLACKLIST | PEAK_TIME
+  event_status_enum    : DRAFT | PUBLISHED | ON_SALE | SOLD_OUT | 
+                         COMPLETED | CANCELLED
+
+TICKET_SCANS TABLE:
+  - id UUID (PK) — sourced from scan_id (client-provided UUIDv4)
+  - ticket_id UUID (FK tickets)
+  - gate_id VARCHAR(50)
+  - scanner_device_id UUID
+  - scanner_user_id UUID (FK users, nullable)
+  - scan_status scan_status_enum NOT NULL
+  - scan_method VARCHAR(20) (QR | PIN)
+  - scanned_at TIMESTAMPTZ DEFAULT NOW()
+  - latitude, longitude (nullable)
+  - ip_address INET (nullable)
+  - is_peak_time BOOLEAN DEFAULT FALSE
+  - created_at TIMESTAMPTZ DEFAULT NOW()
+
+  Indexes: idx_ticket_scans_ticket, idx_ticket_scans_gate,
+           idx_ticket_scans_status, idx_ticket_scans_scanned_at
+
+INSIGHTS TABLE:
+  - id UUID (PK)
+  - event_id UUID (FK events)
+  - insight_type insight_type_enum
+  - title VARCHAR(255)
+  - description TEXT
+  - recommendation JSONB
+  - is_applied BOOLEAN DEFAULT FALSE
+  - applied_at, applied_by (nullable)
+  - generated_at TIMESTAMPTZ DEFAULT NOW()
+  - expires_at TIMESTAMPTZ (nullable)
+  - CONSTRAINT insight_expires_valid CHECK (expires_at > generated_at)
+
+  Indexes: idx_insights_event, idx_insights_type, idx_insights_applied
+
+TRIGGER update_ticket_status_on_scan:
+  AFTER INSERT ON ticket_scans
+  WHEN NEW.scan_status = 'VALID'
+  Flow:
+    - UPDATE tickets SET status = 'USED', updated_at = NOW() 
+      WHERE id = NEW.ticket_id
+
+TRIGGER generate_post_event_report:
+  AFTER UPDATE ON events
+  WHEN NEW.status = 'COMPLETED' AND OLD.status != 'COMPLETED'
+  Flow:
+    - Aggregate gate_stats, ticket_stats, loyal_fans
+    - Compute report_data (JSONB)
+    - INSERT INTO insights (event_id, insight_type='PEAK_TIME', title, 
+                            description, recommendation=report_data)
+
+RLS POLICIES (ticket_scans + insights):
+  - ticket_scans: staff/EO/admins can SELECT; gate_staff can INSERT
+  - insights: EO (own event) + admin can SELECT; system INSERT
+
+────────────────────────────────────────────────────────────────────────────────
+3.3 FROM LOGIC_FLOW v1.4 §6 — FLOW SUMMARY (PSEUDOCODE ONLY)
+────────────────────────────────────────────────────────────────────────────────
+
+QR SCAN FLOW:
+
+  Function ScanQR(ctx, req):
+    Step 1: Auth middleware (role = gate_staff)
+    Step 2: Validate scan_id (idempotency)
+              - Redis SET NX scan:{scan_id} 1 EX 86400
+              - If exists → return cached response (idempotent)
+    Step 3: SELECT ticket BY id = req.TicketID
+              - If not found → INSERT scan (INVALID) + 404
+    Step 4: Verify HMAC:
+              - valid, decodedTicketID = VerifyDynamicQR(req.QRData, ticket.qr_secret_key)
+              - If !valid → INSERT scan (INVALID) + 401
+              - If decodedTicketID != req.TicketID → INSERT scan (INVALID) + 401
+    Step 5: Status branch:
+              - IF ticket.status = 'USED':
+                  INSERT scan (ALREADY_USED) + 409
+              - IF ticket.status != 'CONFIRMED':
+                  INSERT scan (INVALID) + 422
+    Step 6: Valid path:
+              - INSERT scan (VALID, QR, scanner_device_id, gate_id)
+              - Trigger update_ticket_status_on_scan → ticket.status = USED
+    Step 7: Return { valid: true, owner_name, seat, status: 'USED' }
+
+PIN VERIFY FLOW:
+
+  Function VerifyPIN(ctx, req):
+    Step 1: Auth middleware
+    Step 2: Validate scan_id (Redis SET NX)
+    Step 3: Compute input_hash = input (plain — FLAG #1 FASE 5)
+    Step 4: SELECT ticket BY fallback_pin = req.PIN 
+            AND fallback_pin_used = FALSE 
+            AND status = 'CONFIRMED'
+              - If not found → INSERT scan (INVALID, PIN) + 401
+    Step 5: UPDATE ticket:
+              - fallback_pin_used = TRUE
+              - fallback_pin_used_at = NOW()
+              - status = 'USED'
+    Step 6: INSERT scan (VALID, PIN)
+    Step 7: Return { valid: true, scan_method: 'PIN', status: 'USED' }
+
+OFFLINE SYNC FLOW (FLAG #3):
+
+  Function SyncOfflineScans(ctx, req):
+    Step 1: Auth middleware
+    Step 2: Validate: len(req.Scans) <= 500 
+              - Else → 422 UNPROCESSABLE_ENTITY
+    Step 3: Body size limit 1MB (middleware)
+    Step 4: Initialize counters: synced=0, duplicates=0, failed=0, conflicts=[]
+    Step 5: FOR EACH scan IN req.Scans:
+      a. BEGIN transaction
+      b. INSERT INTO ticket_scans (
+           id=scan.scan_id, ticket_id, gate_id, scanner_device_id,
+           scan_status, scan_method, scanned_at
+         ) ON CONFLICT (id) DO NOTHING
+      c. If RowsAffected == 0:
+           duplicates++, ROLLBACK, continue
+      d. IF scan.scan_status = 'VALID':
+           - SELECT ticket FOR UPDATE
+           - IF ticket.status = 'USED':
+               // Conflict resolution
+               - Get winner scan (existing VALID scan for this ticket)
+               - Compare scanned_at: earliest wins
+               - Tie-breaker: smallest scan_id
+               - Mark loser scan (current) as ALREADY_USED
+               - Append to conflicts[] array
+               - UPDATE our scan_status = 'ALREADY_USED'
+           - ELSE (ticket CONFIRMED):
+               - UPDATE ticket SET status = 'USED'
+      e. COMMIT, synced++
+    Step 6: Return { synced, duplicates, failed, conflicts: [...] }
+
+CONFLICT RESOLUTION (DETERMINISTIC):
+
+  Winner selection rule:
+    1. Earliest scanned_at (ASC)
+    2. Tie-breaker: smallest scan_id (lexicographic UUID ASC)
+
+  Loser handling:
+    - scan_status = 'ALREADY_USED'
+    - Response includes conflicts[] with winner/loser details
+    - Admin notification if conflicts > threshold (10 per batch)
+
+POST-EVENT REPORT GENERATION:
+
+  Trigger fires when event.status → COMPLETED.
+  Flow (database trigger):
+    1. CTE gate_stats: aggregate ticket_scans per gate_id
+    2. CTE ticket_stats: count total / used / unused tickets
+    3. CTE loyal_fans: count users with total_purchases > 1
+    4. Build report_data JSONB:
+         { event_id, event_name, total_tickets, used_tickets, 
+           unused_tickets, no_show_rate, total_scans, valid_scans, 
+           gate_utilization, loyal_customers, generated_at }
+    5. INSERT INTO insights (event_id, insight_type='PEAK_TIME', 
+                             title='Post-Event Report - ' || event.name, 
+                             recommendation=report_data)
+
+FEEDBACK LOOP WORKER (FLAG #2):
+
+  Function FeedbackLoopWorker():
+    ticker := time.NewTicker(24 * time.Hour)
+    FOR range ticker.C:
+      ProcessFeedbackLoop()
+
+  Function ProcessFeedbackLoop():
+    Step 1: SELECT events WHERE status = 'COMPLETED' 
+            AND updated_at > NOW() - INTERVAL '48 hours'
+    Step 2: FOR EACH event:
+      a. IF NOT EXISTS insight (event_id, 'GATE_STAFFING'):
+           - Analyze gate_utilization historical
+           - Generate staffing recommendation
+           - INSERT insight
+      b. IF NOT EXISTS insight (event_id, 'BOT_BLACKLIST'):
+           - Analyze INVALID scan patterns (per IP)
+           - Auto-INSERT into blacklist for suspicious IPs
+           - INSERT insight (type=BOT_BLACKLIST)
+      c. IF NOT EXISTS insight (event_id, 'PRICE_RECOMMENDATION'):
+           - Analyze no_show_rate + resale activity
+           - Generate pricing recommendation
+           - INSERT insight
+      d. IF NOT EXISTS insight (event_id, 'PEAK_TIME'):
+           - Already inserted by trigger (post-event report)
+           - Skip if exists
+    Step 3: Log {events_processed, insights_created}
+
+────────────────────────────────────────────────────────────────────────────────
+3.4 FROM TDD v1.10 §6.4 — IMPLEMENTATION FLOW SUMMARY (PSEUDOCODE ONLY)
+────────────────────────────────────────────────────────────────────────────────
+
+QR VERIFY HELPER (shared dengan FASE 5):
+
+  Function VerifyDynamicQR(qrToken, secretKey):
+    Step 1: Decode base64 → split "|"
+    Step 2: Parse ticketID
+    Step 3: currentBlock = NOW().Unix() / 30
+    Step 4: FOR block IN [block-1, block, block+1]:
+              payload = ticketID + "|" + block
+              expected = HMAC-SHA256(secretKey, payload)
+              IF hmac.Equal(signature, expected):
+                RETURN (valid=true, ticketID)
+    Step 5: RETURN (valid=false, error)
+
+GATE HANDLER (scan + verify PIN):
+
+  Function ScanQRHandler:
+    Step 1: Auth (gate_staff role enforced)
+    Step 2: Idempotency via scan_id (Redis SET NX EX 86400)
+    Step 3: Fetch ticket, verify HMAC
+    Step 4: Status guard (CONFIRMED → USED)
+    Step 5: INSERT scan + trigger update
+
+REPORT GENERATOR WORKER:
+
+  Note: Report generation adalah DATABASE TRIGGER 
+        (generate_post_event_report), BUKAN Go worker.
+        Trigger insert ke insights saat event COMPLETED.
+        
+  Optional Go-side helper:
+    - For manual regeneration (admin endpoint future)
+    - For validation post-trigger
+
+FEEDBACK LOOP WORKER:
+
+  Function FeedbackLoopWorker():
+    - Ticker 24h
+    - Process COMPLETED events (last 48h)
+    - Generate 3 insights (GATE_STAFFING, BOT_BLACKLIST, PRICE_RECOMMENDATION)
+    - Idempotent: check existing before insert
+
+────────────────────────────────────────────────────────────────────────────────
+3.5 FROM API_CONTRACT v1.2 §11, §13 — ENDPOINTS SPEC
+────────────────────────────────────────────────────────────────────────────────
+
+ENDPOINT 1 — POST /gate/scan-qr
+
+  Auth: Required (JWT, gate_staff)
+  Rate: 180 req/min per gate staff
+  Idempotency: X-Idempotency-Key + scan_id
+
+  Request:
+    {
+      "ticket_id": "uuid-ticket-123",
+      "qr_data": "base64-qr-data-from-scan",
+      "gate_id": "Gate A",
+      "scanner_device_id": "uuid-device-789",
+      "scan_id": "uuid-scan-111"
+    }
+
+  Success (200):
+    {
+      "success": true,
+      "data": {
+        "valid": true,
+        "ticket_id": "uuid-ticket-123",
+        "owner_name": "Budi Santoso",
+        "seat": "CAT 1 - A4",
+        "status": "USED",
+        "scanned_at": "2026-09-10T19:15:23Z"
+      }
+    }
+
+  Errors: 401 INVALID_QR_OR_TICKET_MISMATCH, 409 CONFLICT (already used), 
+          422 UNPROCESSABLE_ENTITY
+
+ENDPOINT 2 — POST /gate/verify-pin
+
+  Auth: Required (JWT, gate_staff)
+  Rate: 180 req/min per gate staff
+  Idempotency: scan_id
+
+  Request:
+    {
+      "ticket_id": "uuid-ticket-123",
+      "pin": "A3F8K9L2M1N4",
+      "gate_id": "Gate A",
+      "scanner_device_id": "uuid-device-789",
+      "scan_id": "uuid-scan-112"
+    }
+
+  Success (200):
+    {
+      "success": true,
+      "data": {
+        "valid": true,
+        "ticket_id": "uuid-ticket-123",
+        "owner_name": "Budi Santoso",
+        "seat": "CAT 1 - A4",
+        "status": "USED",
+        "scan_method": "PIN"
+      }
+    }
+
+  Errors: 401 (invalid PIN), 409 (already used)
+
+ENDPOINT 3 — POST /gate/sync
+
+  Auth: Required (JWT, gate_staff)
+  Rate: 60 req/min per gate staff
+  Idempotency: per scan_id (ON CONFLICT DO NOTHING)
+
+  Request:
+    {
+      "device_id": "uuid-device-789",
+      "scans": [
+        {
+          "scan_id": "uuid-scan-001",
+          "ticket_id": "uuid-ticket-123",
+          "gate_id": "Gate A",
+          "scanned_at": "2026-09-10T19:15:23Z",
+          "scan_method": "QR",
+          "scan_status": "VALID"
+        }
+      ]
+    }
+
+  Validation (FLAG #3):
+    - len(scans) <= 500 → else 422 UNPROCESSABLE_ENTITY
+    - Body <= 1MB → else 413 Payload Too Large
+
+  Success (200):
+    {
+      "success": true,
+      "data": {
+        "synced": 12,
+        "duplicates": 0,
+        "failed": 0,
+        "conflicts": [
+          {
+            "scan_id": "uuid-scan-late",
+            "ticket_id": "uuid-ticket",
+            "status": "ALREADY_USED",
+            "winner_device_id": "uuid-device-first",
+            "winner_scanned_at": "...",
+            "loser_device_id": "uuid-device-second",
+            "loser_scanned_at": "..."
+          }
+        ],
+        "errors": []
+      }
+    }
+
+ENDPOINT 4 — GET /events/{event_id}/dashboard
+
+  Auth: Required (JWT, event_organizer OR admin)
+  Rate: 30 req/min per user
+
+  Success (200):
+    {
+      "success": true,
+      "data": {
+        "event_id": "...",
+        "event_name": "...",
+        "event_status": "ON_SALE",
+        "sales": {
+          "tickets_sold": 4523,
+          "total_tickets": 5000,
+          "sales_percentage": 90.5,
+          "revenue_today": "125000000",
+          "total_revenue": "4523000000"
+        },
+        "gate_status": {
+          "total_gates_active": 3,
+          "gate_a_status": "ACTIVE",
+          "gate_b_status": "ACTIVE",
+          "gate_c_status": "IDLE",
+          "total_scans_today": 4231
+        },
+        "anti_bot": {
+          "requests_blocked_today": 124501,
+          "suspicious_ips_flagged": 1245,
+          "captcha_triggers_today": 4500
+        },
+        "recent_activity": [...],
+        "alerts": [...],
+        "updated_at": "..."
+      }
+    }
+
+  Errors: 403 (not owner/admin), 404
+
+ENDPOINT 5 — GET /events/{event_id}/analytics
+
+  Auth: Required (JWT, event_organizer OR admin)
+  Rate: 30 req/min per user
+
+  Success (200):
+    {
+      "success": true,
+      "data": {
+        "event_id": "...",
+        "event_name": "...",
+        "total_tickets": 5000,
+        "tickets_sold": 4523,
+        "attendance_count": 4100,
+        "attendance_rate": 90.5,
+        "no_show_rate": 9.5,
+        "peak_entry_time": "19:00-19:30",
+        "gate_utilization": {
+          "Gate A": { "total_scans": 1523, "valid_scans": 1400, "utilization": 92 },
+          "Gate B": { "total_scans": 2100, "valid_scans": 1950, "utilization": 93 },
+          "Gate C": { "total_scans": 900, "valid_scans": 750, "utilization": 83 }
+        },
+        "scan_timeline": [
+          { "hour": "18:00", "scans": 150 },
+          { "hour": "18:30", "scans": 450 },
+          { "hour": "19:00", "scans": 1800 }
+        ],
+        "loyal_customers": 340,
+        "new_customers": 960,
+        "generated_at": "..."
+      }
+    }
+
+ENDPOINT 6 — GET /events/{event_id}/post-event-report
+
+  Auth: Required (JWT, event_organizer OR admin)
+  Rate: 10 req/min per user
+  Query: format=json|csv|pdf
+
+  Format handling (FLAG #1):
+    - json: 200 dengan full report (default)
+    - csv: 200 dengan Content-Type text/csv + Content-Disposition attachment
+    - pdf: 501 Not Implemented (STUB — future v1.1+)
+
+  Success (200) — JSON format: (structured response per API_CONTRACT §13.3)
+
+  Errors: 403 (not owner/admin), 404, 501 (pdf stub)
+
+────────────────────────────────────────────────────────────────────────────────
+3.6 FROM SECURITY_SPEC v1.4 §8.4 — OFFLINE QR + CONFLICT RESOLUTION
+────────────────────────────────────────────────────────────────────────────────
+
+OFFLINE GATE QR VALIDATION:
+
+  Mekanisme:
+    1. Saat sync awal, device simpan HMAC key temporer di secure storage
+    2. Saat offline, device verifikasi HMAC lokal (tolerance ±30s)
+    3. Scan valid → queue lokal dengan scan_id UUIDv4
+    4. Sync via POST /gate/sync (batch max 500)
+    5. Key local TTL, dihapus setelah event atau logout
+
+CONFLICT RESOLUTION (multi-device):
+
+  7a. Jika ticket_id yang di-sync offline sudah berstatus USED 
+      (dipindai di gate lain secara offline):
+      a. Record pindaian pertama = USED
+      b. Record pindaian kedua = ALREADY_USED 
+         (sesuai scan_status_enum DATABASE_SCHEMA v2.9)
+         Beserta device_id + timestamp
+      c. Server response 200 dengan conflicts[] detail
+      d. Determinisme: earliest scanned_at wins
+         Tie-breaker: smallest scan_id (lexicographic UUID ASC)
+      e. Semua konflik dicatat di ticket_scans untuk audit
+      f. Device "kalah" terima notifikasi lokal
+      g. Admin notification jika konflik > threshold (10 per batch)
+
+────────────────────────────────────────────────────────────────────────────────
+3.7 FROM HALAMAN v1.1 §8, §9, §11 — WIREFRAMES
+────────────────────────────────────────────────────────────────────────────────
+
+SCREEN 8.1 — EO DASHBOARD:
+  - KPIs: tickets sold, RPS, conversion rate
+  - Revenue: current / target progress
+  - Anti-bot report: blocked count, suspicious IPs
+  - Pending orders
+  - Emergency Tools button
+  - Bottom nav: HOME — EVENT — ANALYTICS
+
+SCREEN 8.2 — EO ANALYTICS:
+  - Attendance breakdown
+  - Peak entry time
+  - Gate utilization per gate
+  - Scan timeline
+  - Export CSV/Excel button
+
+SCREEN 8.3 — POST-EVENT REPORT:
+  - Attendance summary
+  - Peak entry time windows
+  - Gate utilization table
+  - Insights / recommendations
+  - Export button (CSV/Excel)
+
+SCREEN 9.1 — ATTENDANCE REPORT:
+  - Attendance metrics (part of analytics)
+
+SCREEN 11.1 — QR SCANNER (Gate Staff):
+  - Camera viewport
+  - Last scan result (VALID/INVALID)
+  - Manual PIN Entry button
+  - Online/Offline indicator
+  - Bottom nav: SCAN — HISTORY — SETTINGS
+
+SCREEN 11.2 — PIN ENTRY (Gate Staff):
+  - PIN input field
+  - Numeric keypad
+  - VERIFY PIN button
+  - Hint: 12-char alphanumeric
+
+SCREEN 11.3 — OFFLINE SYNC INDICATOR (Gate Staff):
+  - Offline mode warning
+  - Pending sync count
+  - Sync progress bar
+  - Last sync time
+  - Bottom nav status: 🔴 Offline (12 pending)
+
+────────────────────────────────────────────────────────────────────────────────
+3.8 FROM STP v1.1 §3.2 — TEST CASES
+────────────────────────────────────────────────────────────────────────────────
+
+UNIT TEST CASES (FASE 6 scope):
+
+| Test ID       | Description                                                |
+|---------------|------------------------------------------------------------|
+| UT-GATE-001   | ScanQR_ValidHMAC_ReturnsUSED                               |
+| UT-GATE-002   | VerifyPIN_AlreadyUsed_Returns409                           |
+| UT-GATE-003   | OfflineSync_ConflictResolution_EarliestWins                |
+| UT-GATE-004   | ScanQR_ExpiredHMAC_WindowOver30s_Returns401InvalidQR       |
+| UT-GATE-005   | OfflineSync_Batch501Scans_Returns422UnprocessableEntity    |
+| UT-GATE-006   | OfflineSync_BodyExceeds1MB_Returns413PayloadTooLarge       |
+| UT-GATE-007   | ConflictTieBreaker_SmallestScanIDWins                      |
+| UT-GATE-008   | ReportGenerator_TriggerOnEventCompleted_InsertsInsight     |
+| UT-GATE-009   | FeedbackLoop_Idempotent_NoDuplicateInsight                 |
+| UT-GATE-010   | PDFFormat_Returns501Stub                                   |
+
+INTEGRATION TEST CASES (FASE 6 scope):
+
+| Test ID       | Description                                                |
+|---------------|------------------------------------------------------------|
+| IT-GATE-001   | POST scan-qr → ticket USED → ticket_scans INSERT           |
+| IT-GATE-002   | Offline batch sync → conflict resolution → ALREADY_USED    |
+| IT-GATE-003   | POST scan-qr dengan expired HMAC > 30s → 401               |
+| IT-GATE-004   | GET dashboard → 200 (owner) / 403 (non-owner)              |
+| IT-GATE-005   | GET analytics → correct aggregation                        |
+| IT-GATE-006   | GET post-event-report format=json → full report            |
+| IT-GATE-007   | GET post-event-report format=csv → CSV response            |
+| IT-GATE-008   | GET post-event-report format=pdf → 501 stub                |
+
+API TEST CASES (Postman — FASE 6 scope):
+  - 6 endpoints × (happy + error) = ~20 test cases
+
+================================================================================
+SECTION 4 — TASK BREAKDOWN
+================================================================================
+
+9 EPICS, 28 TASKS. Estimasi total ~52 jam (~1.5 minggu).
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E1: MODULE SKELETON
+────────────────────────────────────────────────────────────────────────────────
+
+E1-S1-T1 [30 min] — Create internal/gate/ + internal/analytics/ + worker folders
+   Deliverable:
+     - internal/gate/{handler,service,repository,model}.go
+     - internal/analytics/{handler,service,repository,model}.go
+     - internal/worker/report_generator.go
+     - internal/worker/feedback_loop.go
+   DoD: empty files dengan package declaration
+
+E1-S1-T2 [1 jam] — Define model.go
+   Deliverable:
+     - ScanQRRequest, VerifyPINRequest, SyncRequest, ScanResult
+     - DashboardResponse, AnalyticsResponse, PostEventReportResponse
+     - ConflictEntry struct
+   DoD: structs sesuai API_CONTRACT v1.2 §11, §13
+
+E1-S1-T3 [30 min] — Repository skeleton
+   Deliverable:
+     - TicketScanRepository (Insert, GetWinnerScan, ListByEvent)
+     - InsightRepository (Insert, ExistsByEventAndType, ListByEvent)
+     - EventRepository extension (GetForAnalytics)
+   DoD: method signatures clean
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E2: QR SCAN (POST /gate/scan-qr)
+────────────────────────────────────────────────────────────────────────────────
+
+E2-S1-T4 [1.5 jam] — Handler: POST /gate/scan-qr
+   Deliverable: GateHandler.ScanQR
+   Sub-tasks:
+     a. Auth middleware (gate_staff role)
+     b. scan_id idempotency check (Redis SET NX EX 86400)
+     c. Bind JSON + validate
+   DoD: handler wired
+
+E2-S1-T5 [2 jam] — Service: scan QR flow
+   Deliverable: GateService.ScanQR
+   Sub-tasks:
+     a. Fetch ticket
+     b. Verify HMAC (reuse VerifyDynamicQR dari FASE 5)
+     c. Validate decodedTicketID == req.TicketID
+     d. Status branch (USED/INVALID/CONFIRMED)
+     e. INSERT scan (VALID/INVALID/ALREADY_USED)
+   DoD:
+     - Valid → USED + scan INSERT
+     - Invalid HMAC → 401 INVALID_QR_OR_TICKET_MISMATCH
+     - Already USED → 409 + ALREADY_USED scan
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E3: PIN VERIFY (POST /gate/verify-pin)
+────────────────────────────────────────────────────────────────────────────────
+
+E3-S1-T6 [1.5 jam] — Handler: POST /gate/verify-pin
+   Deliverable: GateHandler.VerifyPIN
+   Sub-tasks: Auth + scan_id idempotency + Bind JSON
+   DoD: handler wired
+
+E3-S1-T7 [1.5 jam] — Service: verify PIN flow
+   Deliverable: GateService.VerifyPIN
+   Sub-tasks:
+     a. SELECT ticket BY fallback_pin AND fallback_pin_used = FALSE 
+        AND status = 'CONFIRMED'
+     b. If not found → INSERT scan (INVALID, PIN) + 401
+     c. UPDATE ticket: fallback_pin_used = TRUE + status = USED
+     d. INSERT scan (VALID, PIN)
+   DoD:
+     - Valid PIN → USED
+     - Reuse → 409
+     - Invalid PIN → 401
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E4: OFFLINE SYNC (POST /gate/sync) — FLAG #3
+────────────────────────────────────────────────────────────────────────────────
+
+E4-S1-T8 [1.5 jam] — Handler: POST /gate/sync
+   Deliverable: GateHandler.SyncOfflineScans
+   Sub-tasks:
+     a. Auth middleware
+     b. Validate len(scans) <= 500 → else 422
+     c. Body size check (1MB, middleware)
+     d. Bind JSON
+   DoD: handler wired dengan validation
+
+E4-S1-T9 [3 jam] — Service: batch sync + conflict resolution
+   Deliverable: GateService.SyncOfflineScans
+   Sub-tasks:
+     a. Loop scans:
+        - INSERT scan ON CONFLICT (id) DO NOTHING
+        - If duplicate → skip, duplicates++
+     b. For VALID scans:
+        - SELECT ticket FOR UPDATE
+        - If ticket USED:
+            * Get winner scan (existing VALID scan for this ticket)
+            * Compare: earliest scanned_at wins
+            * Tie-breaker: smallest scan_id
+            * If our scan loses:
+                - Mark our scan_status = ALREADY_USED
+                - Append conflict to conflicts[]
+        - Else (CONFIRMED):
+            * UPDATE ticket SET status = 'USED'
+     c. Return aggregated response
+   DoD:
+     - Batch max 500 enforced
+     - Conflict deterministic
+     - Atomic per scan
+
+E4-S1-T10 [1 jam] — Conflict resolver helper
+   Deliverable: ResolveConflict(existingScan, newScan) → winner
+   Sub-tasks:
+     a. Compare scanned_at (ASC)
+     b. If equal → compare scan_id (lexicographic ASC)
+   DoD: unit test all cases
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E5: EO DASHBOARD (GET /events/{id}/dashboard)
+────────────────────────────────────────────────────────────────────────────────
+
+E5-S1-T11 [2 jam] — Handler: GET /events/{id}/dashboard
+   Deliverable: AnalyticsHandler.GetDashboard
+   Sub-tasks:
+     a. Auth middleware
+     b. Ownership check (organizer_id == JWT sub OR admin)
+     c. Aggregate sales (tickets sold, revenue)
+     d. Aggregate gate status (count active gates, scans today)
+     e. Anti-bot stats (blocked requests, suspicious IPs)
+     f. Recent activity feed
+   DoD: 200 response with all sections
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E6: EO ANALYTICS (GET /events/{id}/analytics)
+────────────────────────────────────────────────────────────────────────────────
+
+E6-S1-T12 [2 jam] — Handler: GET /events/{id}/analytics
+   Deliverable: AnalyticsHandler.GetAnalytics
+   Sub-tasks:
+     a. Auth middleware + ownership check
+     b. Attendance rate (used / total)
+     c. No-show rate
+     d. Peak entry time (scan bucket analysis)
+     e. Gate utilization (per gate)
+     f. Scan timeline (hourly)
+     g. Loyal vs new customers
+   DoD: 200 response with all metrics
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E7: POST-EVENT REPORT (GET /events/{id}/post-event-report) — FLAG #1
+────────────────────────────────────────────────────────────────────────────────
+
+E7-S1-T13 [1.5 jam] — Handler: GET /events/{id}/post-event-report
+   Deliverable: AnalyticsHandler.GetPostEventReport
+   Sub-tasks:
+     a. Auth middleware + ownership check
+     b. Parse format query (json|csv|pdf)
+     c. Format routing:
+        - json → full response
+        - csv → streaming CSV
+        - pdf → 501 stub (FLAG #1)
+   DoD:
+     - JSON 200 full
+     - CSV 200 with Content-Type
+     - PDF 501 stub
+
+E7-S1-T14 [1.5 jam] — CSV serializer
+   Deliverable: SerializeToCSV(report) → []byte
+   Sub-tasks:
+     a. Header row + data rows
+     b. Escape CSV special chars
+     c. UTF-8 BOM for Excel compatibility
+   DoD: CSV parseable
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E8: WORKERS + TRIGGERS — FLAG #2
+────────────────────────────────────────────────────────────────────────────────
+
+E8-S1-T15 [1 jam] — Verify trigger update_ticket_status_on_scan
+   Deliverable: Migration reference (already in FASE 0)
+   DoD: 
+     - INSERT VALID scan → ticket USED (verified)
+
+E8-S1-T16 [1 jam] — Verify trigger generate_post_event_report
+   Deliverable: Migration reference (already in FASE 0)
+   DoD:
+     - UPDATE event.status = COMPLETED → insight inserted
+
+E8-S1-T17 [3 jam] — FeedbackLoopWorker (daily ticker — FLAG #2)
+   Deliverable: internal/worker/feedback_loop.go
+   Sub-tasks:
+     a. Ticker 24h
+     b. SELECT events COMPLETED dalam 48h terakhir
+     c. FOR EACH event:
+        - Check idempotent (insight exists per type)
+        - GATE_STAFFING insight
+        - BOT_BLACKLIST insight (auto-blacklist)
+        - PRICE_RECOMMENDATION insight
+        - PEAK_TIME (skip if exists from trigger)
+   DoD:
+     - Ticker works
+     - Idempotent (no duplicates)
+     - Blacklist auto-inserted
+
+E8-S1-T18 [1 jam] — Register workers di main.go
+   Deliverable: Start goroutines
+   DoD: workers active
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E9: TESTS
+────────────────────────────────────────────────────────────────────────────────
+
+E9-S1-T19 [3 jam] — Unit tests (10 tests)
+   Deliverable: tests/unit/gate/*.go + tests/unit/analytics/*.go
+   Sub-tasks: UT-GATE-001..010
+   DoD: coverage ≥ 90%
+
+E9-S1-T20 [4 jam] — Integration tests (8 tests)
+   Deliverable: tests/integration/gate_analytics_test.go
+   Sub-tasks: IT-GATE-001..008
+   DoD: all pass
+
+E9-S2-T21 [2 jam] — API tests (Postman)
+   Deliverable: postman_collection.json (6 endpoints)
+   DoD: Newman pass ~20 cases
+
+E9-S2-T22 [2 jam] — Multi-device conflict test
+   Deliverable: tests/integration/conflict_resolution_test.go
+   Sub-tasks:
+     a. Device A + Device B scan same ticket offline
+     b. Sync both → deterministic winner (earliest)
+     c. Tie-breaker: smallest scan_id
+     d. Loser marked ALREADY_USED
+   DoD: deterministic conflict verified
+
+E9-S2-T23 [1 jam] — PDF stub verification
+   Deliverable: test for ?format=pdf → 501
+   DoD: stub response verified
+
+────────────────────────────────────────────────────────────────────────────────
+TASK SUMMARY
+────────────────────────────────────────────────────────────────────────────────
+
+| Epic | Tasks | Est. Duration |
+|------|-------|---------------|
+| E1   | 3     | ~2 jam        |
+| E2   | 2     | ~3.5 jam      |
+| E3   | 2     | ~3 jam        |
+| E4   | 3     | ~5.5 jam      |
+| E5   | 1     | ~2 jam        |
+| E6   | 1     | ~2 jam        |
+| E7   | 2     | ~3 jam        |
+| E8   | 4     | ~6 jam        |
+| E9   | 5     | ~12 jam       |
+|------|-------|---------------|
+| Total| 23    | ~39 jam (~1 minggu dengan buffer) |
+
+================================================================================
+SECTION 5 — DELIVERABLES
+================================================================================
+
+5.1 CODE ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+Backend — Gate Module:
+  ✅ internal/gate/handler.go            (3 endpoints: scan-qr, verify-pin, sync)
+  ✅ internal/gate/service.go
+  ✅ internal/gate/repository.go
+  ✅ internal/gate/model.go
+  ✅ internal/gate/conflict.go           (conflict resolution helper)
+
+Backend — Analytics Module:
+  ✅ internal/analytics/handler.go       (3 endpoints: dashboard, analytics, report)
+  ✅ internal/analytics/service.go
+  ✅ internal/analytics/repository.go
+  ✅ internal/analytics/model.go
+  ✅ internal/analytics/csv_serializer.go
+
+Backend — Workers:
+  ✅ internal/worker/report_generator.go (optional manual regen helper)
+  ✅ internal/worker/feedback_loop.go    (daily ticker)
+
+Router:
+  ✅ cmd/api/main.go — wire 6 endpoints
+
+Worker Registration:
+  ✅ FeedbackLoopWorker registered (24h ticker)
+
+5.2 DOCUMENTATION
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ docs/GATE_MODULE.md — 3 endpoints (scan, pin, sync)
+  ✅ docs/CONFLICT_RESOLUTION.md — multi-device rules
+  ✅ docs/ANALYTICS_MODULE.md — dashboard + analytics + report
+  ✅ docs/PDF_STUB.md — FLAG #1 explanation
+
+5.3 TEST ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ tests/unit/gate/*.go                          (UT-GATE-001..010)
+  ✅ tests/unit/analytics/*.go
+  ✅ tests/integration/gate_analytics_test.go      (IT-GATE-001..008)
+  ✅ tests/integration/conflict_resolution_test.go (multi-device)
+  ✅ tests/integration/pdf_stub_test.go
+  ✅ postman_collection.json (updated)
+
+5.4 FRONTEND ARTIFACTS (Skeleton Only — full impl di FASE 9)
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ app/gate/scanner/page.tsx — placeholder
+  ✅ app/gate/pin-entry/page.tsx — placeholder
+  ✅ app/eo/dashboard/[eventId]/page.tsx — placeholder
+  ✅ app/eo/analytics/[eventId]/page.tsx — placeholder
+  ✅ components/gate/QRScanner.tsx — skeleton
+  ✅ components/gate/PinPad.tsx — skeleton
+  ✅ components/gate/OfflineSyncIndicator.tsx — skeleton
+  ✅ lib/api/gate.ts + lib/api/analytics.ts
+
+================================================================================
+SECTION 6 — ACCEPTANCE CRITERIA
+================================================================================
+
+6.1 FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] POST /gate/scan-qr → 200 (valid HMAC) → ticket USED
+  [ ] POST /gate/scan-qr → 401 INVALID_QR_OR_TICKET_MISMATCH (invalid HMAC)
+  [ ] POST /gate/scan-qr → 409 CONFLICT (already USED)
+  [ ] POST /gate/verify-pin → 200 (valid PIN)
+  [ ] POST /gate/verify-pin → 401 (invalid PIN)
+  [ ] POST /gate/verify-pin → 409 (already USED)
+  [ ] POST /gate/sync → 200 batch sync
+  [ ] POST /gate/sync → 422 if > 500 scans (FLAG #3)
+  [ ] POST /gate/sync → 413 if body > 1MB (FLAG #3)
+  [ ] POST /gate/sync → conflict resolution: earliest scanned_at wins
+  [ ] POST /gate/sync → tie-breaker: smallest scan_id
+  [ ] POST /gate/sync → loser marked ALREADY_USED + conflicts[] response
+  [ ] GET /events/{id}/dashboard → 200 (owner/admin)
+  [ ] GET /events/{id}/dashboard → 403 (non-owner)
+  [ ] GET /events/{id}/analytics → 200 with all metrics
+  [ ] GET /events/{id}/post-event-report → 200 json full
+  [ ] GET /events/{id}/post-event-report → 200 csv with Content-Type
+  [ ] GET /events/{id}/post-event-report → 501 pdf stub (FLAG #1)
+  [ ] Trigger: event COMPLETED → insight inserted
+  [ ] FeedbackLoopWorker: 24h ticker generates 3 insight types
+  [ ] Insights idempotent (no duplicate per event+type)
+  [ ] No wallet/ledger drift
+
+6.2 NON-FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] CI pipeline green
+  [ ] Unit test coverage ≥ 90% (10 tests)
+  [ ] Integration tests pass: 8/8
+  [ ] Multi-device conflict test pass
+  [ ] PDF stub verification pass
+  [ ] API tests pass: ~20 cases
+  [ ] Dashboard latency < 500ms (p95)
+  [ ] Zero tokens in logs
+  [ ] 6 endpoints 1:1 dengan API_CONTRACT v1.2 §11, §13
+
+6.3 TEST COVERAGE TARGET
+────────────────────────────────────────────────────────────────────────────────
+
+  Unit: ≥ 90% (10 tests)
+  Integration: 8 tests
+  API: 6 endpoints
+  Conflict: multi-device scenario
+
+================================================================================
+SECTION 7 — RISKS & MITIGATIONS
+================================================================================
+
+| Risk                                          | Likelihood | Impact | Mitigation                                          |
+|-----------------------------------------------|------------|--------|-----------------------------------------------------|
+| HMAC tolerance edge case (±30s boundary)      | Low        | Med    | ±1 block tolerance, unit test boundary               |
+| Multi-device conflict race                    | Medium     | High   | Earliest scanned_at wins (deterministic)             |
+| Conflict storm (many devices)                 | Low        | Med    | Admin alert if conflicts > 10 per batch              |
+| Batch sync > 500 scans                        | Medium     | Low    | 422 UNPROCESSABLE_ENTITY (FLAG #3)                   |
+| Body > 1MB                                    | Low        | Low    | 413 Payload Too Large (middleware)                   |
+| Feedback loop duplicate insights              | Medium     | Med    | Idempotent check (event+type exists)                 |
+| Report generation slow (large event)          | Low        | Med    | DB trigger optimized (indexed); async if needed      |
+| PDF stub confusion                            | Low        | Low    | Documented + 501 explicit response                   |
+| Dashboard heavy aggregation                   | Medium     | Med    | Indexed queries; cache for 30-60s                    |
+| CSV injection (malicious event name)          | Low        | Med    | CSV escaping (quotes + escape formula chars)         |
+| Token leakage via scan_id                     | Low        | High   | scan_id is UUID, not sensitive; no PII               |
+| Feedback loop overlapping scan (worker lag)   | Low        | Low    | Idempotent + ticker alignment                        |
+
+RESPONSE PER SCENARIO (DRP v1.2):
+- DB down → Playbook #1 (DRP §5.2)
+- Redis down → Playbook #2 (DRP §5.3)
+- RabbitMQ down → Playbook #3 (DRP §5.4)
+
+================================================================================
+SECTION 8 — SECURITY CONSIDERATIONS
+================================================================================
+
+8.1 THREATS RELEVANT TO FASE 6
+────────────────────────────────────────────────────────────────────────────────
+
+| Threat                    | Mitigation di FASE 6                                |
+|---------------------------|-----------------------------------------------------|
+| QR Forgery                | HMAC verification (reuse FASE 5)                     |
+| QR Screenshot Replay      | ±30s block tolerance                                  |
+| PIN Brute Force           | Single-use + gate_staff rate limit                   |
+| PIN Leak via Logs         | Header sanitization + grep verify                    |
+| IDOR (dashboard/report)   | Ownership check (organizer/admin)                    |
+| Conflict Exploit          | Deterministic earliest-wins (no negotiation)         |
+| Batch DDoS (large sync)   | Max 500 scans + 1MB body limit                        |
+| CSV Injection             | Escape formula chars (=, +, -, @)                    |
+| SQL Injection (aggregate) | Parameterized queries (pgx)                          |
+| Insight Manipulation      | RLS + system-only INSERT                             |
+
+8.2 HEADERS
+────────────────────────────────────────────────────────────────────────────────
+
+  | Endpoint                          | Headers Required                          |
+  |-----------------------------------|-------------------------------------------|
+  | POST /gate/scan-qr                | Authorization + X-Idempotency-Key         |
+  | POST /gate/verify-pin             | Authorization + X-Idempotency-Key         |
+  | POST /gate/sync                   | Authorization                             |
+  | GET /events/{id}/dashboard        | Authorization                             |
+  | GET /events/{id}/analytics        | Authorization                             |
+  | GET /events/{id}/post-event-report | Authorization                            |
+
+8.3 IDEMPOTENCY (scan_id)
+────────────────────────────────────────────────────────────────────────────────
+
+  - scan_id = client-provided UUID v4
+  - Storage: ticket_scans.id (PK)
+  - ON CONFLICT (id) DO NOTHING
+  - Redis cache untuk fast lookup: scan:{scan_id}, TTL 24h (optional)
+
+8.4 CONFLICT RESOLUTION (DETERMINISTIC)
+────────────────────────────────────────────────────────────────────────────────
+
+  Rule:
+    1. Earliest scanned_at (ASC)
+    2. Tie-breaker: smallest scan_id (lexicographic UUID ASC)
+
+  Loser handling:
+    - scan_status = 'ALREADY_USED'
+    - Response includes conflicts[] (winner + loser details)
+    - Admin notification if > threshold (10 per batch)
+
+8.5 CSV SECURITY
+────────────────────────────────────────────────────────────────────────────────
+
+  - Escape formula injection chars (=, +, -, @, TAB, CR)
+  - Quote fields containing comma/newline/quote
+  - UTF-8 BOM untuk Excel compatibility
+
+8.6 RATE LIMITING
+────────────────────────────────────────────────────────────────────────────────
+
+  | Endpoint                          | Limit         | Scope      |
+  |-----------------------------------|---------------|------------|
+  | POST /gate/scan-qr                | 180 req/min   | Gate Staff |
+  | POST /gate/verify-pin             | 180 req/min   | Gate Staff |
+  | POST /gate/sync                   | 60 req/min    | Gate Staff |
+  | GET /events/{id}/dashboard        | 30 req/min    | EO/Admin   |
+  | GET /events/{id}/analytics        | 30 req/min    | EO/Admin   |
+  | GET /events/{id}/post-event-report | 10 req/min   | EO/Admin   |
+
+8.7 HEADER SANITIZATION
+────────────────────────────────────────────────────────────────────────────────
+
+  - Authorization → [REDACTED]
+  - Verify via grep: log tidak mengandung "eyJ"
+
+8.8 LOGGING POLICY
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ DO LOG:
+    - scan_id, ticket_id, gate_id, scan_status
+    - Conflict events (winner + loser)
+    - Worker execution summary
+
+  ❌ NEVER LOG:
+    - Raw QR data (base64)
+    - Raw fallback_pin
+    - qr_secret_key
+
+================================================================================
+SECTION 9 — DEFINITION OF DONE (DoD)
+================================================================================
+
+9.1 CHECKLIST KELULUSAN FASE
+────────────────────────────────────────────────────────────────────────────────
+
+Code:
+  [ ] internal/gate/ folder lengkap (5 files)
+  [ ] internal/analytics/ folder lengkap (5 files)
+  [ ] internal/worker/feedback_loop.go
+  [ ] Router wiring: 6 protected endpoints
+  [ ] FeedbackLoopWorker registered (24h ticker)
+  [ ] QR scan + PIN verify flow works
+  [ ] Offline sync conflict resolution deterministic
+  [ ] Batch max 500 + body max 1MB enforced
+  [ ] CSV serializer with escape
+  [ ] PDF stub (501)
+  [ ] Trigger verified (update_ticket_status_on_scan)
+  [ ] Trigger verified (generate_post_event_report)
+
+Tests:
+  [ ] Unit test coverage ≥ 90% (10 tests)
+  [ ] Integration tests pass (8/8)
+  [ ] API tests pass (~20 cases)
+  [ ] Multi-device conflict test pass
+  [ ] PDF stub verification pass
+  [ ] CI pipeline green
+
+Security:
+  [ ] Zero tokens in logs
+  [ ] CSV injection escaped
+  [ ] Ownership check on all analytics endpoints
+  [ ] RLS enforced
+  [ ] Batch limits enforced
+
+Documentation:
+  [ ] docs/GATE_MODULE.md
+  [ ] docs/CONFLICT_RESOLUTION.md
+  [ ] docs/ANALYTICS_MODULE.md
+  [ ] docs/PDF_STUB.md
+  [ ] postman_collection.json
+
+9.2 ROLLBACK POINT
+────────────────────────────────────────────────────────────────────────────────
+
+Kalau FASE 6 gagal:
+  - Semua work di branch `feature/fase-6-gate-analytics`
+  - `develop` tetap stable (FASE 5 state)
+  - Rollback = hapus branch
+  - FeedbackLoopWorker dapat di-disable via env flag
+
+Setelah FASE 6 selesai:
+  - Merge → `develop` → `main`
+  - Tag: `v0.6.0-gate-analytics`
+  - FASE 7 bisa dimulai (butuh scan + insights)
+
+9.3 SIGN-OFF
+────────────────────────────────────────────────────────────────────────────────
+
+  QA/Verifier:       M. Arif Aulia
+  Date Completed:    [___]
+  Ready for FASE 7:  [ ] YES  [ ] NO
+
+================================================================================
+SECTION 10 — NOTES & REFERENCES
+================================================================================
+
+10.1 FLAG #1: PDF REPORT FORMAT STUB (Opsi A APPROVED)
+────────────────────────────────────────────────────────────────────────────────
+
+  Konteks: API_CONTRACT v1.2 §13.3 menyebut format `pdf`, tapi TDD v1.10 
+  tidak specify library.
+
+  Verdict: STUB HTTP 501 Not Implemented. MVP fokus JSON + CSV.
+
+  Justifikasi:
+    - Hindari dependency bloat (maroto/gofpdf/signintech)
+    - Fokus MVP analytics core
+    - PDF masuk TECHNICAL_DEBT untuk v1.1+
+
+10.2 FLAG #2: FEEDBACK LOOP WORKER TRIGGER (Opsi A APPROVED)
+────────────────────────────────────────────────────────────────────────────────
+
+  Konteks: LOGIC_FLOW v1.4 §6.3 "berjalan setiap 24 jam" tanpa spec mechanism.
+
+  Verdict: Daily cron ticker (24h), konsisten dengan QRRegenerationWorker 
+  pattern FASE 5.
+
+  Idempotency:
+    - Check existing insight per (event_id, insight_type) sebelum INSERT
+    - Prevent duplicate insights
+
+  Insights generated (3, karena PEAK_TIME sudah dari trigger):
+    - GATE_STAFFING
+    - BOT_BLACKLIST (auto-insert blacklist)
+    - PRICE_RECOMMENDATION
+
+10.3 FLAG #3: OFFLINE SYNC BATCH LIMIT (Opsi A APPROVED)
+────────────────────────────────────────────────────────────────────────────────
+
+  Konteks: SECURITY_SPEC v1.4 §7.2 "max 500 scans per batch" — belum 
+  eksplisit di roadmap.
+
+  Verdict:
+    - Validate len(scans) <= 500 → else 422 UNPROCESSABLE_ENTITY
+    - Body <= 1MB → else 413 Payload Too Large (BodySizeLimit middleware)
+    - Idempotency per scan_id (ON CONFLICT DO NOTHING)
+    - Zero drift dengan SECURITY_SPEC + STP v1.1 UT-GATE-005
+
+10.4 NOTES UMUM
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 6 = fase terkompleks sebelum FASE 7-8. 6 endpoints + 2 workers + 
+  2 triggers + conflict resolution.
+
+- QR verifier dipakai bersama FASE 5. JANGAN duplikasi logic.
+
+- Conflict resolution: deterministik (earliest scanned_at wins). Tie-breaker 
+  smallest scan_id. JANGAN pakai "first request wins" (non-deterministic).
+
+- scan_id dari client (UUID v4). Idempotency via PK (ticket_scans.id) 
+  + ON CONFLICT DO NOTHING.
+
+- FeedbackLoopWorker ticker 24h — bukan event-driven. Simpel, konsisten 
+  pattern.
+
+- Insights idempotent (event_id + insight_type). Jangan spam duplicate 
+  insights tiap hari.
+
+- PDF stub: HTTP 501 Not Implemented. Future v1.1+ with library.
+
+- CSV: escape formula chars (=, +, -, @) untuk prevent CSV injection. 
+  UTF-8 BOM untuk Excel.
+
+- BOT_BLACKLIST insight auto-INSERT ke blacklist table (via SYSTEM_USER_UUID).
+
+- Dashboard aggregation: indexed queries + optional Redis cache 30-60s 
+  untuk reduce DB load.
+
+- Frontend screens (8.1, 8.2, 8.3, 9.1, 11.1, 11.2, 11.3) di FASE 6 
+  hanya SKELETON. Full impl di FASE 9.
+
+10.5 CROSS-REFERENCE FOUNDATION
+────────────────────────────────────────────────────────────────────────────────
+
+| Foundation Doc         | Section Relevan                                |
+|------------------------|------------------------------------------------|
+| PRD v6.0               | §F004b (full spec)                             |
+| DATABASE_SCHEMA v2.9   | ticket_scans, insights + triggers + RLS        |
+| LOGIC_FLOW v1.4        | §6 (Gate Analytics + Feedback Loop)            |
+| HALAMAN v1.1           | §8.1-8.3, §9.1, §11.1-11.3                     |
+| TDD v1.10              | §6.4 (gate handler), §6.4 verify helper        |
+| API_CONTRACT v1.2      | §11 (gate), §13 (analytics)                    |
+| SECURITY_SPEC v1.4     | §7.2 (batch limit), §8.4 (offline conflict)    |
+| DRP v1.2               | §5.2, §5.3, §5.4                               |
+| STP v1.1               | UT-GATE-001..010, IT-GATE-001..008             |
+
+10.6 CROSS-REFERENCE ROADMAP FASE LAIN
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 5: QR + PIN generation — consumed by FASE 6 scan/verify
+- FASE 7: Resale (independent of FASE 6)
+- FASE 8: Admin tools (extends insights + blacklist)
+- FASE 9: Frontend screens 8.x, 9.1, 11.x (full impl)
+
+10.7 VERSION HISTORY
+────────────────────────────────────────────────────────────────────────────────
+
+| Version  | Date       | Author       | Changes                                          |
+|----------|------------|--------------|--------------------------------------------------|
+| 1.0-FINAL| 2026-09-11 | M. Arif Aulia| Initial ROADMAP FASE 6. F004b Gate Analytics +   |
+|          |            |              | Post-Event Intelligence. 3 flags pre-approved    |
+|          |            |              | (Opsi A): PDF stub, feedback loop ticker, batch  |
+|          |            |              | max 500.                                         |
+
+================================================================================
+📋 FASE 6 SYNC CHECKLIST (100% COMPLIANCE)
+================================================================================
+
+✅ BLUEPRINT ROADMAP v1.0-FINAL Sync:
+  - FASE 6 = F004b Gate Analytics ✓
+  - Estimasi 1.5 minggu ✓
+
+✅ PRD v6.0 Sync:
+  - F004b full spec ✓
+  - Out of Scope respected ✓
+
+✅ DATABASE_SCHEMA v2.9 Sync:
+  - ticket_scans + insights + triggers + RLS ✓
+  - scan_status_enum (VALID, INVALID, EXPIRED, ALREADY_USED) ✓
+  - insight_type_enum (GATE_STAFFING, PRICE_RECOMMENDATION, 
+    BOT_BLACKLIST, PEAK_TIME) ✓
+  - No new tables/columns ✓
+
+✅ LOGIC_FLOW v1.4 Sync:
+  - §6 Post-Event Report generation ✓
+  - §6 Feedback Loop ✓
+  - Conflict resolution (earliest wins) ✓
+
+✅ HALAMAN v1.1 Sync:
+  - §8.1 EO Dashboard ✓
+  - §8.2 EO Analytics ✓
+  - §8.3 Post-Event Report ✓
+  - §9.1 Attendance Report ✓
+  - §11.1 QR Scanner ✓
+  - §11.2 PIN Entry ✓
+  - §11.3 Offline Sync ✓
+
+✅ TDD v1.10 Sync:
+  - §6.4 QR verify + gate handler ✓
+  - Pseudocode only ✓
+
+✅ API_CONTRACT v1.2 Sync:
+  - 6 endpoints 1:1 (§11.1-11.3, §13.1-13.3) ✓
+  - Error codes: 401 INVALID_QR_OR_TICKET_MISMATCH, 409, 422, 413, 501 ✓
+  - No ghost endpoints ✓
+
+✅ SECURITY_SPEC v1.4 Sync:
+  - §7.2 batch limit 500 ✓
+  - §8.4 offline conflict resolution ✓
+  - Header sanitization ✓
+  - Rate limiting ✓
+
+✅ DRP v1.2 Sync:
+  - Playbook #1, #2, #3 ✓
+
+✅ STP v1.1 Sync:
+  - UT-GATE-001..010 ✓
+  - IT-GATE-001..008 ✓
+  - Coverage ≥ 90% ✓
+
+✅ AI ROADMAP GUARDRAIL §2.2 Sync:
+  - No full code injection (pseudocode only) ✓
+
+✅ Anti-Drift Guardrails G1-G8:
+  - G1 Traceability ✓
+  - G2 Scope Freeze ✓
+  - G3 No Wallet/Ledger ✓
+  - G4 ENUM Consistency ✓
+  - G5 Error Code Consistency ✓
+  - G6 Header Consistency ✓
+  - G7 Self-Contained ✓
+  - G8 Acceptance Criteria ✓
+
+✅ 3 FLAGS PRE-APPROVED (Opsi A):
+  - FLAG #1: PDF stub (501) ✓
+  - FLAG #2: Feedback loop daily ticker ✓
+  - FLAG #3: Batch max 500 + body max 1MB ✓
+
+================================================================================
+END OF ROADMAP FASE (6) v1.0-FINAL
+================================================================================
+
+✅ 100% READY TO EXECUTE
+✅ Self-contained
+✅ 23 tasks across 9 epics, est. ~39 jam (~1 minggu)
+✅ 22 functional AC + 9 non-functional AC
+✅ 12 risks identified with mitigations
+✅ Rollback point defined
+✅ Zero drift (no wallet/ledger, no ghost endpoints, no new columns)
+✅ 6 endpoints 1:1 dengan API_CONTRACT v1.2 §11, §13
+✅ 3 flags pre-approved (Opsi A)
+✅ No full code injection (pseudocode only)
+
+Last Updated: 2026-09-11 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED.

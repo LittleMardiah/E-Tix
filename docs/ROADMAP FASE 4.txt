@@ -1,0 +1,1406 @@
+================================================================================
+ROADMAP FASE (4): GROUP SPLIT-PAY ENGINE (F003) — E-Tix Flash (Smart Ticketing Platform)
+================================================================================
+
+Version:         1.2-FINAL
+Last Updated:    2026-09-11
+Author:          M. Arif Aulia
+Status:          ⏳ NOT STARTED (Ready to Execute)
+Blueprint Ref:   BLUEPRINT ROADMAP v1.0-FINAL, FASE 4
+Depends On:      FASE 0 (Foundation) — LOCKED
+                 FASE 1 (Auth & User) — LOCKED
+                 FASE 3 (F002 Bitmask Lock) — LOCKED
+
+================================================================================
+📌 BISMILLAH — ROADMAP FASE 4 FINAL VERSION (POST-GEMINI REVIEW #2)
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. FASE IDENTITY
+2. SCOPE & OBJECTIVES
+3. FOUNDATION DISTILLATION
+4. TASK BREAKDOWN
+5. DELIVERABLES
+6. ACCEPTANCE CRITERIA
+7. RISKS & MITIGATIONS
+8. SECURITY CONSIDERATIONS
+9. DEFINITION OF DONE (DoD)
+10. NOTES & REFERENCES
+
+================================================================================
+SECTION 1 — FASE IDENTITY
+================================================================================
+
+Fase ID:           FASE 4
+Nama Fase:         Group Split-Pay Engine (F003)
+Fitur Utama:       F003 — Group Split-Pay Execution Engine (Hybrid: Split + Bulk)
+Estimasi Durasi:   Week 4-5 (1.5 minggu, ~42 jam kerja)
+Dependencies:      FASE 0 (Redis, RabbitMQ, DB, delayed_exchange)
+                   FASE 1 (auth middleware)
+                   FASE 3 (bookings table + delayed message release_seat_check)
+Status:            ⏳ Not Started
+
+Ringkasan:
+  Implementasi Group Split-Pay Engine dengan 2 mode pembayaran (SPLIT + BULK), 
+  event-driven via Webhook + Idempotent Lazy-Check pattern. FASE 4 adalah 
+  fitur keuangan PERTAMA yang menyentuh Payment Gateway.
+
+  DELIVERABLE UTAMA:
+    - POST /bookings/{id}/payments     — Initiate Split/Bulk payments
+    - GET  /bookings/{id}/status       — Polling payment status
+    - POST /payments/bulk/assign       — Bulk ticket assignment (leader → members)
+    - POST /webhook/payment            — Payment Gateway callback receiver
+    - BookingExpiryWorker              — Lazy-check at T+3min (rollback if PENDING)
+    - WebhookReconciliationWorker      — Poll Gateway every 10min (fallback)
+    - Trigger check_booking_payment_complete (auto-generate tickets)
+    - MidtransPaymentAdapter (abstract via interface)
+
+================================================================================
+SECTION 2 — SCOPE & OBJECTIVES
+================================================================================
+
+2.1 SCOPE — IN
+────────────────────────────────────────────────────────────────────────────────
+
+✅ Endpoints (4 total — API_CONTRACT v1.2 §9.2-9.5):
+   - POST /bookings/{booking_id}/payments  — Auth + X-Idempotency-Key, 30 req/min
+   - GET  /bookings/{booking_id}/status    — Auth (owner OR member), 100 req/min
+   - POST /payments/bulk/assign            — Auth + X-Idempotency-Key, 30 req/min
+   - POST /webhook/payment                 — Signature validation (header OR body)
+
+✅ Payment Modes:
+   - SPLIT: N payment_obligations (1 per member, with seat_position), 
+            each member pays own amount
+   - BULK:  1 payment_obligation (leader pays all), seat_position = NULL
+
+✅ Payment Gateway Integration:
+   - Provider: Midtrans Sandbox (dev), MidtransPaymentAdapter
+   - Abstract interface: PaymentGateway (charge, refund, payout)
+   - Charge API → get external_transaction_id + payment_link
+   - Webhook receiver: signature validation via adapter (dual-source, see §8.3)
+   - Midtrans signature formula: SHA512(order_id + status_code + 
+     gross_amount + ServerKey) — di dalam adapter, bukan di domain layer
+
+✅ Idempotency (L1 + L2):
+   - Client-provided X-Idempotency-Key
+   - Hash formula: sha256(client_key + ":" + user_id + ":" + booking_id)
+   - L1 (Redis): idempotency:payment:{hash}, TTL 24h
+   - L2 (Postgres): payment_obligations.idempotency_key (VARCHAR 255, UNIQUE)
+
+✅ Webhook Receiver:
+   - POST /webhook/payment dengan payload: external_transaction_id, status, 
+     amount, signature (body)
+   - Signature source (defensive, per FLAG #6): header X-Gateway-Signature 
+     PRIMARY, fallback ke body.signature
+   - Signature validation (HMAC-SHA256, key dari env 
+     PAYMENT_GATEWAY_WEBHOOK_SECRET)
+   - Non-final status handling (FLAG #7): PENDING/CHALLENGE → ACK 200 tanpa mutate DB
+   - Final status SUCCESS → UPDATE payment_obligations SET status = 'PAID'
+   - Trigger check_booking_payment_complete → tickets generated
+
+✅ Booking Expiry Worker (BookingExpiryWorker):
+   - CONSUMER ONLY — message `release_seat_check` sudah di-emit oleh FASE 3
+     saat booking dibuat (via LockSeats service). FASE 4 TIDAK emit ulang.
+   - T+3min lazy-check: cek booking.payment_status
+   - If PAID → no-op
+   - If PENDING → rollback: release Redis bits, set booking EXPIRED, 
+     set obligations EXPIRED, refund paid obligations
+   - Refund retry: 3 attempts + log REFUND_FAILED ke admin_actions (FLAG #4)
+
+✅ Webhook Reconciliation Worker:
+   - Berjalan setiap 10 menit
+   - Cari payment_obligations dengan status='PENDING' AND created_at > 10min
+   - Panggil Payment Gateway API GET /transactions/{external_transaction_id}
+   - Update status sesuai respons Gateway
+   - Log ke admin_actions
+
+✅ Bulk Ticket Assignment (POST /payments/bulk/assign):
+   - Leader assigns tickets to members
+   - Validate: leader_user_id == JWT sub
+   - Validate: target user status='ACTIVE' (not suspended/frozen/deleted)
+   - Validate: event.event_start_time > NOW() (FLAG #7 — event belum mulai)
+   - Atomic: all-or-nothing (rollback if any fails)
+   - Update tickets SET owner_user_id, is_assigned = TRUE
+   - RowsAffected check untuk detect silent failure
+
+✅ Database Trigger:
+   - check_booking_payment_complete: AFTER UPDATE ON payment_obligations
+   - If all obligations PAID → booking PAID + generate tickets
+   - BULK mode: 1 ticket per seat, seat list dari bookings.seat_positions 
+                (JSONB array), owner = leader_user_id, is_assigned = FALSE
+   - SPLIT mode: 1 ticket per obligation, seat dari payment_obligations.
+                 seat_position, owner = obligation.user_id, is_assigned = TRUE
+   - Defensive check: seat_position NOT NULL for SPLIT mode (RAISE EXCEPTION)
+
+2.2 SCOPE — OUT
+────────────────────────────────────────────────────────────────────────────────
+
+❌ Actual ticket generation logic (done by trigger, bukan aplikasi) → FASE 4 include trigger
+❌ Resale flow → FASE 7
+❌ Admin manual refund endpoint → FASE 8
+❌ Wallet/ledger → NEVER (PRD Out of Scope)
+❌ Frontend implementation → FASE 9 (skeleton saja di FASE 4)
+❌ Multi-currency → Out of scope (IDR only)
+❌ Refund self-service → Out of scope (hanya admin FASE 8)
+❌ Emit `release_seat_check` dari FASE 4 → sudah di-emit FASE 3 (FLAG #7)
+
+2.3 OBJECTIVES (MEASURABLE)
+────────────────────────────────────────────────────────────────────────────────
+
+1. SPLIT mode: N obligations created + payment links returned
+2. BULK mode: 1 obligation + amount = total booking
+3. Webhook signature validation works (HMAC-SHA256 via Midtrans adapter)
+4. Webhook SUCCESS → trigger → tickets generated
+5. Webhook non-final status (PENDING/CHALLENGE) → ACK 200 tanpa mutate
+6. BookingExpiryWorker: lazy-check at T+3min, rollback if PENDING
+7. WebhookReconciliationWorker: poll every 10min, resolve PENDING
+8. Bulk assign: atomic (all-or-nothing), validate target ACTIVE + event not started
+9. Idempotency L1+L2 works (same key → cached response)
+10. Refund via Payment Gateway API (with retry 3x + fallback log)
+11. Unit + Integration coverage ≥ 90%
+
+2.4 SUCCESS CRITERIA
+────────────────────────────────────────────────────────────────────────────────
+
+Mengacu pada PRD §Success Metrics + STP §8.1 DoD:
+
+- [x] 4 endpoints terimplementasi
+- [x] SPLIT + BULK modes work
+- [x] Webhook signature validation (HMAC-SHA256, Midtrans adapter, dual-source)
+- [x] Webhook non-final status handling (ACK 200, no mutate)
+- [x] Idempotency L1+L2 works (hash formula: sha256)
+- [x] BookingExpiryWorker rollback at T+3min (Idempotent Lazy-Check)
+- [x] Refund retry 3x + log REFUND_FAILED fallback
+- [x] WebhookReconciliationWorker handles missing webhook
+- [x] Bulk assign atomic + validates event not started
+- [x] Trigger check_booking_payment_complete generates tickets correctly
+- [x] No wallet/ledger drift (PRD Out of Scope respected)
+
+================================================================================
+SECTION 3 — FOUNDATION DISTILLATION
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+3.1 FROM PRD v6.0 §F003 — SPLIT-PAY EXECUTION ENGINE SPEC
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION:
+  Mengelola pembayaran terpisah untuk grup secara event-driven dengan 
+  mekanisme fallback otomatis jika batas waktu 3 menit habis.
+
+INPUTS:
+  - Booking Reference ID, Array of User IDs, Amount per user, Payment Method, 
+    Payment Mode (SPLIT | BULK)
+
+PROCESS — SPLIT Mode:
+  1. Buat Payment Obligation per user (status PENDING, TTL 3 menit)
+  2. Kirim payment link ke setiap anggota
+  3. Setiap anggota bayar sendiri
+
+PROCESS — BULK Mode:
+  1. Leader bayar total seluruh tiket
+  2. Booking langsung CONFIRMED tanpa menunggu anggota lain
+  3. Tiket dimiliki Leader, bisa di-assign ke anggota
+
+PROCESS — Event-Driven:
+  - Webhook SUCCESS → update PAID → check all PAID → CONFIRMED
+  - Webhook FAILED/TIMEOUT → delayed msg T+3min → Lazy-Check
+  - Webhook Reconciliation Worker → poll Gateway every 10min
+
+EDGE CASES:
+  - Partial payment → rollback + auto refund
+  - Double payment → idempotency key mencegah
+  - Webhook timeout → retry 3x + fallback reconciliation
+  - Bulk + Assign → sebelum acara
+
+────────────────────────────────────────────────────────────────────────────────
+3.2 FROM DATABASE_SCHEMA v2.9 — PAYMENT_OBLIGATIONS + TICKETS + TRIGGER
+────────────────────────────────────────────────────────────────────────────────
+
+ENUMs (relevan):
+  payment_status_enum : PENDING | PAID | EXPIRED | FAILED | REFUNDED | CANCELLED
+  payment_mode_enum   : SPLIT | BULK
+  payment_method_enum : VA | E_WALLET | CREDIT_CARD
+  ticket_status_enum  : AVAILABLE | LOCKED | PENDING_SPLIT_PAY | CONFIRMED |
+                        RESALE_PENDING | RESOLD | CANCELLED | USED
+
+PAYMENT_OBLIGATIONS TABLE:
+  - id, booking_id (FK), user_id (FK), seat_position (nullable)
+  - amount NUMERIC(15,2) > 0
+  - status payment_status_enum DEFAULT 'PENDING'
+  - payment_method (nullable)
+  - payment_link VARCHAR(255) UNIQUE
+  - external_transaction_id VARCHAR(255)
+  - webhook_received_at TIMESTAMPTZ
+  - idempotency_key VARCHAR(255) UNIQUE
+  - refunded_at, refund_transaction_id
+  - created_at, updated_at
+
+TICKETS TABLE (untuk trigger):
+  - id, booking_id, payment_obligation_id (nullable), owner_user_id
+  - section_id, seat_position, status, is_assigned
+  - qr_secret_key, fallback_pin (UNIQUE)
+  - fallback_pin_used_at, fallback_pin_used
+  - original_owner_user_id (nullable), resale_transaction_id (nullable)
+  - created_at, updated_at
+
+TRIGGER check_booking_payment_complete:
+  Fires WHEN NEW.status = 'PAID'. Flow:
+    1. SELECT booking FOR UPDATE
+    2. If booking.payment_status = 'PENDING':
+       a. Check IF NOT EXISTS obligation WHERE status != 'PAID'
+       b. If all PAID:
+          - UPDATE bookings SET payment_status = 'PAID'
+          - BULK: SOURCE = bookings.seat_positions (JSONB) — BUKAN 
+                  payment_obligations.seat_position (NULL di BULK)
+                  owner = leader_user_id, is_assigned = FALSE
+          - SPLIT: SOURCE = payment_obligations.seat_position (1 per obligation)
+                   RAISE EXCEPTION if NULL, owner = obligation.user_id, 
+                   is_assigned = TRUE
+
+CATATAN KRITIS: Di BULK mode, payment_obligations.seat_position = NULL. 
+Trigger WAJIB baca daftar kursi dari bookings.seat_positions.
+
+RLS POLICIES (payment_obligations):
+  - Users view own obligations → SELECT if user_id = auth.uid()
+  - Users update own obligations → UPDATE if user_id = auth.uid() 
+                                    AND status = 'PENDING'
+  - Admins view all obligations → SELECT if role IN ('admin', 'event_organizer')
+
+────────────────────────────────────────────────────────────────────────────────
+3.3 FROM LOGIC_FLOW v1.4 §4 — FLOW SUMMARY (PSEUDOCODE ONLY)
+────────────────────────────────────────────────────────────────────────────────
+
+SPLIT MODE SEQUENCE:
+
+  Step 1: CREATE PAYMENT OBLIGATIONS
+    FOR EACH user IN group:
+      - Call Payment Gateway initiate charge
+      - INSERT payment_obligations (with idempotency_key hash, status PENDING)
+
+  Step 2: SEND NOTIFICATIONS (async — FCM/Email/SMS)
+
+  Step 3: WAIT FOR WEBHOOK (event-driven)
+    [CASE A: SUCCESS]
+      - Validate signature + idempotency
+      - UPDATE obligation status = 'PAID'
+      - Trigger fires → tickets generated if all PAID
+    [CASE B: FAILED/TIMEOUT]
+      - Retry 3x exponential backoff
+      - If still fail → status = 'FAILED'
+
+  Step 4: DELAYED MESSAGE WORKER (BookingExpiryWorker)
+    - Consume message at T+3min (emitted by FASE 3)
+    - LAZY CHECK:
+      IF booking.payment_status = 'PAID': no-op
+      ELSIF PENDING/EXPIRED:
+        Rollback:
+          1. FOR UPDATE booking
+          2. Release seats: FOR EACH seat_pos → bit_index = seat_pos - 1
+                            SETBIT(key, bit_index, 0)
+          3. UPDATE bookings SET payment_status = 'EXPIRED'
+          4. UPDATE obligations SET status = 'EXPIRED' WHERE status = 'PENDING'
+          5. Refund paid obligations (retry 3x, fallback log REFUND_FAILED)
+          6. INSERT admin_actions (FORCE_RELEASE_SEAT)
+          7. Notify anggota
+
+BULK MODE SEQUENCE:
+
+  Step 1: CREATE SINGLE OBLIGATION
+    - INSERT payment_obligations (seat_position = NULL, amount = total)
+
+  Step 2: WAIT FOR WEBHOOK
+    - Trigger: SOURCE = bookings.seat_positions
+    - Generate 1 ticket per seat, owner = leader, is_assigned = FALSE
+
+  Step 3: ASSIGN TICKET (Leader → Members) — opsional
+    - POST /payments/bulk/assign
+    - Validate event not started (FLAG #7)
+    - UPDATE tickets SET owner, is_assigned = TRUE
+
+WEBHOOK RECONCILIATION WORKER:
+  Every 10 minutes:
+    - SELECT PENDING obligations > 10min old (LIMIT 100)
+    - Call Gateway API GET /transactions/{txid}
+    - IF PAID → UPDATE status + log admin_actions (MANUAL_PAID)
+    - IF PENDING → skip
+    - ELSE → UPDATE status = FAILED + rollback
+
+IDEMPOTENCY PATTERN (L1 + L2):
+
+  Step 1: Compute hash = sha256(client_key + ":" + user_id + ":" + booking_id)
+  Step 2: L1 Redis GET idempotency:payment:{hash}
+          - IF found → return cached
+  Step 3: L2 Postgres SELECT WHERE idempotency_key = {hash}
+          - IF found → return cached (from DB)
+          - ELSE → process: Gateway init → INSERT → cache L1 → return
+
+────────────────────────────────────────────────────────────────────────────────
+3.4 FROM LOGIC_FLOW v1.4 §9.1 — IDEMPOTENCY PATTERN (DETAIL)
+────────────────────────────────────────────────────────────────────────────────
+
+L1 (Redis): idempotency:payment:{hash}, TTL 24h, value = response body + status
+L2 (Postgres): payment_obligations.idempotency_key UNIQUE
+
+HASH FORMULA: sha256(client_key + ":" + user_id + ":" + booking_id)
+RACE HANDLING: Redis SET NX + Postgres UNIQUE constraint
+
+────────────────────────────────────────────────────────────────────────────────
+3.5 FROM TDD v1.10 §6.3 — IMPLEMENTATION FLOW SUMMARY (PSEUDOCODE ONLY)
+────────────────────────────────────────────────────────────────────────────────
+
+PAYMENT INITIATION — Flow:
+
+  Function InitiatePayments(ctx, req):
+    Step 1: BEGIN transaction
+    Step 2: SELECT booking FOR UPDATE WHERE payment_status='PENDING'
+    Step 3: Verify leader_user_id == JWT sub
+    Step 4: FOR EACH member:
+      a. Gateway.InitiatePayment → { TransactionID, PaymentLink }
+      b. Compute idempotency hash
+      c. INSERT payment_obligations
+    Step 5: COMMIT
+    Step 6: Return obligations + expires_at
+
+  NOTE (FLAG #7): Delayed message `release_seat_check` sudah di-emit 
+  oleh FASE 3 (LockSeats service) saat booking dibuat. FASE 4 TIDAK 
+  emit ulang. FASE 4 hanya consume di BookingExpiryWorker.
+
+WEBHOOK HANDLER — Flow (FLAG #6 + #7):
+
+  Function HandleWebhook(ctx, payload):
+    Step 1: Extract signature from DUAL SOURCE:
+              a. PRIMARY: header "X-Gateway-Signature"
+              b. FALLBACK: payload.signature (body)
+              - If neither present → 401
+    Step 2: Validate signature (via MidtransPaymentAdapter)
+              - HMAC-SHA256 generic OR Midtrans SHA512 formula
+              - If invalid → 401
+    Step 3: BEGIN transaction
+    Step 4: SELECT obligation FOR UPDATE BY external_transaction_id
+              - If not found → 404
+    Step 5: IF obligation.status = 'PAID' → return 200 (idempotent)
+    Step 6: STATUS BRANCHING (FLAG #7):
+              - IF payload.Status IN ('PENDING', 'CHALLENGE'):
+                  * ACK 200 tanpa memutasi DB
+                  * Log info "non-final status received"
+                  * Return 200 (prevent Gateway retry storm)
+              - IF payload.Status = 'SUCCESS' (final):
+                  * UPDATE status = 'PAID', webhook_received_at = NOW()
+              - ELSE (final fail: DENY/CANCEL/EXPIRE):
+                  * UPDATE status = 'FAILED'
+    Step 7: COMMIT — trigger fires automatically
+    Step 8: Return 200
+
+BOOKING EXPIRY WORKER — Flow (FLAG #4 + #5):
+
+  Function ProcessReleaseSeatCheck(ctx, msg):
+    Step 1: Deserialize { booking_id }
+    Step 2: SELECT booking BY id (not found → ACK)
+    Step 3: IF payment_status = 'PAID' → no-op
+    Step 4: IF payment_status = 'PENDING':
+              - executeRollback:
+                a. FOR UPDATE booking
+                b. Release seats (FLAG #5):
+                     FOR EACH seat_pos IN booking.seat_positions (JSONB):
+                       bit_index = seat_pos - 1
+                       SETBIT(key, bit_index, 0)
+                c. UPDATE bookings SET payment_status = 'EXPIRED'
+                d. UPDATE obligations SET status = 'EXPIRED' WHERE status = 'PENDING'
+                e. FOR EACH obligation WHERE status = 'PAID':
+                     Gateway.Refund with retry 3x (100ms, 200ms, 400ms)
+                     - If success → UPDATE status = 'REFUNDED'
+                     - If all fail → INSERT admin_actions (
+                         action_type = 'MANUAL_REFUND',
+                         reason = 'REFUND_FAILED_RETRY_EXHAUSTED'
+                       ) + log CRITICAL
+                f. INSERT admin_actions (FORCE_RELEASE_SEAT)
+                g. COMMIT
+              - Notify anggota
+
+BULK ASSIGN — Flow (FLAG #7):
+
+  Function BulkAssign(ctx, req):
+    Step 1: SELECT booking WHERE id = req.BookingID
+              - Verify leader_user_id = current_user (JWT)
+              - If not → 403
+    Step 2: EVENT TIME VALIDATION (FLAG #7):
+              - SELECT e.event_date, e.event_start_time FROM events e
+                JOIN bookings b ON b.event_id = e.id
+                WHERE b.id = req.BookingID
+              - Combine event_date + event_start_time → event_start_at
+              - IF event_start_at <= NOW():
+                  RETURN 422 EVENT_ALREADY_STARTED
+    Step 3: BEGIN transaction
+    Step 4: FOR EACH assignment:
+              a. SELECT user status + is_blacklisted
+                 - If not found → FAILED, break
+              b. IF status != 'ACTIVE' → FAILED (422), break
+              c. IF is_blacklisted → FAILED, break
+              d. UPDATE tickets SET owner, is_assigned=TRUE
+                 WHERE id AND booking_id AND is_assigned=FALSE
+              e. RowsAffected == 0 → FAILED, break
+    Step 5: IF !allSuccess → ROLLBACK + return 409
+    Step 6: COMMIT + return 200
+
+WEBHOOK RECONCILIATION WORKER:
+  Every 10 min: SELECT PENDING > 10min (LIMIT 100)
+  FOR EACH: Gateway GET /transactions/{txid}
+    - PAID → UPDATE + admin_actions MANUAL_PAID
+    - PENDING → skip
+    - ELSE → UPDATE FAILED + rollback
+
+MIDTRANS PAYMENT ADAPTER:
+
+  Interface PaymentGateway:
+    - InitiatePayment(ctx, req) → { TransactionID, PaymentLink }
+    - Refund(ctx, transactionID, amount) → { RefundID }
+    - Payout(ctx, req) → { PayoutID }
+    - ValidateWebhookSignature(headers, payload) → bool
+
+  MidtransPaymentAdapter:
+    - Initiate: POST /v2/charge
+    - Refund: POST /v2/{order_id}/refund
+    - Payout: POST /v2/payout
+    - ValidateWebhookSignature:
+        Extract: header "X-Gateway-Signature" OR payload["signature"]
+        Formula: SHA512(order_id + status_code + gross_amount + ServerKey)
+        Constant-time compare
+
+  MockPaymentAdapter (TEST_MODE=true):
+    - Bypass signature + log warning + auto-approve
+
+────────────────────────────────────────────────────────────────────────────────
+3.6 FROM API_CONTRACT v1.2 §9.2-9.5 — ENDPOINTS SPEC
+────────────────────────────────────────────────────────────────────────────────
+
+ENDPOINT 1 — POST /bookings/{booking_id}/payments
+
+  Auth:     Required (JWT)
+  Rate:     30 req/min per user
+  Headers:  X-Idempotency-Key REQUIRED
+
+  Request (SPLIT): { payment_mode: "SPLIT", members: [{ user_id, seat_position, amount }] }
+  Request (BULK):  { payment_mode: "BULK", leader_pays_all: true, amount }
+
+  Success (200): { booking_id, payment_status: "PENDING", obligations: [...], expires_at }
+
+  Errors: 403, 409, 422, 500
+
+ENDPOINT 2 — GET /bookings/{booking_id}/status
+
+  Auth:     Required (JWT — owner OR member)
+  Rate:     100 req/min per user
+
+  Ownership Check:
+    - JWT sub MUST match booking.leader_user_id OR
+    - JWT sub MUST be listed in payment_obligations.user_id
+    - Otherwise → 403 FORBIDDEN
+
+  Success (200): { booking_id, payment_status, obligations, tickets_generated }
+
+ENDPOINT 3 — POST /payments/bulk/assign
+
+  Auth:     Required (JWT, booking leader)
+  Rate:     30 req/min per user
+  Headers:  X-Idempotency-Key REQUIRED
+
+  Request: { booking_id, assignments: [{ ticket_id, user_id }] }
+
+  Success (200): { booking_id, assigned, tickets }
+
+  Errors: 
+    - 403 (not leader)
+    - 409 (partial failure → rollback)
+    - 422 (target inactive)
+    - 422 EVENT_ALREADY_STARTED (FLAG #7 — event sudah mulai)
+
+ENDPOINT 4 — POST /webhook/payment
+
+  Auth: Signature validation (header OR body)
+  Rate: Unlimited (trusted source)
+
+  Request: 
+    {
+      "external_transaction_id": "txn-gateway-123",
+      "status": "SUCCESS",
+      "amount": "1000000",
+      "signature": "hmac-sha256-of-payload"
+    }
+
+  Signature extraction (FLAG #6):
+    - Primary: header "X-Gateway-Signature"
+    - Fallback: body "signature"
+
+  Status handling (FLAG #7):
+    - SUCCESS (final) → UPDATE PAID
+    - PENDING / CHALLENGE (transitional) → ACK 200, NO mutate
+    - DENY / CANCEL / EXPIRE (final fail) → UPDATE FAILED
+
+  Success (200): { status: "processed" } atau { status: "acknowledged" }
+
+  Errors: 401 (invalid signature), 404 (transaction not found)
+
+────────────────────────────────────────────────────────────────────────────────
+3.7 FROM SECURITY_SPEC v1.4 §6.1, §6.2 — FINANCIAL SECURITY
+────────────────────────────────────────────────────────────────────────────────
+
+IDEMPOTENCY: L1 (Redis 24h) + L2 (Postgres UNIQUE)
+
+PAYMENT FLOW SECURITY (Payment Gateway as Source of Truth):
+  1. Booking hold via Redis bitmap (FASE 3)
+  2. Payment Gateway init → store external_transaction_id
+  3. Webhook SUCCESS → validate sig → UPDATE status → trigger
+  4. Webhook FAILURE → delayed msg T+3min → Idempotent Lazy-Check
+
+FINANCIAL INTEGRITY INVARIANTS:
+  ✅ external_transaction_id WAJIB ada untuk semua transaksi
+  ✅ Tidak ada mutasi status tanpa webhook/rekonsiliasi
+  ✅ Admin actions logged ke admin_actions
+  ✅ Idempotency key mencegah double-charge
+  ✅ Payment Gateway adalah SOURCE OF TRUTH
+
+────────────────────────────────────────────────────────────────────────────────
+3.8 FROM HALAMAN v1.1 §5.1-5.3 — WIREFRAMES
+────────────────────────────────────────────────────────────────────────────────
+
+SCREEN 5.1 — PAYMENT MODE SELECTION:
+  - 4 tickets, Section CAT 1, Total Rp 4,000,000
+  - SPLIT PAY: each member pays own, 4 links, 3 min timer
+  - BULK PAY: leader pays all, one payment total, instant confirmed
+
+SCREEN 5.2 — SPLIT PAY LINKS:
+  - "Payment links sent!"
+  - Group members list with status (PAID/PENDING)
+  - Countdown 3 minutes
+  - Share link button
+
+SCREEN 5.3 — BULK TICKET ASSIGNMENT:
+  - "Bulk Payment Complete! 4 tickets purchased."
+  - Assign tickets to group (per seat: email/phone + ASSIGN button)
+  - "You have 7 days to assign all tickets."
+  - SKIP button (assign later)
+  
+  NOTE (FLAG #7): "7 days" adalah UI hint. Backend validation lebih 
+  ketat: assignment hanya sampai event_start_time. Setelah event mulai → 422.
+
+────────────────────────────────────────────────────────────────────────────────
+3.9 FROM STP v1.1 §3.2 — TEST CASES
+────────────────────────────────────────────────────────────────────────────────
+
+UNIT TEST CASES (FASE 4 scope):
+
+| Test ID        | Description                                              |
+|----------------|----------------------------------------------------------|
+| UT-PAY-001     | InitiatePayments_StoresExternalTransactionID             |
+| UT-PAY-002     | Webhook_LookupByExternalTransactionID                    |
+| UT-PAY-003     | Idempotency_24h_DuplicateKey_ReturnsCachedResponse       |
+| UT-PAY-004     | BulkAssign_InactiveTarget_Returns422                     |
+| UT-PAY-005     | IdempotencyHash_FormulaMatchesSha256                     |
+| UT-PAY-006     | WebhookSignature_InvalidHMAC_Returns401                  |
+| UT-PAY-007     | SplitMode_SeatPositionRequired_RaiseException            |
+| UT-PAY-008     | WebhookSignature_ExtractFromHeaderAndBody_DualSource     |
+| UT-PAY-009     | Webhook_NonFinalStatus_Returns200WithoutMutating         |
+| UT-PAY-010     | BulkAssign_EventStarted_Returns422                       |
+
+INTEGRATION TEST CASES (FASE 4 scope):
+
+| Test ID        | Description                                              |
+|----------------|----------------------------------------------------------|
+| IT-PAY-001     | POST payment → Gateway init → Webhook → Trigger → Ticket |
+| IT-PAY-002     | Split-Pay: 4 users → 4 webhooks → All PAID → 4 tickets   |
+| IT-PAY-003     | Bulk: 1 payment → Trigger → 4 tickets, is_assigned=FALSE |
+| IT-PAY-004     | Partial timeout: 3 PAID, 1 EXPIRED → auto refund + rollback |
+| IT-PAY-005     | Webhook Reconciliation Worker polls Gateway              |
+| IT-IDEMPOTENCY-001 | Same X-Idempotency-Key 5x → 1 mutation, 5 same resp  |
+| IT-ASSIGN-001  | Bulk assign atomic: partial failure → rollback all       |
+| IT-ASSIGN-002  | Bulk assign: target suspended → 422                      |
+| IT-ASSIGN-003  | Bulk assign: event already started → 422                 |
+| IT-REFUND-001  | Refund retry 3x fails → log REFUND_FAILED to admin_actions |
+| IT-WEBHOOK-001 | Non-final status webhook → ACK 200, no mutate            |
+
+================================================================================
+SECTION 4 — TASK BREAKDOWN
+================================================================================
+
+9 EPICS, 24 TASKS. Estimasi total ~42 jam (~1.5 minggu).
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E1: MODULE SKELETON
+────────────────────────────────────────────────────────────────────────────────
+
+E1-S1-T1 [30 min] — Create internal/payment/ + internal/worker/ folders
+   Deliverable:
+     - internal/payment/{handler,service,repository,model,gateway}.go
+     - internal/payment/adapter/{midtrans_adapter,mock_adapter}.go
+     - internal/worker/booking_expiry.go
+     - internal/worker/webhook_reconciliation.go
+   DoD: empty files dengan package declaration
+
+E1-S1-T2 [1 jam] — Define model.go
+   Deliverable:
+     - PaymentObligation struct
+     - InitiatePaymentRequest, BulkAssignRequest, WebhookRequest
+     - PaymentInitResponse, BookingStatusResponse
+   DoD: structs sesuai API_CONTRACT v1.2 §9.2-9.5
+
+E1-S1-T3 [30 min] — Repository skeleton
+   Deliverable:
+     - PaymentObligationRepository (Create, GetByExternalTxID, 
+       ListByBooking, GetByBookingAndUser)
+     - BookingRepository extension
+   DoD: method signatures clean
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E2: PAYMENT GATEWAY ADAPTER (FLAG #1 & #6)
+────────────────────────────────────────────────────────────────────────────────
+
+E2-S1-T4 [2 jam] — PaymentGateway interface + MockAdapter
+   Deliverable: 
+     - interface PaymentGateway { Initiate, Refund, Payout, 
+                                   ValidateWebhookSignature(headers, payload) }
+     - MockPaymentAdapter (TEST_MODE=true) — bypass signature, log warning
+   DoD: interface + mock works
+   NOTE (FLAG #6): ValidateWebhookSignature takes headers + payload 
+   → adapter handle dual-source.
+
+E2-S1-T5 [2 jam] — MidtransPaymentAdapter implementation
+   Deliverable: adapter yang wrap Midtrans API
+   Sub-tasks:
+     a. Initiate: POST Midtrans /v2/charge
+     b. Refund: POST Midtrans /v2/{order_id}/refund
+     c. Payout: POST Midtrans /v2/payout
+     d. ValidateWebhookSignature(headers, payload):
+        - Extract: header "X-Gateway-Signature" (primary) 
+                   OR payload["signature"] (fallback)
+        - Formula: SHA512(order_id + status_code + gross_amount + ServerKey)
+        - Compare constant-time
+   DoD:
+     - Adapter works dengan Midtrans Sandbox
+     - Signature formula di dalam adapter
+     - Dual-source extraction tested
+
+E2-S1-T6 [30 min] — Env var PAYMENT_GATEWAY_WEBHOOK_SECRET
+   Deliverable: update .env.example + Render env vars
+   DoD: env var documented
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E3: IDEMPOTENCY (L1 + L2) — FLAG #2
+────────────────────────────────────────────────────────────────────────────────
+
+E3-S1-T7 [1.5 jam] — Compute idempotency hash
+   Deliverable: ComputeIdempotencyHash(clientKey, userID, bookingID)
+   Sub-tasks: hash = sha256(clientKey + ":" + userID + ":" + bookingID)
+   DoD: unit test verify formula
+
+E3-S1-T8 [1.5 jam] — L1 Redis cache
+   Deliverable: IdempotencyService.Get/Set
+   Sub-tasks: Key idempotency:payment:{hash}, TTL 24h
+   DoD: cache works
+
+E3-S1-T9 [1 jam] — L2 Postgres
+   Deliverable: Lookup by idempotency_key
+   DoD: unit test verify L2 lookup
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E4: INITIATE PAYMENT — FLAG #7 (delayed msg clarification)
+────────────────────────────────────────────────────────────────────────────────
+
+E4-S1-T10 [1.5 jam] — Handler: POST /bookings/{id}/payments
+   Deliverable: PaymentHandler.InitiatePayments
+   Sub-tasks: Auth, X-Idempotency-Key, Bind JSON
+   DoD: handler wired
+
+E4-S1-T11 [2 jam] — Service: full initiate flow (with FLAG #7 note)
+   Deliverable: PaymentService.InitiatePayments
+   Sub-tasks:
+     a. BEGIN transaction
+     b. SELECT booking FOR UPDATE WHERE payment_status='PENDING'
+     c. Verify leader_user_id == JWT sub
+     d. FOR EACH member:
+        - Gateway.InitiatePayment
+        - Compute hash + INSERT obligation
+     e. COMMIT
+     f. Return obligations + expires_at
+   
+   NOTE (FLAG #7): Delayed message `release_seat_check` sudah di-emit 
+   oleh FASE 3 (LockSeats service) saat booking dibuat. FASE 4 TIDAK 
+   emit ulang — hanya consume via BookingExpiryWorker. Ini adalah 
+   producer/consumer split yang sudah di-approve di FASE 3.
+   DoD: 
+     - SPLIT: N obligations
+     - BULK: 1 obligation
+     - NO re-emit delayed message
+
+E4-S1-T12 [1 jam] — SPLIT vs BULK mode branch
+   DoD: SPLIT seat_position NOT NULL; BULK seat_position = NULL
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E5: BOOKING STATUS — FLAG #3 (IDOR)
+────────────────────────────────────────────────────────────────────────────────
+
+E5-S1-T13 [1.5 jam] — Handler: GET /bookings/{id}/status (IDOR-safe)
+   Deliverable: PaymentHandler.GetBookingStatus
+   Sub-tasks:
+     a. Auth middleware
+     b. Ownership check:
+        - SELECT 1 FROM bookings WHERE id = {id} AND leader_user_id = {jwt_sub}
+        - UNION SELECT 1 FROM payment_obligations WHERE booking_id = {id} 
+          AND user_id = {jwt_sub}
+        - If NEITHER → 403 FORBIDDEN
+     c. Return aggregated status
+   DoD: 200 untuk owner OR member; 403 untuk lainnya
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E6: WEBHOOK RECEIVER — FLAG #6 + FLAG #7
+────────────────────────────────────────────────────────────────────────────────
+
+E6-S1-T14 [2 jam] — Handler: POST /webhook/payment
+   Deliverable: PaymentHandler.HandleWebhook
+   Sub-tasks:
+     a. Extract signature from DUAL SOURCE (FLAG #6):
+        - c.GetHeader("X-Gateway-Signature") primary
+        - fallback: payload.signature
+     b. Validate via Gateway.ValidateWebhookSignature
+     c. Bind payload
+   DoD: 
+     - 401 untuk invalid (both empty or mismatch)
+     - 200 untuk valid
+
+E6-S1-T15 [2.5 jam] — Service: webhook processing (with FLAG #7 non-final)
+   Deliverable: PaymentService.HandleWebhook
+   Sub-tasks:
+     a. BEGIN transaction
+     b. SELECT obligation FOR UPDATE BY external_transaction_id
+     c. IF status = 'PAID' → return 200 (idempotent)
+     d. STATUS BRANCHING (FLAG #7):
+        - IF payload.Status IN ('PENDING', 'CHALLENGE'):
+            ACK 200, NO mutate, log info "non-final status"
+        - IF payload.Status = 'SUCCESS':
+            UPDATE status = 'PAID', webhook_received_at = NOW()
+        - ELSE (DENY/CANCEL/EXPIRE):
+            UPDATE status = 'FAILED'
+     e. COMMIT — trigger fires automatically
+   DoD: 
+     - Non-final status → no mutation
+     - Final status → mutate + trigger
+     - Idempotent on duplicate webhook
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E7: BULK ASSIGN — FLAG #7 (event time validation)
+────────────────────────────────────────────────────────────────────────────────
+
+E7-S1-T16 [2 jam] — Handler: POST /payments/bulk/assign
+   Deliverable: PaymentHandler.BulkAssign
+   Sub-tasks: Auth, X-Idempotency-Key, Bind JSON
+   DoD: handler wired
+
+E7-S1-T17 [2.5 jam] — Service: bulk assign atomic + event validation
+   Deliverable: PaymentService.BulkAssign
+   Sub-tasks:
+     a. Verify leader_user_id == JWT sub
+     b. EVENT TIME VALIDATION (FLAG #7):
+        - SELECT e.event_date, e.event_start_time FROM events e
+          JOIN bookings b ON b.event_id = e.id WHERE b.id = {booking_id}
+        - Combine → event_start_at
+        - IF event_start_at <= NOW(): RETURN 422 EVENT_ALREADY_STARTED
+     c. BEGIN transaction
+     d. FOR EACH assignment:
+        - SELECT user status + is_blacklisted
+        - Validate ACTIVE
+        - UPDATE tickets SET owner, is_assigned=TRUE WHERE is_assigned=FALSE
+        - RowsAffected == 0 → fail
+     e. If any fail → ROLLBACK, return 409
+     f. Else COMMIT
+   DoD:
+     - Event started → 422
+     - Partial failure → all rollback (atomic)
+     - RowsAffected check works
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E8: WORKERS — FLAG #4 & #5
+────────────────────────────────────────────────────────────────────────────────
+
+E8-S1-T18 [3 jam] — BookingExpiryWorker (refund retry + bit conversion)
+   Deliverable: internal/worker/booking_expiry.go
+   Sub-tasks:
+     a. Consume release_seat_check (NOT emit — FLAG #7)
+     b. Lazy-check booking.payment_status
+     c. If PAID → no-op
+     d. If PENDING → executeRollback:
+        - Release seats (FLAG #5):
+          FOR EACH seat_pos → bit_index = seat_pos - 1
+                             SETBIT(key, bit_index, 0)
+        - Update booking + obligations to EXPIRED
+        - Refund paid obligations (FLAG #4):
+          * Retry 3x (100ms, 200ms, 400ms)
+          * Success → UPDATE status = 'REFUNDED'
+          * All fail → INSERT admin_actions (MANUAL_REFUND, 
+                       REFUND_FAILED_RETRY_EXHAUSTED) + log CRITICAL
+        - Log admin_actions (FORCE_RELEASE_SEAT)
+     e. Notify user
+   DoD:
+     - Consume message (NOT emit)
+     - Rollback works
+     - Refund retry tested
+     - bit_index = seat_pos - 1 correct
+
+E8-S1-T19 [2 jam] — WebhookReconciliationWorker
+   Deliverable: internal/worker/webhook_reconciliation.go
+   Sub-tasks:
+     a. Every 10 min
+     b. SELECT PENDING > 10min (LIMIT 100)
+     c. Gateway GET /transactions/{txid}
+     d. Update status + log admin_actions
+   DoD: worker runs, handles missing webhook
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E9: TESTS
+────────────────────────────────────────────────────────────────────────────────
+
+E9-S1-T20 [3 jam] — Unit tests (10 tests)
+   Deliverable: tests/unit/payment/*.go
+   Sub-tasks: UT-PAY-001..010
+   DoD: coverage ≥ 90%
+
+E9-S1-T21 [4 jam] — Integration tests (11 tests)
+   Deliverable: tests/integration/payment_flow_test.go
+   Sub-tasks: IT-PAY-001..005, IT-IDEMPOTENCY-001, IT-ASSIGN-001..003,
+              IT-REFUND-001, IT-WEBHOOK-001
+   DoD: all pass
+
+E9-S2-T22 [2 jam] — API tests (Postman)
+   Deliverable: postman_collection.json
+   DoD: Newman pass ~16 cases
+
+E9-S2-T23 [2 jam] — Webhook signature dual-source + non-final status test
+   Deliverable: tests/security/webhook_signature_test.go
+   Sub-tasks:
+     a. Valid header sig → 200 mutate
+     b. Valid body sig → 200 mutate
+     c. Invalid both → 401
+     d. PENDING status → 200 no mutate (FLAG #7)
+     e. Mock mode → bypass warning
+   DoD: all pass
+
+E9-S2-T24 [2 jam] — Partial timeout + IDOR + event started test
+   Deliverable: 
+     - tests/integration/partial_timeout_test.go
+     - tests/integration/status_idor_test.go
+     - tests/integration/assign_event_started_test.go
+   Sub-tasks:
+     a. Partial: 3 PAID, 1 EXPIRED → refund + release
+     b. IDOR: user C → 403
+     c. Event started: assignment → 422
+   DoD: all pass
+
+────────────────────────────────────────────────────────────────────────────────
+TASK SUMMARY
+────────────────────────────────────────────────────────────────────────────────
+
+| Epic | Tasks | Est. Duration |
+|------|-------|---------------|
+| E1   | 3     | ~2 jam        |
+| E2   | 3     | ~4.5 jam      |
+| E3   | 3     | ~4 jam        |
+| E4   | 3     | ~4.5 jam      |
+| E5   | 1     | ~1.5 jam      |
+| E6   | 2     | ~4.5 jam      |
+| E7   | 2     | ~4.5 jam      |
+| E8   | 2     | ~5 jam        |
+| E9   | 5     | ~13 jam       |
+|------|-------|---------------|
+| Total| 24    | ~43 jam (~1.5 minggu) |
+
+================================================================================
+SECTION 5 — DELIVERABLES
+================================================================================
+
+5.1 CODE ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+Backend — Payment Module:
+  ✅ internal/payment/handler.go                (4 endpoints)
+  ✅ internal/payment/service.go
+  ✅ internal/payment/repository.go
+  ✅ internal/payment/model.go
+  ✅ internal/payment/gateway.go                (interface)
+  ✅ internal/payment/idempotency.go            (L1+L2)
+  ✅ internal/payment/adapter/midtrans_adapter.go
+  ✅ internal/payment/adapter/mock_adapter.go
+
+Backend — Workers:
+  ✅ internal/worker/booking_expiry.go
+  ✅ internal/worker/webhook_reconciliation.go
+
+Router:
+  ✅ cmd/api/main.go — wire 4 endpoints
+
+Worker Registration:
+  ✅ BookingExpiryWorker registered (consumer only)
+  ✅ WebhookReconciliationWorker registered (ticker)
+
+5.2 DOCUMENTATION
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ docs/SPLIT_PAY_MODULE.md — 2 modes + flow
+  ✅ docs/WEBHOOK_SECURITY.md — dual-source + non-final status + Midtrans adapter
+  ✅ docs/IDEMPOTENCY.md — L1+L2 hash formula
+
+5.3 TEST ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ tests/unit/payment/*.go                     (UT-PAY-001..010)
+  ✅ tests/integration/payment_flow_test.go      (IT-PAY-001..005)
+  ✅ tests/integration/partial_timeout_test.go   (IT-PAY-004)
+  ✅ tests/integration/assign_test.go            (IT-ASSIGN-001..003)
+  ✅ tests/integration/status_idor_test.go       (FLAG #3)
+  ✅ tests/integration/refund_failure_test.go    (IT-REFUND-001)
+  ✅ tests/integration/webhook_non_final_test.go (IT-WEBHOOK-001)
+  ✅ tests/security/webhook_signature_test.go
+  ✅ postman_collection.json (updated)
+
+5.4 FRONTEND ARTIFACTS (Skeleton Only — full impl di FASE 9)
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ app/customer/payment/[bookingId]/page.tsx — placeholder
+  ✅ components/customer/PaymentModeSelector.tsx — skeleton
+  ✅ components/customer/SplitPayLinks.tsx — skeleton
+  ✅ components/customer/BulkTicketAssignment.tsx — skeleton
+  ✅ lib/api/payment.ts — API client functions
+
+================================================================================
+SECTION 6 — ACCEPTANCE CRITERIA
+================================================================================
+
+6.1 FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] POST /bookings/{id}/payments → 200 SPLIT (N) / BULK (1)
+  [ ] POST /bookings/{id}/payments → 403 bukan leader / 409 not PENDING
+  [ ] GET /bookings/{id}/status → 200 owner OR member
+  [ ] GET /bookings/{id}/status → 403 non-owner non-member (FLAG #3)
+  [ ] POST /payments/bulk/assign → 200 (atomic)
+  [ ] POST /payments/bulk/assign → 409 (partial failure → rollback)
+  [ ] POST /payments/bulk/assign → 422 (target inactive)
+  [ ] POST /payments/bulk/assign → 422 EVENT_ALREADY_STARTED (FLAG #7)
+  [ ] POST /webhook/payment → 200 (valid header OR body sig)
+  [ ] POST /webhook/payment → 401 (invalid both)
+  [ ] POST /webhook/payment → 200 idempotent (duplicate)
+  [ ] POST /webhook/payment → 200 NO mutate untuk PENDING/CHALLENGE (FLAG #7)
+  [ ] SPLIT mode: obligation per member dengan seat_position NOT NULL
+  [ ] BULK mode: 1 obligation, seat_position = NULL
+  [ ] Webhook SUCCESS → trigger → tickets (BULK from bookings.seat_positions)
+  [ ] Webhook SUCCESS → trigger → tickets (SPLIT from obligation)
+  [ ] BookingExpiryWorker: T+3min lazy-check, rollback if PENDING
+  [ ] BookingExpiryWorker: consumes ONLY (FASE 3 emits — FLAG #7)
+  [ ] BookingExpiryWorker: bit_index = seat_pos - 1 (FLAG #5)
+  [ ] Refund retry 3x, fail → log REFUND_FAILED (FLAG #4)
+  [ ] WebhookReconciliationWorker: 10min poll
+  [ ] Idempotency L1+L2 works
+  [ ] No wallet/ledger drift
+
+6.2 NON-FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] CI pipeline green
+  [ ] Unit test coverage ≥ 90% (10 unit tests)
+  [ ] API tests pass: ~16 cases
+  [ ] Integration tests pass: 11/11
+  [ ] Webhook signature dual-source + non-final: 5/5
+  [ ] Zero tokens in logs
+  [ ] 4 endpoints 1:1 dengan API_CONTRACT v1.2
+
+6.3 TEST COVERAGE TARGET
+────────────────────────────────────────────────────────────────────────────────
+
+  Unit: ≥ 90% (10 tests)
+  Integration: 11 tests
+  API: 4 endpoints
+  Security: webhook dual-source + non-final
+
+================================================================================
+SECTION 7 — RISKS & MITIGATIONS
+================================================================================
+
+| Risk                                          | Likelihood | Impact | Mitigation                                          |
+|-----------------------------------------------|------------|--------|-----------------------------------------------------|
+| Webhook sig source mismatch                   | Medium     | High   | Dual-source (FLAG #6)                               |
+| Webhook non-final status → DB mutation        | Medium     | High   | Status branching (FLAG #7)                          |
+| Webhook lost / delayed                        | Medium     | High   | WebhookReconciliationWorker                         |
+| Idempotency hash collision                    | Low        | Low    | SHA256 practically impossible                       |
+| Partial payment timeout                       | High       | High   | BookingExpiryWorker + auto refund                   |
+| Refund fails (retry exhausted)                | Low        | High   | Retry 3x + log REFUND_FAILED (FLAG #4)              |
+| Bulk assign partial failure                   | Medium     | High   | Atomic transaction                                  |
+| Assign after event started                    | Medium     | High   | Event time validation (FLAG #7)                     |
+| Concurrent webhook same obligation            | Low        | Med    | FOR UPDATE                                          |
+| Trigger failure                               | Low        | High   | Database trigger (atomic)                           |
+| Payment Gateway down                          | Medium     | High   | Circuit Breaker + manual reconciliation             |
+| IDOR GET status                               | Medium     | High   | Ownership check (FLAG #3)                           |
+| Race: ExpiryWorker vs webhook                 | Medium     | High   | FOR UPDATE + status guard                           |
+| Bitmask index off-by-one                      | Low        | High   | bit_index = seat_pos - 1 (FLAG #5)                  |
+
+RESPONSE PER SCENARIO (cross-reference DRP v1.2):
+- Payment Gateway down → Playbook #5 (DRP §5.6)
+- Redis down → Playbook #2 (DRP §5.3)
+- RabbitMQ down → Playbook #3 (DRP §5.4)
+- DB down → Playbook #1 (DRP §5.2)
+
+================================================================================
+SECTION 8 — SECURITY CONSIDERATIONS
+================================================================================
+
+8.1 THREATS RELEVANT TO FASE 4
+────────────────────────────────────────────────────────────────────────────────
+
+| Threat                    | Mitigation di FASE 4                                |
+|---------------------------|-----------------------------------------------------|
+| Payment Fraud             | Signature validation                                |
+| Fake Webhook              | X-Gateway-Signature header OR body.signature         |
+| Replay Webhook            | Idempotency (FOR UPDATE + status guard)             |
+| Double-Charge             | Idempotency L1+L2                                   |
+| IDOR (assign others)      | Leader_user_id == JWT sub                           |
+| IDOR (view status)        | Ownership check (owner OR member) — FLAG #3         |
+| Partial Bulk Assign       | Atomic transaction                                  |
+| Timeout Abuse             | BookingExpiryWorker auto rollback                   |
+| Refund Failure Silent     | Retry 3x + log REFUND_FAILED — FLAG #4              |
+| Assign After Event        | Event time validation — FLAG #7                     |
+| Retry Storm (non-final)   | ACK 200 tanpa mutate — FLAG #7                      |
+
+8.2 HEADERS
+────────────────────────────────────────────────────────────────────────────────
+
+  | Endpoint                          | Headers Required                          |
+  |-----------------------------------|-------------------------------------------|
+  | POST /bookings/{id}/payments      | Authorization + X-Idempotency-Key         |
+  | GET /bookings/{id}/status         | Authorization                             |
+  | POST /payments/bulk/assign        | Authorization + X-Idempotency-Key         |
+  | POST /webhook/payment             | X-Gateway-Signature (primary) OR body     |
+
+8.3 WEBHOOK SIGNATURE (FLAG #6 DETAIL)
+────────────────────────────────────────────────────────────────────────────────
+
+  Foundation internal conflict:
+    - API_CONTRACT v1.2 §9.5 → signature di BODY
+    - SECURITY_SPEC v1.4 §9.1 → signature di HEADER (X-Gateway-Signature)
+
+  Resolution (defensive, zero-drift):
+    - Adapter VALIDATE using DUAL SOURCE:
+        a. PRIMARY: header "X-Gateway-Signature"
+        b. FALLBACK: body field "signature"
+    - If NEITHER present → 401
+    - Formula spesifik per provider (Midtrans SHA512) di adapter
+
+8.4 IDEMPOTENCY (FLAG #2 DETAIL)
+────────────────────────────────────────────────────────────────────────────────
+
+  - Hash: sha256(client_key + ":" + user_id + ":" + booking_id)
+  - L1: Redis idempotency:payment:{hash}, TTL 24h
+  - L2: Postgres payment_obligations.idempotency_key UNIQUE
+  - Race-safe: Redis SET NX + Postgres UNIQUE
+
+8.5 RATE LIMITING
+────────────────────────────────────────────────────────────────────────────────
+
+  | Endpoint                          | Limit         | Scope   |
+  |-----------------------------------|---------------|---------|
+  | POST /bookings/{id}/payments      | 30 req/min    | User    |
+  | GET /bookings/{id}/status         | 100 req/min   | User    |
+  | POST /payments/bulk/assign        | 30 req/min    | User    |
+  | POST /webhook/payment             | Unlimited     | Trusted |
+
+8.6 HEADER SANITIZATION
+────────────────────────────────────────────────────────────────────────────────
+
+  - Authorization, X-Idempotency-Key, X-Gateway-Signature → [REDACTED]
+  - Verify via grep
+
+8.7 WEBHOOK NON-FINAL STATUS (FLAG #7 DETAIL)
+────────────────────────────────────────────────────────────────────────────────
+
+  Status categories dari Midtrans:
+    - FINAL SUCCESS: settlement, capture → UPDATE PAID
+    - FINAL FAIL: deny, cancel, expire → UPDATE FAILED
+    - TRANSITIONAL: pending, challenge → ACK 200, NO mutate
+
+  Rationale:
+    - Prevent Gateway retry storm (Midtrans akan retry jika kita return non-200)
+    - Preserve state untuk status final
+    - Reconciliation worker akan resolve nanti jika stuck di PENDING
+
+8.8 ADMIN_AUDIT LOGGING
+────────────────────────────────────────────────────────────────────────────────
+
+  - Force release seat (rollback)
+  - Refund failed log (FLAG #4 — REFUND_FAILED_RETRY_EXHAUSTED)
+  - Manual paid reconciliation
+  - admin_id = SYSTEM_USER_UUID
+
+================================================================================
+SECTION 9 — DEFINITION OF DONE (DoD)
+================================================================================
+
+9.1 CHECKLIST KELULUSAN FASE
+────────────────────────────────────────────────────────────────────────────────
+
+Code:
+  [ ] internal/payment/ folder lengkap (8 files)
+  [ ] internal/worker/ folder lengkap (2 files)
+  [ ] MidtransPaymentAdapter + MockPaymentAdapter
+  [ ] Signature validation DUAL SOURCE
+  [ ] Webhook non-final status handling
+  [ ] Idempotency L1+L2 works
+  [ ] Router wiring: 3 protected + 1 webhook
+  [ ] 2 workers registered
+  [ ] Event time validation on bulk assign
+  [ ] BookingExpiryWorker consumes (NOT emit)
+
+Tests:
+  [ ] Unit test coverage ≥ 90% (10 tests)
+  [ ] Integration tests pass (11/11)
+  [ ] API tests pass (~16 cases)
+  [ ] Webhook signature dual-source + non-final (5/5)
+  [ ] Partial timeout scenario verified
+  [ ] Bulk assign atomic + event validation verified
+  [ ] Refund failure retry + log verified
+  [ ] Status IDOR verified
+  [ ] CI pipeline green
+
+Security:
+  [ ] Zero tokens in logs
+  [ ] Signature validation (header + body)
+  [ ] Idempotency L1+L2
+  [ ] RLS enforced
+  [ ] Ownership check GET /status
+  [ ] admin_actions logged
+  [ ] Non-final webhook no-mutate
+
+Documentation:
+  [ ] docs/SPLIT_PAY_MODULE.md
+  [ ] docs/WEBHOOK_SECURITY.md
+  [ ] docs/IDEMPOTENCY.md
+  [ ] postman_collection.json
+
+9.2 ROLLBACK POINT
+────────────────────────────────────────────────────────────────────────────────
+
+Kalau FASE 4 gagal:
+  - Semua work di branch `feature/fase-4-split-pay`
+  - `develop` tetap stable (FASE 3 state)
+  - Rollback = hapus branch
+  - Redis keys auto-expire (24h)
+
+Setelah FASE 4 selesai:
+  - Merge → `develop` → `main`
+  - Tag: `v0.4.0-split-pay`
+  - FASE 5 bisa dimulai
+
+9.3 SIGN-OFF
+────────────────────────────────────────────────────────────────────────────────
+
+  QA/Verifier:       M. Arif Aulia
+  Date Completed:    [___]
+  Ready for FASE 5:  [ ] YES  [ ] NO
+
+================================================================================
+SECTION 10 — NOTES & REFERENCES
+================================================================================
+
+10.1 NOTES (2 FLAGS APPROVED + 1 TECHNICAL NOTE)
+────────────────────────────────────────────────────────────────────────────────
+
+FLAG #1 — Webhook Signature + Payment Gateway Provider (APPROVED):
+  - Algoritma: HMAC-SHA256 / Midtrans SHA512 (adapter)
+  - Key: env var PAYMENT_GATEWAY_WEBHOOK_SECRET
+  - Provider: Midtrans Sandbox + adapter pattern
+  - Dev mode: TEST_MODE=true → MockPaymentAdapter bypass + warning
+
+FLAG #2 — Idempotency L2 Storage (APPROVED):
+  - Hash: sha256(client_key + ":" + user_id + ":" + booking_id)
+  - Stored: payment_obligations.idempotency_key (UNIQUE)
+  - L1 (Redis TTL 24h) + L2 (Postgres UNIQUE)
+
+10.2 NOTES POST-GEMINI REVIEW #1 (v1.1)
+────────────────────────────────────────────────────────────────────────────────
+
+Fix #1 — Trigger BULK mode source:
+  BULK reads from bookings.seat_positions (JSONB), NOT 
+  payment_obligations.seat_position.
+
+Fix #2 — Task count: 24 tasks, ~42 jam.
+
+Fix #3 — IDOR GET /status:
+  Ownership check (owner OR member) → else 403.
+
+Fix #4 — Refund failure:
+  Retry 3x + log REFUND_FAILED_RETRY_EXHAUSTED.
+
+Fix #5 — bit_index = seat_pos - 1 (0-based).
+
+Fix #6 — Signature dual-source (header + body).
+
+10.3 NOTES POST-GEMINI REVIEW #2 (v1.2)
+────────────────────────────────────────────────────────────────────────────────
+
+Fix #7a — Bulk Assign event time validation:
+  Sebelum assign, validasi event_start_at > NOW(). Jika sudah mulai → 
+  422 EVENT_ALREADY_STARTED. Combine event_date + event_start_time 
+  dari tabel events.
+
+Fix #7b — Webhook non-final status handling:
+  PENDING / CHALLENGE → ACK 200 tanpa memutasi DB (prevent retry storm).
+  Hanya final status (SUCCESS/DENY/CANCEL/EXPIRE) yang mutate.
+
+Fix #7c — Delayed message clarification:
+  Message `release_seat_check` di-emit oleh FASE 3 (LockSeats service) 
+  saat booking dibuat. FASE 4 TIDAK emit ulang — murni consumer di 
+  BookingExpiryWorker.
+
+10.4 NOTES UMUM
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 4 = fitur keuangan PERTAMA.
+
+- Payment Gateway adalah SOURCE OF TRUTH.
+
+- NO WALLET / LEDGER.
+
+- Idempotent Lazy-Check Pattern: delayed message TIDAK PERNAH dibatalkan.
+
+- Trigger check_booking_payment_complete = auto-generate tickets.
+  BULK: bookings.seat_positions. SPLIT: payment_obligations.seat_position.
+
+- Refund retry 3x + fallback log REFUND_FAILED.
+
+- Bulk assign ATOMIC + event time validation.
+
+- Webhook non-final → ACK 200 tanpa mutate.
+
+- Signature dual-source: header dulu, fallback body.
+
+- Midtrans formula (SHA512) di adapter.
+
+- Frontend screens (5.1, 5.2, 5.3) skeleton only.
+
+10.5 CROSS-REFERENCE FOUNDATION
+────────────────────────────────────────────────────────────────────────────────
+
+| Foundation Doc         | Section Relevan                                |
+|------------------------|------------------------------------------------|
+| PRD v6.0               | §F003                                          |
+| DATABASE_SCHEMA v2.9   | payment_obligations, tickets, trigger, RLS     |
+| LOGIC_FLOW v1.4        | §4, §9.1                                       |
+| HALAMAN v1.1           | §5.1, §5.2, §5.3                               |
+| TDD v1.10              | §6.3                                           |
+| API_CONTRACT v1.2      | §9.2-9.5                                       |
+| SECURITY_SPEC v1.4     | §6.1, §6.2                                     |
+| DRP v1.2               | §5.6 Playbook #5                               |
+| STP v1.1               | UT-PAY-001..010, IT-PAY-001..005, IT-ASSIGN, IT-REFUND, IT-WEBHOOK |
+
+10.6 VERSION HISTORY
+────────────────────────────────────────────────────────────────────────────────
+
+| Version  | Date       | Author       | Changes                                          |
+|----------|------------|--------------|--------------------------------------------------|
+| 1.0-FINAL| 2026-09-11 | M. Arif Aulia| Initial ROADMAP FASE 4.                          |
+| 1.1-FINAL| 2026-09-11 | M. Arif Aulia| Post-Gemini review #1: Fix #1-#6 (BULK trigger    |
+|          |            |              | source, task count, IDOR, refund retry, bit       |
+|          |            |              | index, signature dual-source).                    |
+| 1.2-FINAL| 2026-09-11 | M. Arif Aulia| **Post-Gemini review #2:** 1) Fix #7a: Bulk       |
+|          |            |              | Assign event time validation (422 EVENT_          |
+|          |            |              | ALREADY_STARTED). 2) Fix #7b: Webhook non-final  |
+|          |            |              | status (PENDING/CHALLENGE) → ACK 200 no mutate.  |
+|          |            |              | 3) Fix #7c: Delayed message clarification        |
+|          |            |              | (FASE 3 emits, FASE 4 consumes only).            |
+
+================================================================================
+📋 FASE 4 SYNC CHECKLIST (100% COMPLIANCE)
+================================================================================
+
+✅ BLUEPRINT ROADMAP v1.0-FINAL Sync:
+  - FASE 4 = F003 Split-Pay Engine ✓
+  - Estimasi 1.5 minggu ✓
+
+✅ PRD v6.0 Sync:
+  - F003 full spec ✓
+  - Out of Scope respected ✓
+
+✅ DATABASE_SCHEMA v2.9 Sync:
+  - payment_obligations + tickets + trigger + RLS ✓
+  - Trigger BULK reads bookings.seat_positions ✓
+  - No new tables/columns ✓
+
+✅ LOGIC_FLOW v1.4 Sync:
+  - §4 F003 flow ✓
+  - §9.1 Idempotency ✓
+  - bit_index = seat_pos - 1 ✓
+
+✅ HALAMAN v1.1 Sync:
+  - §5.1, §5.2, §5.3 ✓
+  - "7 days" hint clarified (backend: until event start) ✓
+
+✅ TDD v1.10 Sync:
+  - §6.3 pseudocode ✓
+  - Adapter pattern ✓
+
+✅ API_CONTRACT v1.2 Sync:
+  - 4 endpoints 1:1 ✓
+  - New error: 422 EVENT_ALREADY_STARTED ✓ (consistent with 422 pattern)
+  - No ghost endpoints ✓
+
+✅ SECURITY_SPEC v1.4 Sync:
+  - §6.1 Idempotency L1+L2 ✓
+  - §6.2 Payment flow ✓
+  - Signature dual-source ✓
+  - Webhook non-final handling ✓
+
+✅ DRP v1.2 Sync:
+  - Playbook #5, #2, #3 ✓
+
+✅ STP v1.1 Sync:
+  - UT-PAY-001..010 ✓
+  - IT-PAY-001..005 + IT-IDEMPOTENCY + IT-ASSIGN-001..003 +
+    IT-REFUND-001 + IT-WEBHOOK-001 ✓
+  - Coverage ≥ 90% ✓
+
+✅ Anti-Drift Guardrails G1-G8:
+  - G1 Traceability ✓
+  - G2 Scope Freeze ✓
+  - G3 No Wallet/Ledger ✓
+  - G4 ENUM Consistency ✓
+  - G5 Error Code Consistency (422 EVENT_ALREADY_STARTED consistent 
+       dengan 422 pattern) ✓
+  - G6 Header Consistency ✓
+  - G7 Self-Contained ✓
+  - G8 Acceptance Criteria ✓
+
+✅ POST-GEMINI REVIEW #2 FIXES:
+  - Fix #7a: Bulk Assign event time validation ✓
+  - Fix #7b: Webhook non-final status handling ✓
+  - Fix #7c: Delayed message clarification (FASE 3 producer, FASE 4 consumer) ✓
+
+================================================================================
+END OF ROADMAP FASE (4) v1.2-FINAL
+================================================================================
+
+✅ 100% READY TO EXECUTE
+✅ Self-contained
+✅ 24 tasks across 9 epics, est. ~43 jam (~1.5 minggu)
+✅ 23 functional AC + 8 non-functional AC
+✅ 14 risks identified with mitigations
+✅ Rollback point defined
+✅ Zero drift (no wallet/ledger, no ghost endpoints, no new columns)
+✅ 4 endpoints 1:1 dengan API_CONTRACT v1.2 §9.2-9.5
+✅ Post-Gemini reviews #1 & #2 applied
+
+Last Updated: 2026-09-11 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED.

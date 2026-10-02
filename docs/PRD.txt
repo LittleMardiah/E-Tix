@@ -1,0 +1,805 @@
+# PRD (Product Requirement Document) - E-TIX FLASH
+**For Solo Developer - Production Grade**
+
+---
+
+## 📌 HEADER & METADATA
+
+| Field | Value |
+|-------|-------|
+| **Project Name** | E-Tix Flash (Smart, Fair & Scalp-Proof Ticketing Platform) |
+| **Document Version** | v6.0-FINAL |
+| **Created Date** | 2026-09-06 |
+| **Last Updated** | 2026-09-07 |
+| **Author** | M. Arif Aulia |
+| **Status** | LOCKED - Approved for Development |
+
+---
+
+## 📋 EXECUTIVE SUMMARY
+
+**Problem Statement**
+Sistem tiket konser dan acara besar saat ini kerap mengalami server crash akibat high concurrency serta dikuasai oleh scalper bot (calo) yang memborong ribuan tiket dalam hitungan detik. Selain itu, pembelian tiket kelompok sering gagal karena ketiadaan mekanisme atomic locking untuk banyak kursi sekaligus.
+
+**Solution Overview**
+E-Tix Flash adalah platform pemesanan tiket berbasis Golang yang menggunakan Behavioral Ingress Engine untuk menyaring bot, In-Memory Bitmask Group Locking untuk pemesanan denah kursi berdampingan secara atomic, serta Controlled Resale Market dengan price-cap resmi.
+
+**Value Proposition**
+Berbeda dari sistem FCFS (First-Come, First-Served) standar, E-Tix Flash menjamin alokasi tiket yang adil bagi manusia asli (anti-bot), mencegah penjualan calo di pihak ketiga lewat Dynamic HMAC QR, serta memberikan fleksibilitas bayar terpisah (split-pay) untuk grup.
+
+**Target Users**
+- **Event Organizer (EO) / Promotor**: Pihak yang ingin menjual tiket tanpa gangguan bot dan menjaga reputasi acara.
+- **End Customer / Fans**: Pembeli tiket individu maupun kelompok yang membutuhkan akses antrean adil dan pemesanan kursi berdampingan.
+
+---
+
+## 🎯 OBJECTIVES & SUCCESS CRITERIA
+
+### Primary Objectives
+- Menahan dan memfilter lonjakan trafik (peak traffic) hingga puluhan ribu requests per second (RPS) tanpa membuat basis data utama tumbang.
+- Memblokir minimal 95% scalper bot sebelum menyentuh transactional engine.
+- Menyediakan mekanisme penguncian kursi grup secara atomic (N-kursi sekaligus) dengan latensi pemrosesan di bawah 50 milidetik.
+- Memberikan nilai tambah bisnis pasca-acara melalui analytics dan insight untuk EO.
+- Membangun sistem yang maintainable dan siap dievolusi untuk skala lebih besar.
+
+### Success Metrics (Must be measurable)
+| Metric | Target | Acceptance |
+|--------|--------|-----------|
+| API Latency (p95) | < 100 ms | Terukur via Prometheus & Grafana saat beban puncak |
+| Bot Filtering Rate | > 95% | Pengujian simulasi otomatis (load testing + bot script) |
+| Group Lock Success Rate | 100% (No Race Condition) | Tidak ada double-booking pada kursi yang sama |
+| System Uptime | 99.9% | Terpantau selama periode flash sale berlangsung |
+| Post-Event Report Generation | < 1 hour after event ends | Terukur dari waktu event selesai hingga report tersedia |
+| Loyalty Fan Retention | > 60% repeat purchase | Terukur dari data riwayat pembelian |
+
+---
+
+## 📦 SCOPE DEFINITION
+
+### In Scope (V1.0 MVP - MUST have - ALL FEATURES)
+| Feature ID | Feature Name | Priority | Dependency |
+|------------|-------------|----------|------------|
+| F001 | Behavioral Ingress & Fan-Score Queueing (with Priority Tier) | P0 | None |
+| F002 | Bitmask Multi-Seat Atomic Locking (Partitioned per Section) | P0 | F001 |
+| F003 | Group Split-Pay Execution Engine (Hybrid Mode: Split + Bulk) | P0 | F002 |
+| F004 | Dynamic HMAC QR + Offline Fallback PIN | P0 | F003 |
+| F004b | Gate Analytics & Post-Event Intelligence (with Feedback Loop) | P0 | F004 |
+| F005 | Controlled Secondary Resale Market | P0 | F003, F004 |
+| F006 | Admin Emergency & Reconciliation Tools | P0 | F001-F005 |
+
+*Semua fitur di atas adalah P0 (Critical for MVP). Tidak ada fitur yang ditunda ke V1.1.*
+
+### Out of Scope (Explicitly excluded)
+- Fitur live streaming konser di dalam aplikasi.
+- Manajemen logistik fisik atau pengiriman merchandise cetak.
+- Internal wallet/ledger system (semua transaksi keuangan via Payment Gateway).
+- AI-Driven recommendations (cukup pakai rule-based untuk V1.0).
+
+**Rationale:** Fokus V1.0 adalah membangun sistem yang **utuh dan siap demo** dengan semua fitur yang menunjukkan value proposition lengkap. Tidak ada fitur yang ditunda karena proyek ini adalah **portfolio project** yang harus menunjukkan kemampuan end-to-end.
+
+---
+
+## 👥 USER STORIES & ACCEPTANCE CRITERIA
+
+### User Story 1 (F002 & F003)
+AS A Concert Fan
+I WANT TO buy 4 adjacent seats for my group during a flash sale
+SO THAT my friends and I can sit together without losing seats to others mid-checkout
+
+Acceptance Criteria:
+
+□ System highlights and locks 4 contiguous seats atomically in < 50ms.
+□ Locked seats show status PENDING_SPLIT_PAY with a 3-minute TTL countdown.
+□ System provides TWO payment modes: Split-Pay (each pays own) or Bulk (leader pays all).
+□ Seats are instantly released if any payment fails after TTL expires.
+Estimated Effort: L
+Priority: P0
+
+text
+
+### User Story 2 (F001)
+AS AN Event Organizer
+I WANT TO prevent scalpers from using automated bots to buy out tickets
+SO THAT real fans get a fair chance to buy tickets at official prices
+
+Acceptance Criteria:
+
+□ System evaluates user behavior using a combination of pre-computed and real-time analysis.
+□ Suspected bot requests are redirected to a secondary delayed queue or CAPTCHA.
+□ Legitimate high-score users receive a signed Queue Token to enter checkout.
+□ Loyal fans (high purchase history) get priority access in the waiting room.
+Estimated Effort: M
+Priority: P0
+
+text
+
+### User Story 3 (F005)
+AS A Ticket Holder who cannot attend
+I WANT TO resell my ticket safely on the official platform
+SO THAT I can recover my money without violating anti-scalping terms
+
+Acceptance Criteria:
+
+□ Resale price is automatically capped at max +10% of the original face value.
+□ Ticket ownership is transferred safely with old Dynamic QR invalidated.
+□ Funds are routed to the seller upon completion of the resale transaction.
+Estimated Effort: M
+Priority: P0
+
+text
+
+### User Story 4 (F004)
+AS A Concert Goer whose phone battery dies at the venue
+I WANT TO still be able to enter using an alternative method
+SO THAT I don't get locked out despite having a valid ticket
+
+Acceptance Criteria:
+
+□ System provides a Static Fallback PIN (12-digit) sent via SMS/Email.
+□ PIN is valid for 1-time use and lasts the entire event day.
+□ Gate staff can manually enter the PIN in the offline scanner app.
+□ PIN is immediately invalidated after first use.
+Estimated Effort: S
+Priority: P0
+
+text
+
+### User Story 5 (F006)
+AS AN Event Organizer who accidentally set the wrong ticket price
+I WANT TO cancel all affected transactions and issue refunds quickly
+SO THAT I can correct the error without damaging my reputation
+
+Acceptance Criteria:
+
+□ Admin can perform bulk cancellation for a specific event.
+□ System automatically refunds all affected buyers via payment gateway.
+□ All admin actions are logged with timestamp and reason for audit.
+□ Buyers receive notification about the cancellation and refund.
+Estimated Effort: M
+Priority: P0
+
+text
+
+### User Story 6 (F004b)
+AS AN Event Organizer
+I WANT TO know how many fans actually attended, when they arrived, and which gates were busiest
+SO THAT I can optimize staffing, layout, and marketing for future events
+
+Acceptance Criteria:
+
+□ System records every QR scan with timestamp and gate ID.
+□ System generates a Post-Event Report within 1 hour after the event ends.
+□ Report includes: attendance rate, no-show rate, peak entry time, gate utilization.
+□ EO can export report as CSV/Excel.
+□ System learns from data to provide auto-recommendations for future events.
+Estimated Effort: M
+Priority: P0
+
+text
+
+---
+
+## 📐 FUNCTIONAL REQUIREMENTS (Detailed)
+
+### Requirement F001: Behavioral Ingress & Fan-Score Queueing (with Priority Tier)
+**Description:** Menangani ingress traffic saat flash sale dengan memisahkan beban kerja menjadi dua tahap (synchronous cepat dan asynchronous mendalam) untuk menjaga latency tetap rendah. Menggunakan pre-computed base score untuk menghindari cold-start pada request pertama pengguna. Memberikan akses prioritas kepada fans loyal.
+
+**Inputs:**
+- User ID (UUID string)
+- Device Fingerprint (encrypted string)
+- Access Metadata (request interval, IP, TLS parameters)
+
+**Process:**
+
+**Pra-Flash Sale (Pre-Computation):**
+- Sistem menghitung Base Score untuk setiap user berdasarkan data statis:
+  - Umur akun (semakin tua, semakin tinggi skor)
+  - Status verifikasi (email + phone terverifikasi memberikan skor tambahan)
+  - **Loyalty Score:** Riwayat pembelian tiket sebelumnya
+    - Pernah beli 1x → +10 poin
+    - Pernah beli 3x → +30 poin
+    - Pernah beli 5x+ → +50 poin
+- Base Score disimpan di cache dengan TTL hingga acara selesai.
+
+**Stage 1 (Synchronous - Target < 1ms):** Berjalan di API Gateway/Golang Middleware.
+- Rate Limiter memeriksa limit akses per IP/User ID.
+- Validasi header dasar (User-Agent, Accept-Language).
+- Cek blacklist IP yang di-cache di memory.
+- Baca Base Score dari cache sebagai nilai awal Fan Score.
+
+**Stage 2 (Asynchronous - Background Worker):** Jika lolos Stage 1, metadata dikirim ke Message Broker.
+- Behavioral Scorer Worker menghitung Dynamic Score berdasarkan pola request real-time (interval antar request, pola klik, device fingerprint).
+- Dynamic Score digabungkan dengan Base Score untuk menghasilkan Final Fan Score.
+- Hasil akhir (Final Fan Score) disimpan di cache dengan TTL yang diperpanjang.
+
+**Priority Tier System (Waiting Room):**
+- **Tier 1 (VIP Fans):** Skor > 90 → Priority access (kelompok pertama yang dilayani).
+- **Tier 2 (Regular Fans):** Skor 70-90 → Access normal.
+- **Tier 3 (New Users / Low Score):** Skor < 70 → Access setelah Tier 1 & 2 selesai.
+- EO dapat melihat dashboard real-time: "Berapa banyak fans setia yang berhasil membeli tiket?"
+
+**Outputs:**
+- Signed Queue Token (JWT dengan payload expiry & priority tier)
+- Error Response / HTTP 429 Too Many Requests (jika melampaui rate limit)
+- Waiting Room dengan visualisasi tier
+
+**Edge Cases:**
+- *Traffic Spike Extreme (>50,000 RPS)* → Ingress mengaktifkan Circuit Breaker dan menahan request di Virtual Waiting Room via WebSocket Cluster.
+- *User baru tanpa Base Score* → Gunakan nilai default (skor 50) + pantau perilaku di Stage 2.
+- *Cache Cluster Failure* → Sistem masuk ke Degraded Mode (lihat NFR Reliability).
+- *Fans setia yang terlambat masuk waiting room* → Tetap mendapat prioritas meskipun datang belakangan (selama masih dalam waktu flash sale).
+
+---
+
+### Requirement F002: Bitmask Multi-Seat Atomic Locking
+**Description:** Mengunci N-kursi berurutan secara atomik dalam denah panggung menggunakan operasi bitwise di memori. Denah kursi dipartisi per section untuk mengurangi konflik, dan mapping kursi dibuat immutable setelah layout diterbitkan.
+
+**Inputs:**
+- Event ID (UUID)
+- Section ID (string)
+- Seat IDs (Array of Integers / Bit Positions)
+- User Queue Token (Valid JWT)
+
+**Process:**
+1. Engine memuat Bitmask Matrix dari cache berdasarkan Section ID (setiap section adalah key terpisah).
+2. Sistem menjalankan operasi bitwise untuk memeriksa ketersediaan N kursi secara simultan dalam satu operasi atomic.
+3. Jika seluruh kursi tersedia (bernilai 0), sistem mengubah status kursi menjadi terkunci (bernilai 1) dan menyimpan pemetaan ID Pengguna dengan TTL 180 detik.
+4. Sistem mengirim event payload ke Message Broker untuk memicu proses Split-Pay (F003).
+
+**Catatan Kritis - Immutability:**
+> Pemetaan Seat ID ↔ Bit Position Offset bersifat immutable setelah section layout diterbitkan. Setiap perubahan layout (penambahan/penghapusan kursi) WAJIB membuat versi layout baru dan tidak boleh mengubah mapping yang sudah ada. Hal ini untuk menjaga integritas operasi bitwise di tengah acara berlangsung.
+
+**Outputs:**
+- Booking Reference ID
+- Seat Allocation Map (JSON response)
+- Expiry Timestamp (Epoch ISO8601)
+
+**Edge Cases:**
+- *Partial Seat Lock Conflict* (1 dari 4 kursi tiba-tiba diambil pengguna lain) → Sistem langsung membatalkan lock untuk seluruh N kursi (Rollback All) dan mengembalikan pesan "Seats No Longer Available".
+- *Cache Cluster Failure* → Sistem masuk ke Degraded Mode (lihat NFR Reliability).
+
+---
+
+### Requirement F003: Group Split-Pay Execution Engine (Hybrid Mode)
+**Description:** Mengelola pembayaran terpisah untuk grup secara event-driven dengan mekanisme fallback otomatis jika batas waktu 3 menit habis. Menyediakan dua mode pembayaran untuk fleksibilitas pengguna.
+
+**Inputs:**
+- Booking Reference ID
+- Array of User IDs (pembeli dalam grup)
+- Amount per user (decimal)
+- Payment Method (VA, E-Wallet, Kartu Kredit)
+- Payment Mode: `SPLIT` atau `BULK`
+
+**Process:**
+
+**Mode 1: Split-Pay (Individual)**
+1. Sistem membuat Payment Obligation per user dan menyimpan status di cache dengan TTL 3 menit.
+2. Sistem mengirim link pembayaran unik ke setiap anggota grup (via push notifikasi / email / SMS).
+3. Setiap anggota membayar bagiannya sendiri melalui link yang diterima.
+
+**Mode 2: Bulk Payment (Leader Pays All)**
+1. Satu anggota (pemimpin grup) membayar total seluruh tiket sekaligus.
+2. Sistem langsung mengubah status booking menjadi CONFIRMED tanpa menunggu anggota lain.
+3. Tiket tetap dikirim ke seluruh anggota grup, namun kepemilikan awal berada di tangan Leader.
+
+**Aturan Kepemilikan Tiket untuk Bulk Mode:**
+- Secara default, tiket dimiliki oleh Leader (pembayar).
+- Leader memiliki opsi untuk **"Assign Ticket"** ke anggota grup melalui dashboard.
+- Setelah di-assign, tiket menjadi milik anggota tersebut dan anggota dapat mengelola tiketnya sendiri (termasuk menjual via F005).
+
+**Event-Driven Monitoring (Tanpa Polling untuk Kedua Mode):**
+
+**Skenario Sukses (Split Mode):**
+- Payment Gateway mengirim Webhook ke sistem.
+- Sistem menerima webhook, meng-update status user menjadi PAID.
+- Sistem mengecek apakah semua anggota sudah lunas. Jika iya, status booking berubah menjadi CONFIRMED dan kursi final.
+- Webhook bersifat idempotent; jika webhook duplikat datang, sistem mengabaikannya.
+
+**Skenario Gagal/Timeout (Idempotent Lazy-Check Pattern):**
+- Saat lock pertama kali dibuat, sistem mengirim pesan ke Message Broker dengan delay tepat 3 menit (pesan ini tidak pernah dibatalkan).
+- Ketika pesan sampai di T+3 menit, worker melakukan lazy check:
+  - Cek status booking di cache/database.
+  - Jika status sudah CONFIRMED → worker mengabaikan pesan (no-op).
+  - Jika status masih PENDING_SPLIT_PAY → worker menjalankan rollback atomik (melepas semua kursi grup), mengirim notifikasi ke semua anggota, dan menginisiasi refund otomatis ke user yang sudah bayar.
+
+**Webhook Reconciliation Worker (Fallback untuk Webhook Hilang):**
+- Worker berjalan setiap 10 menit untuk memeriksa transaksi dengan status PENDING yang sudah melewati TTL 3 menit.
+- Worker menghubungi Payment Gateway via API untuk mengecek status pembayaran secara langsung.
+- Jika Payment Gateway menyatakan SUDAH BAYAR, worker meng-update status menjadi PAID dan membatalkan refund (jika belum dieksekusi).
+- Jika Payment Gateway menyatakan BELUM BAYAR, worker menganggap rollback sudah benar.
+
+**Outputs:**
+- Payment Status per user (PENDING / PAID / EXPIRED)
+- Final Confirmation (Booking ID, QR Code payload, Static Fallback PIN)
+
+**Edge Cases:**
+- *Partial payment (1 dari 4 bayar)* → Saat TTL habis, semua kursi di-rollback, dan sistem menginisiasi refund otomatis ke user yang sudah bayar (via idempotency key).
+- *Double payment* → Idempotency key mencegah duplikasi transaksi.
+- *Webhook timeout* → Sistem melakukan retry dengan exponential backoff (3x), jika gagal → Webhook Reconciliation Worker mengambil alih.
+- *Bulk Mode + Assign Ticket* → Leader dapat mengalihkan kepemilikan tiket ke anggota grup kapan saja sebelum acara dimulai.
+
+---
+
+### Requirement F004: Dynamic HMAC QR + Offline Fallback PIN
+**Description:** Membuat kode QR dinamis yang selalu berubah setiap 30 detik untuk mencegah pencurian atau penggandaan tiket fisik/tangkapan layar. Menyediakan Static Fallback PIN untuk situasi darurat (HP mati, sinyal buruk).
+
+**Inputs:**
+- Ticket ID (UUID)
+- Current Owner User ID (UUID)
+- Secret System Key (Secure Environment Variable)
+
+**Process:**
+
+**Primary Method: Dynamic HMAC QR**
+1. Sistem memuat stempel waktu (timestamp) server terbaru (dalam blok 30 detik).
+2. Sistem menghitung HMAC-SHA256 dari gabungan `TicketID + OwnerID + Timestamp Block`.
+3. Sistem menampilkan string terenkripsi pada antarmuka aplikasi pembeli sebagai kode QR.
+4. QR Code berganti setiap 30 detik. Screenshot/foto tidak valid karena timestamp akan kedaluwarsa.
+
+**Secondary Method: Static Fallback PIN (Situasi Darurat)**
+1. Saat transaksi CONFIRMED, sistem juga mengirimkan **Static Fallback PIN** (12 digit alfanumerik) via SMS dan Email ke setiap pemegang tiket.
+2. PIN ini valid **sepanjang hari acara** dan hanya bisa digunakan **1 kali**.
+3. PIN dikirim terpisah dari QR Code dan tidak bergantung pada koneksi internet.
+4. Petugas gate dapat memasukkan PIN secara manual di aplikasi scanner offline jika QR Code tidak dapat di-scan (HP mati, layar pecah, sinyal hilang).
+5. Setelah PIN digunakan, sistem langsung menandainya sebagai `USED` dan tidak bisa dipakai lagi.
+
+**Outputs:**
+- Rendered QR Code Image / Encrypted String Payload
+- Static Fallback PIN (12-digit alfanumerik) via SMS/Email
+
+**Edge Cases:**
+- *Offline Event Gate Validation* → Aplikasi pemindai gatekeeper menyimpan public key untuk verifikasi signature secara lokal tanpa bergantung pada koneksi internet penuh.
+- *HP Mati Total* → Pengguna dapat memberikan PIN ke petugas gate untuk verifikasi manual.
+- *PIN Bocor* → Karena PIN hanya 1 kali pakai, kebocoran tidak berbahaya. Pemilik asli tetap bisa masuk dengan Dynamic QR sebagai primary method.
+
+---
+
+### Requirement F004b: Gate Analytics, Post-Event Intelligence & Feedback Loop
+**Description:** Memanfaatkan data scan QR di pintu masuk untuk memberikan insight berharga kepada EO setelah acara selesai. Sistem juga belajar dari data untuk memberikan rekomendasi dan otomatisasi konfigurasi.
+
+**Inputs:**
+- Ticket ID (UUID)
+- Scan Timestamp (timestamp)
+- Gate ID (string)
+- Scanner Device ID (UUID)
+
+**Process:**
+
+**A. Data Collection & Post-Event Report**
+1. Setiap kali QR Code di-scan di gate, sistem mencatat:
+   - Waktu scan (akurat hingga detik).
+   - Gate mana (Gate A, B, C).
+   - Scanner device ID (untuk tracking petugas).
+   - Status scan (VALID / INVALID / EXPIRED / ALREADY_USED).
+2. Setelah acara selesai, sistem menghasilkan **Post-Event Report** untuk EO:
+   - **Total Attendance:** Berapa tiket yang benar-benar digunakan.
+   - **No-Show Rate:** Persentase tiket yang tidak digunakan.
+   - **Peak Entry Time:** Jam berapa fans paling ramai datang (untuk planning staffing).
+   - **Gate Utilization:** Gate mana yang paling padat (untuk perbaikan layout).
+   - **Repeat Customer Rate:** Berapa persen pembeli yang pernah beli tiket sebelumnya (untuk loyalty program).
+   - **Scan Attempts Analytics:** Berapa banyak percobaan scan invalid (indikasi percobaan fraud).
+3. EO dapat mengakses dashboard dan mengekspor report sebagai CSV/Excel.
+
+**B. Feedback Loop & Auto-Configuration (Learning System)**
+1. **Gate Optimization:** Dari data gate utilization historis, sistem merekomendasikan jumlah petugas per gate untuk event berikutnya.
+2. **Bot Pattern Learning:** Sistem mendeteksi pola IP/device fingerprint yang sering muncul di percobaan invalid dan otomatis mem-blacklist-nya (dengan notifikasi ke admin).
+3. **Ticket Pricing Insight:** Dari data no-show rate dan resale activity, sistem memberikan rekomendasi harga untuk event berikutnya.
+4. **Staffing Recommendation:** Dari data peak entry time, sistem merekomendasikan jam shift petugas yang optimal.
+
+**Outputs:**
+- Post-Event Dashboard (real-time selama acara berlangsung).
+- Post-Event Report (PDF/CSV/Excel) dalam 1 jam setelah acara selesai.
+- Insight Recommendations untuk event berikutnya.
+- Auto-blacklist IP/device yang mencurigakan.
+
+**Edge Cases:**
+- *Multiple scan attempts (sama tiket)* → Sistem mencatat setiap percobaan (valid atau invalid) untuk mendeteksi percobaan fraud.
+- *Offline scan* → Data tetap tersimpan di scanner offline dan disinkronisasi saat online.
+- *No internet di venue* → Scanner tetap bekerja offline, data disinkronisasi saat koneksi pulih.
+- *Belum cukup data historis* → Rekomendasi menggunakan rule-based default (misal: 2 petugas per gate).
+
+---
+
+### Requirement F005: Controlled Secondary Resale Market
+**Description:** Memungkinkan pemegang tiket menjual kembali tiketnya di platform resmi dengan price-cap, menggunakan payment gateway sebagai mediator transaksi untuk menghindari kompleksitas internal wallet/ledger.
+
+**Inputs:**
+- Ticket ID (UUID)
+- Seller User ID (UUID)
+- Resale Price (decimal, max +10% face value)
+- Buyer User ID (UUID)
+
+**Process:**
+1. Sistem memvalidasi tiket masih aktif dan belum dipindahtangankan.
+2. Sistem mengunci tiket sementara (status RESALE_PENDING) untuk mencegah double-selling.
+3. **Pembayaran via Payment Gateway:** Buyer melakukan pembayaran sebesar harga resale ke platform melalui payment gateway (VA / E-Wallet / Kartu Kredit).
+4. **Payout ke Seller:** Platform menerima konfirmasi pembayaran dari payment gateway, kemudian mengirimkan dana ke seller melalui payout API dari payment gateway yang sama.
+5. **Transfer Ownership:** Sistem menginvalidasi QR code lama, generate QR code baru untuk buyer, dan mengupdate kepemilikan tiket di database.
+6. **Pencatatan Transaksi:** Sistem mencatat riwayat transaksi resale untuk kepentingan audit.
+
+**Aturan Kepemilikan untuk Resale:**
+- Hanya pemilik tiket (yang namanya terdaftar di sistem) yang dapat menjual.
+- Untuk tiket hasil Bulk Mode yang sudah di-assign ke anggota, anggota tersebut adalah pemilik sah.
+- Untuk tiket Bulk Mode yang belum di-assign, hanya Leader yang dapat menjual.
+
+**Outputs:**
+- New Ticket Ownership Record
+- Resale Transaction Receipt
+- Updated QR Code for Buyer
+
+**Edge Cases:**
+- *Seller membatalkan resale sebelum buyer bayar* → Sistem melepas lock, status kembali ACTIVE.
+- *Buyer gagal bayar* → Sistem melepas lock (tidak ada refund karena belum ada dana masuk).
+- *Resale price melebihi cap (+10%)* → Sistem menolak transaksi (HTTP 422).
+- *Payout API gagal* → Sistem melakukan retry dengan exponential backoff (3x), jika gagal → status transaksi PENDING_PAYOUT dan admin melakukan manual reconciliation via F006.
+
+---
+
+### Requirement F006: Admin Emergency & Reconciliation Tools
+**Description:** Menyediakan tools bagi admin (EO) untuk menangani situasi darurat dan memastikan sistem tetap terkendali.
+
+**Inputs:**
+- Admin User ID (UUID) dengan role khusus
+- Event ID (UUID)
+- Action Type (string)
+
+**Process:**
+
+**A. Bulk Cancellation & Refund (Emergency Price Error)**
+1. Admin mengakses Emergency Dashboard dan memilih event.
+2. Admin mengklik "Cancel All Tickets" dan mengisi alasan.
+3. Sistem menampilkan konfirmasi: "Anda akan membatalkan X tiket dan refund total Rp Y. Lanjutkan?"
+4. Setelah konfirmasi, sistem menjalankan:
+   - Mengubah status semua tiket menjadi CANCELLED.
+   - Mengirim refund request ke Payment Gateway untuk setiap transaksi.
+   - Mengirim notifikasi ke semua pembeli: "Maaf, terjadi kesalahan. Tiket Anda akan di-refund. Mohon maaf."
+   - Mengembalikan semua kursi ke pool (bitmask direset ke 0).
+5. Semua aksi dicatat di tabel `admin_actions` dengan timestamp, admin ID, dan alasan.
+
+**B. Manual Reconciliation (Payout Gagal / Webhook Hilang)**
+1. Admin melihat daftar transaksi dengan status PENDING_PAYOUT atau CONFIRMED yang mencurigakan.
+2. Admin dapat memverifikasi status pembayaran melalui Payment Gateway dashboard.
+3. Admin dapat:
+   - Memaksa update status menjadi PAID (jika sudah bayar tapi webhook hilang).
+   - Memaksa refund (jika terjadi kesalahan double charge).
+   - Mencatat catatan manual untuk audit.
+
+**C. System Health Monitoring (Read-only)**
+1. Admin dapat melihat dashboard real-time:
+   - Jumlah request per detik.
+   - Cache Cluster health (Redis status).
+   - Antrean Message Broker.
+   - Error rate dan latency.
+
+**Outputs:**
+- Bulk Cancellation Confirmation
+- Refund Status Report
+- Audit Log Entry
+
+**Edge Cases:**
+- *Bulk cancellation dilakukan di tengah flash sale* → Sistem harus tetap responsif. Proses refund dilakukan secara asynchronous (background worker).
+- *Refund API gagal* → Retry dengan exponential backoff, jika gagal → status PENDING_REFUND dan admin melakukan manual reconciliation.
+
+---
+
+## ⚙️ NON-FUNCTIONAL REQUIREMENTS (NFR)
+
+### Performance
+- **Response Time:** Pembacaan denah kursi <20 ms, Eksekusi Locking <50 ms (p95).
+- **Page Load:** Frontend Dashboard / Waiting Room <1.5s.
+- **Throughput:** Sanggup menangani minimal 20,000 RPS pada API Gateway.
+
+### Cost Efficiency & Infrastructure Optimization
+| Komponen | Estimasi Biaya/Bulan | Catatan |
+|----------|---------------------|---------|
+| **Golang Backend (Render.com)** | $0 (Free Tier) - $50 (Standard) | Stateless, bisa scale otomatis. Free tier cukup untuk MVP. |
+| **PostgreSQL (Supabase)** | $25 (Free tier) - $100 (Pro) | Free tier cukup untuk 10.000 tiket. |
+| **Redis Cluster (Upstash)** | $50 (Free tier) - $150 (Pro) | Bitmask Locking & Rate Limiting. |
+| **RabbitMQ (CloudAMQP)** | $0 (Free tier) - $50 | Untuk delayed message & Fan Score. |
+| **Total** | **~$50 - $350 / bulan** | **Dapat menangani 1-5 event besar per bulan.** |
+
+**Cost-Per-Ticket Metric:**
+- **Target:** < Rp 500 per tiket (infra cost).
+- **Dengan fee 2.5% dari harga tiket Rp 1.000.000 → Rp 25.000 per tiket.**
+- **Profit margin:** Rp 24.500 per tiket (98% margin).
+
+**Mengapa Golang?**
+- Memory footprint kecil (~50 MB idle).
+- CPU efficient untuk high concurrency (goroutine).
+- Mengurangi kebutuhan server mahal.
+
+**Mengapa Redis Bitmask, Bukan PostgreSQL?**
+- PostgreSQL Row Lock: 20.000 RPS → butuh 4x server.
+- Redis Bitmask: 20.000 RPS → cukup 1 server (single-threaded).
+- **Penghematan biaya:** ~70% lebih murah.
+
+### Security
+- **Authentication:** OAuth2 dengan JWT Token bertanda tangan.
+- **Authorization:** Role-Based Access Control (RBAC: Admin, EO, Customer, Gatekeeper).
+- **Data Protection:** Enkripsi database untuk data sensitif, wajib HTTPS/TLS 1.3, hashing PIN/Password.
+- **Input Validation:** Strict Whitelist Input Validation pada semua endpoints.
+- **Admin Actions:** Semua aksi admin dicatat di audit log dengan timestamp dan alasan.
+
+### Reliability & Availability
+- **Target Uptime:** 99.9% ketersediaan selama acara pemesanan tiket berlangsung.
+- **Circuit Breaker + Degraded Mode:**
+  - Jika Cache Cluster (Redis) tidak responsif > 100ms, Circuit Breaker terbuka.
+  - **Degraded Mode:**
+    - Rate Limiting: Dilemahkan (allow semua request, tapi log warning).
+    - Bitmask Lock: Ditangguhkan sementara. Semua request masuk ke waiting room FIFO (di PostgreSQL).
+    - Tampilkan pesan ke user: "Sistem sedang sibuk, mohon tunggu..."
+  - Ketika Cache Cluster pulih, sistem kembali ke mode normal dan memproses antrean.
+- **Data Backup:** Automated Snapshot database setiap jam saat high-traffic event.
+- **Disaster Recovery:** Recovery Time Objective (RTO) < 15 menit, Recovery Point Objective (RPO) < 1 menit.
+- **Webhook Reconciliation Worker:** Berjalan setiap 10 menit untuk memverifikasi transaksi PENDING yang mencurigakan.
+
+### Scalability
+- **Horizontal Scaling:** Stateless API Server yang dapat di-scale secara horizontal.
+- **Database Scaling:** Pemisahan Read/Write Replica pada database; penggunaan cache cluster untuk operasi in-memory.
+
+### Developer Experience & Maintainability
+**Description:** Memastikan proyek ini mudah dipahami, dikembangkan, dan di-maintain oleh developer lain (termasuk untuk keperluan portfolio dan kolaborasi).
+
+**Coding Standards:**
+- **Language:** Golang 1.22+ dengan `gofmt` dan `golangci-lint`.
+- **Naming Convention:** CamelCase untuk exported, camelCase untuk unexported.
+- **Commenting:** Setiap fungsi publik harus memiliki dokumentasi (GoDoc).
+- **Error Handling:** Selalu return error, jangan panic (kecuali init).
+
+**Testing Strategy:**
+| Test Type | Coverage Target | Tools |
+|-----------|-----------------|-------|
+| Unit Tests | > 85% | Go testing + testify |
+| Integration Tests | Critical paths only | testcontainers |
+| E2E Tests | 5 critical user journeys | k6 + custom scripts |
+| Load Tests | 20.000 RPS simulation | k6 |
+
+**CI/CD Pipeline (GitHub Actions):**
+1. **Lint:** `golangci-lint run`
+2. **Unit Tests:** `go test -v -cover ./...`
+3. **Integration Tests:** `go test -v -tags integration ./...`
+4. **Build:** `go build -o e-tix-flash ./cmd/api`
+5. **Deploy (Staging):** Otomatis ke Render.com pada setiap push ke `main`.
+
+**Onboarding Guide for New Developers:**
+1. Clone repo: `git clone https://github.com/arif/e-tix-flash`
+2. Setup environment: `cp .env.example .env`
+3. Run locally: `docker-compose up -d`
+4. Run tests: `go test ./...`
+5. Read docs: `/docs/PRD.md`, `/docs/API_CONTRACT.md`
+
+**Code Review Checklist:**
+- [ ] Unit tests written/updated.
+- [ ] Integration tests pass.
+- [ ] No `// TODO` or `// FIXME` without ticket.
+- [ ] API documentation updated (OpenAPI).
+- [ ] No secrets in code.
+- [ ] GoDoc updated for new public functions.
+
+### Usability
+- **Responsive Design:** Optimal untuk antarmuka Web Desktop dan Mobile Web (viewport minim 320px).
+- **Accessibility:** Memenuhi standar WCAG 2.1 Level AA.
+
+---
+
+## 📈 SCALABILITY CEILING & EVOLUTION PATH
+
+**Description:** Memahami batas sistem V1.0 dan bagaimana mengembangkannya untuk skala lebih besar.
+
+### Current Design Capacity (V1.0)
+| Component | Capacity | Bottleneck |
+|-----------|----------|------------|
+| API Gateway (Golang) | 50.000 RPS | CPU-bound |
+| Redis Bitmask Lock | 100.000 ops/sec | Single-threaded |
+| PostgreSQL | 10.000 writes/sec | Disk I/O |
+| **System Ceiling** | **~20.000 RPS** | **PostgreSQL writes** |
+
+### How to Scale Beyond 20.000 RPS (V2.0+)
+
+| Scaling Action | Description | When to Apply |
+|----------------|-------------|---------------|
+| **Read Replicas** | Pisahkan query SELECT ke replica | Saat SELECT queries > 5.000/sec |
+| **Sharding by Event** | Partisi data per event ke database berbeda | Saat total events > 50/month |
+| **Async Write Queue** | Tulis data non-kritis (logs, analytics) via queue | Saat write > 10.000/sec |
+| **Redis Cluster** | Partisi Bitmask Locking ke multiple Redis nodes | Saat satu Redis > 80% CPU |
+| **Kafka for Event Streaming** | Ganti RabbitMQ dengan Kafka | Saat events > 100.000/sec |
+| **Microservices Split** | Pisahkan Auth, Booking, Payment, Analytics | Saat tim > 10 developers |
+
+### Cost-Scaling Projection
+
+| Scale | Penonton | RPS | Infra Cost/Bulan | Fee Income (2.5%) |
+|-------|----------|-----|------------------|-------------------|
+| V1.0 | 10.000 | 20.000 | $350 | Rp 250.000.000 |
+| V2.0 | 50.000 | 100.000 | $2.500 | Rp 1.250.000.000 |
+| V3.0 | 100.000+ | 200.000+ | $10.000+ | Rp 2.500.000.000+ |
+
+---
+
+## 🔗 INTEGRATION & DEPENDENCIES
+
+### External Services
+| Service | Purpose | Provider | Criticality |
+|---------|---------|----------|------------|
+| **Payment Gateway** | Memproses transaksi VA, E-Wallet, Kartu Kredit, dan Payout | Midtrans / Xendit | Critical |
+| **Push Notification** | Pengiriman tautan Split-Pay & update antrean | Firebase Cloud Messaging (FCM) | Important |
+| **SMS/WhatsApp API** | OTP Verifikasi Akun & Pengiriman Static Fallback PIN | Twilio / Wablas | Important |
+
+### Internal Dependencies
+- **Cache Cluster**: Wajib aktif untuk ekosistem Bitmask Locking dan Rate Limiting. Jika down, sistem masuk ke Degraded Mode.
+- **Database Relasional**: Database untuk transaksi permanen dan penyelesaian transaksi.
+- **Message Broker**: Digunakan untuk komunikasi asynchronous pada F001 (Fan Score) dan F003 (fallback expiry).
+
+### Technology Constraints
+- **Core Engine:** Harus ditulis menggunakan Golang (Go 1.22+) untuk efisiensi dan performa tinggi.
+- **In-Memory Data Structure:** Operasi atomic pada struktur data bitmask.
+
+---
+
+## ⚠️ ASSUMPTIONS & CONSTRAINTS
+
+### Assumptions
+- Pengguna memiliki koneksi internet yang stabil minimal 3G/4G saat berada di Waiting Room.
+- Pihak Payment Gateway mampu menangani callback webhook transaksi berkecepatan tinggi tanpa delay berlebih, serta menyediakan API Payout untuk F005.
+- Admin (EO) memiliki akses ke dashboard dan bertanggung jawab atas tindakan yang dilakukan (semua tercatat di audit log).
+- Scanner gate memiliki koneksi internet sesekali (untuk sinkronisasi data offline).
+
+### Constraints
+- **Timeline:** Pengembangan MVP V1.0 ditargetkan selesai dalam 8-10 minggu sprint (dengan semua fitur).
+- **Budget:** Optimalisasi infrastruktur cloud memanfaatkan arsitektur Golang yang ringan resource.
+- **Technical:** Dilarang menggunakan Database Table Level Lock secara masif pada tabel utama kursi untuk menghindari kebuntuan (deadlock).
+
+---
+
+## 🚨 RISKS & MITIGATION
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|-----------|
+| **Payment Gateway Webhook Timeout / Hilang** | Medium | High | Terapkan Webhook Reconciliation Worker (polling ke Payment Gateway setiap 10 menit) + Idempotency Keys. |
+| **Bypass Bot via Scripting Direct API** | High | Critical | Wajibkan Queue Token Validation bertanda tangan di layer gateway. |
+| **Cache Cluster Failure (Redis Down)** | Low | Critical | Circuit Breaker + Degraded Mode (fallback ke PostgreSQL, antrean FIFO). Sistem kembali normal otomatis setelah Redis pulih. |
+| **Race Condition pada Split-Pay Expiry** | Medium | High | Gunakan Idempotent Lazy-Check Pattern untuk menghindari kompleksitas pembatalan pesan. |
+| **Bitmask Lock Overlap Conflict** | High | Medium | Partisi denah kursi per section untuk mengurangi ukuran bitmask dan meminimalisir konflik. |
+| **Payout API Gagal (F005)** | Medium | Medium | Retry dengan exponential backoff (3x), jika gagal → status PENDING_PAYOUT dan admin melakukan manual reconciliation via F006. |
+| **Admin Salah Input Harga** | Medium | High | Admin Emergency Tools (Bulk Cancellation + Refund + Audit Log) di F006. |
+| **Webhook Reconciliation Worker Overload** | Low | Medium | Batasi jumlah transaksi yang diproses per siklus (misal 100 per 10 menit). Prioritaskan yang paling tua. |
+| **Scanner Offline Data Loss** | Medium | Medium | Scanner menyimpan data secara lokal (SQLite) dan disinkronisasi saat online. Data tidak hilang meskipun scanner mati. |
+| **Feedback Loop Memberikan Rekomendasi Salah** | Low | Low | Rekomendasi bersifat advisory (tidak otomatis dieksekusi). Admin harus menyetujui sebelum diterapkan. |
+
+---
+
+## 📚 DOCUMENT REFERENCES
+
+- **Logic Flow:** LOGIC_FLOW.md *(dalam penyusunan)*
+- **Architecture Design:** ARCHITECTURE.md *(dalam penyusunan)*
+- **API Contract:** API_CONTRACT.md *(dalam penyusunan)*
+- **Database Schema:** DATABASE_SCHEMA.md *(dalam penyusunan)*
+- **Technical Design:** TDD.md *(dalam penyusunan)*
+
+---
+
+## 📊 ACCEPTANCE & SIGN-OFF
+
+| Role | Name | Date | Signature |
+|------|------|------|-----------|
+| Product Manager / Lead Dev | M. Arif Aulia | 2026-09-07 | ✅ |
+| System Architect Reviewer | Gemini AI Reviewer | 2026-09-07 | ✅ (Disetujui) |
+
+---
+
+## 📝 APPENDIX: GLOSSARY
+
+| Term | Definition |
+|------|-----------|
+| **Bitmask Matrix** | Representasi denah kursi dalam bentuk bitmap (0=tersedia, 1=terkunci) untuk operasi cepat. |
+| **Fan Score** | Skor kredibilitas pengguna berdasarkan Base Score (pra-acara) + Dynamic Score (perilaku real-time) + Loyalty Score (riwayat pembelian). |
+| **Split-Pay** | Mekanisme pembayaran terpisah di mana setiap anggota grup membayar bagiannya sendiri. |
+| **Bulk Payment** | Mekanisme di mana satu orang (Leader) membayar semua tiket sekaligus. |
+| **Dynamic HMAC QR** | QR code yang berubah secara periodik menggunakan HMAC untuk mencegah screenshot/foto tiket. |
+| **Static Fallback PIN** | PIN 12-digit statis yang dikirim via SMS/Email untuk situasi darurat (HP mati). |
+| **Controlled Resale Market** | Pasar sekunder resmi dengan batas harga maksimum +10% dari harga awal. |
+| **Idempotent Lazy-Check** | Pola di mana pesan delay tetap dikirim dan dieksekusi, tetapi worker hanya melakukan action jika kondisi di waktu eksekusi masih memenuhi syarat. |
+| **Pre-Computed Base Score** | Skor dasar yang dihitung sebelum acara berdasarkan data statis user (umur akun, verifikasi, riwayat). |
+| **Degraded Mode** | Mode operasi darurat ketika Cache Cluster down. Sistem tetap berjalan dengan performa menurun. |
+| **Webhook Reconciliation Worker** | Background worker yang memverifikasi transaksi PENDING dengan memanggil Payment Gateway secara langsung. |
+| **Post-Event Analytics** | Data dan insight yang dihasilkan setelah acara selesai (attendance, no-show rate, peak entry time, gate utilization). |
+| **Priority Tier** | Sistem antrean prioritas di waiting room berdasarkan Loyalty Score (Tier 1 = VIP Fans, Tier 2 = Regular, Tier 3 = New Users). |
+| **Feedback Loop** | Mekanisme sistem belajar dari data historis untuk memberikan rekomendasi dan otomatisasi konfigurasi. |
+| **Scalability Ceiling** | Batas maksimum kapasitas sistem sebelum perlu dilakukan perubahan arsitektur. |
+| **Developer Experience** | Kemudahan bagi developer untuk memahami, mengembangkan, dan memelihara kode. |
+
+---
+
+## 📊 COMPETITIVE POSITIONING (Value Proposition Summary)
+
+| Feature | Loket | GoShow | Tiket.com | Eventbrite | E-Tix Flash |
+|---------|-------|--------|-----------|------------|-------------|
+| Anti-Bot Ingress | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Atomic Group Locking | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Split-Pay | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Bulk Payment (Leader Pays) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Dynamic QR (Anti-Screenshot) | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Static Fallback PIN | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Controlled Resale (+10% Cap) | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Admin Emergency Tools | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Post-Event Analytics | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Loyalty Priority Queue | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Feedback Loop / Auto-Learning | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Price (Platform Fee) | 5-10% | 5-10% | 5-10% | 5-10% | **2.5%** |
+
+### Mengapa EO akan pindah ke E-Tix Flash?
+
+1. **Masalah #1: Server Crash** → E-Tix Flash handle 20.000 RPS dengan Redis Bitmask Lock.
+2. **Masalah #2: Calo Borong** → E-Tix Flash blokir 95% bot di pintu masuk.
+3. **Masalah #3: Fans Kecewa** → E-Tix Flash jamin kursi grup dan kasih fallback PIN.
+4. **Masalah #4: Calo Jual Mahal** → E-Tix Flash kendalikan harga resale max +10%.
+5. **Masalah #5: Admin Panik** → E-Tix Flash kasih Emergency Tools untuk bulk cancel & refund.
+6. **Masalah #6: No-Show & Data Buta** → E-Tix Flash kasih Post-Event Analytics untuk improvement event berikutnya.
+7. **Masalah #7: Fans Setia Diabaikan** → E-Tix Flash kasih Priority Queue untuk fans loyal.
+8. **Masalah #8: Sistem Tidak Belajar** → E-Tix Flash punya Feedback Loop yang belajar dari data historis.
+9. **Masalah #9: Developer Susah Maintenance** → E-Tix Flash punya Developer Experience & Maintainability yang terstruktur.
+10. **Masalah #10: Tidak Tahan Skala Besar** → E-Tix Flash punya Scalability Ceiling & Evolution Path yang jelas.
+
+---
+
+## 💰 BUSINESS MODEL & PRICING STRATEGY (Untuk Portfolio & Demo)
+
+### Revenue Streams (V1.0)
+
+| Revenue Stream | Deskripsi | Estimasi |
+|----------------|-----------|----------|
+| **Platform Fee (Primary)** | Fee per tiket terjual (2.5% dari harga tiket) | Jika 10.000 tiket × Rp 1.000.000 × 2.5% = Rp 250.000.000 per event |
+| **Resale Fee (Secondary)** | Fee 1% dari transaksi resale (untuk operasional) | Jika 10% tiket di-resale → tambahan Rp 25.000.000 per event |
+
+### Pricing Tier untuk EO
+
+| Tier | Harga | Fitur |
+|------|-------|-------|
+| **Free** | 0% fee | Untuk event < 500 tiket (limited features) |
+| **Pro** | 2.5% fee | Full features, 20.000 RPS, priority support, Post-Event Analytics, Feedback Loop |
+| **Enterprise** | Custom | Dedicated infra, white-label, custom integration |
+
+### Keunggulan Kompetitif Harga
+
+- Loket/GoShow/Tiket.com: 5-10% fee.
+- E-Tix Flash: 2.5% fee (lebih murah 50-75%).
+- Dengan harga lebih murah, EO bisa jual tiket lebih murah ke fans ATAU dapat profit lebih besar.
+
+### Break-Even Analysis (Estimasi)
+
+| Event Size | Fee Income | Infra Cost (Render + Supabase) | Profit |
+|------------|------------|--------------------------------|--------|
+| 1.000 tiket × Rp 500.000 × 2.5% | Rp 12.500.000 | Rp 500.000 | Rp 12.000.000 |
+| 10.000 tiket × Rp 1.000.000 × 2.5% | Rp 250.000.000 | Rp 1.000.000 | Rp 249.000.000 |
+
+---
+
+## 📌 VERSION HISTORY
+
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0-DRAFT | 2026-09-06 | M. Arif Aulia | Initial PRD draft untuk E-Tix Flash. |
+| 2.0-FINAL | 2026-09-06 | M. Arif Aulia | Revisi Arsitektur: penggantian mekanisme fallback, perbaikan F003 menjadi event-driven. |
+| 3.0-FINAL | 2026-09-06 | M. Arif Aulia | Revisi Akhir: F003 gunakan Idempotent Lazy-Check, F005 disederhanakan (tanpa internal ledger), F001 tambahkan Pre-Computed Base Score, F002 tambahkan garansi immutability. |
+| 4.0-FINAL | 2026-09-07 | M. Arif Aulia | Revisi Berdasarkan Skenario Tidak Normal: Tambahkan Hybrid Payment Mode (Split + Bulk) di F003. Tambahkan Static Fallback PIN di F004. Tambahkan Admin Emergency Tools di F006. Tambahkan Webhook Reconciliation Worker dan Circuit Breaker + Degraded Mode di NFR & Risk Mitigation. Perjelas aturan kepemilikan tiket untuk Bulk Mode dan Resale. |
+| 5.0-MVP-FINAL | 2026-09-07 | M. Arif Aulia | MVP Final - All Features In: Tidak ada Nice-to-Have. Semua fitur (F001-F006) adalah P0. Tambahkan F004b (Gate Analytics & Post-Event Intelligence). Tambahkan Priority Tier System di F001. Tambahkan Cost Efficiency & Infrastructure Optimization di NFR. Tambahkan Competitive Positioning di Appendix. |
+| 6.0-FINAL | 2026-09-07 | M. Arif Aulia | **Final dengan Developer Experience & Scalability:** Tambahkan Feedback Loop di F004b (sistem belajar dari data). Tambahkan Developer Experience & Maintainability di NFR (coding standards, testing, CI/CD, onboarding, code review). Tambahkan Scalability Ceiling & Evolution Path sebagai bagian baru. Update Competitive Positioning dan Business Model. **Ini adalah versi final untuk portfolio project.** |
+
+---
+
+## 🎓 USAGE NOTES FOR SOLO DEVELOPER
+
+1. **Ini adalah FAKE PROJECT PORTOFOLIO:** Semua fitur di atas adalah MUST-HAVE untuk menunjukkan kemampuan end-to-end. Tidak ada yang ditunda.
+2. **Fokus pada Live Demo:** Proyek ini berhenti di tahap Live Demo. Tidak perlu memikirkan skalabilitas jangka panjang atau production deployment real.
+3. **Before you code:** Setujui PRD ini dengan diri sendiri. Lock scope begitu disetujui.
+4. **After approval:** Lanjut ke pembuatan dokumen berikutnya sesuai pipeline:
+   - DATABASE_SCHEMA.md → Perancangan tabel, relasi, indeks, dan struktur data.
+   - LOGIC_FLOW.md → Alur bisnis, state machine, dan skenario edge case.
+   - TDD.md → Pemilihan pustaka, strategi caching, dan arsitektur low-level.
+   - API_CONTRACT.md → Spesifikasi endpoint dan payload.
+5. **Share in portfolio:** Sertakan PRD di GitHub `/docs/PRD.md` sebagai bagian dari delivery. Tambahkan README.md dengan storytelling dan Landing Page untuk marketing.
+
+**Golden Rule:** PRD menjawab APA yang dibangun dan MENGAPA. Detail BAGAIMANA adalah porsi dokumen teknis setelahnya. Namun, PRD harus sudah memikirkan "bagaimana jika situasi tidak normal terjadi" — karena itulah yang membedakan produk siap produksi vs konsep.
+
+---
+
+*End of PRD v6.0-FINAL*

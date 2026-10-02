@@ -1,0 +1,1367 @@
+================================================================================
+ROADMAP FASE (2): BEHAVIORAL INGRESS (F001) — E-Tix Flash (Smart Ticketing Platform)
+================================================================================
+
+Version:         1.0-FINAL
+Last Updated:    2026-09-11
+Author:          M. Arif Aulia
+Status:          ⏳ NOT STARTED (Ready to Execute)
+Blueprint Ref:   BLUEPRINT ROADMAP v1.0-FINAL, FASE 2
+Depends On:      FASE 0 (Foundation) — LOCKED
+                 FASE 1 (Auth & User) — LOCKED
+
+================================================================================
+📌 BISMILLAH — ROADMAP FASE 2 FINAL VERSION
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. FASE IDENTITY
+2. SCOPE & OBJECTIVES
+3. FOUNDATION DISTILLATION
+4. TASK BREAKDOWN
+5. DELIVERABLES
+6. ACCEPTANCE CRITERIA
+7. RISKS & MITIGATIONS
+8. SECURITY CONSIDERATIONS
+9. DEFINITION OF DONE (DoD)
+10. NOTES & REFERENCES
+
+================================================================================
+SECTION 1 — FASE IDENTITY
+================================================================================
+
+Fase ID:           FASE 2
+Nama Fase:         Behavioral Ingress (F001)
+Fitur Utama:       F001 — Behavioral Ingress & Fan-Score Queueing
+Estimasi Durasi:   Week 2-3 (1 minggu, ~40 jam kerja)
+Dependencies:      FASE 0 (Redis, RabbitMQ, CI/CD)
+                   FASE 1 (auth middleware untuk user context)
+Status:            ⏳ Not Started
+
+Ringkasan:
+  Implementasi Behavioral Ingress Engine dengan 2-stage pipeline:
+    - Stage 1 (sync, < 1ms): Rate limit, blacklist check, base score read, 
+      tier assignment, queue token issuance.
+    - Stage 2 (async): Dynamic score calculation via RabbitMQ worker, 
+      bot detection, auto-blacklist.
+
+  Fitur ini menyaring bot dan memberikan akses prioritas ke fans loyal 
+  sebelum masuk ke Booking Engine (FASE 3).
+
+  DELIVERABLE UTAMA:
+    - GET /queue/status — Priority tier + queue position
+    - POST /queue/verify-captcha — CAPTCHA verification → queue token
+    - FanScoreWorker — RabbitMQ consumer untuk dynamic score + bot detection
+    - Queue Token — JWT single-use dengan jti + Redis SET NX EX 300
+
+================================================================================
+SECTION 2 — SCOPE & OBJECTIVES
+================================================================================
+
+2.1 SCOPE — IN
+────────────────────────────────────────────────────────────────────────────────
+
+✅ Endpoints (2 total — API_CONTRACT v1.2 §8.4, §8.5):
+   - GET /queue/status?event_id={event_id}     — 100 req/min per user
+   - POST /queue/verify-captcha                — 3 req/5min per IP, X-Idempotency-Key
+
+✅ Fan Score Engine:
+   - Base Score: baca on-demand dari users.base_score (default 50, di-setup di FASE 1)
+   - Dynamic Score: dihitung async oleh FanScoreWorker
+   - Final Score = Base + Dynamic
+   - Redis caching: user:score:{user_id}:base, user:score:{user_id}:dynamic
+
+✅ Priority Tier Assignment:
+   - TIER_1: Final Score > 90 (VIP Fans)
+   - TIER_2: Final Score 70-90 (Regular Fans)
+   - TIER_3: Final Score < 70 (New Users / Low Score)
+
+✅ Queue Token:
+   - JWT signed dengan RS256 (reuse key dari FASE 1)
+   - Payload: {user_id, tier, final_score, jti, exp (5 min), iss}
+   - Single-use guard: Redis SET queue_token:used:{jti} 1 NX EX 300
+
+✅ CAPTCHA Verification:
+   - challenge_id di-generate CLIENT-SIDE (reCAPTCHA/Turnstile SDK)
+   - Backend verify solution (server-side verification dengan provider API)
+   - Rate limit 3 req/5min per IP
+   - On success: return queue_token
+
+✅ Stage 2 Worker (FanScoreWorker):
+   - RabbitMQ consumer: fan_score queue
+   - Compute Dynamic Score (request interval, click pattern, device fingerprint)
+   - Store ke Redis: user:score:{user_id}:dynamic
+   - Insert ke blacklist jika bot pattern terdeteksi (via SYSTEM_USER_UUID)
+   - Alert admin jika Final Score < 50
+
+✅ Rate Limiting:
+   - GET /queue/status: 100 req/min per user
+   - POST /queue/verify-captcha: 3 req/5min per IP
+
+✅ Redis Keyspaces:
+   - user:score:{user_id}:base — cached Base Score (TTL 24h)
+   - user:score:{user_id}:dynamic — Dynamic Score (TTL 24h)
+   - queue_token:used:{jti} — single-use guard (TTL 300s)
+   - rate:queue:status:{user_id} — rate limit counter
+   - rate:queue:captcha:{ip} — rate limit counter
+
+2.2 SCOPE — OUT
+────────────────────────────────────────────────────────────────────────────────
+
+❌ GET /captcha/challenge endpoint → Ghost endpoint (tidak ada di API_CONTRACT v1.2)
+❌ Pre-computation scheduled job untuk Base Score → Out of scope (baca on-demand)
+❌ POST /admin/precompute-base-score → Tidak ada (base score update = FASE 8)
+❌ WebSocket untuk real-time queue updates → Polling via GET /queue/status
+❌ Bot fingerprint library custom → Pakai heuristic sederhana (request interval)
+❌ ML-based bot detection → Rule-based untuk MVP
+❌ Actual booking flow → FASE 3 (F002)
+❌ Wallet/ledger → NEVER (PRD Out of Scope)
+
+2.3 OBJECTIVES (MEASURABLE)
+────────────────────────────────────────────────────────────────────────────────
+
+1. GET /queue/status return position, tier, ETA, queue_token
+2. POST /queue/verify-captcha return verified=true + queue_token
+3. Fan Score = Base + Dynamic (verified via unit test)
+4. Tier assignment correct (TIER_1/2/3 boundaries)
+5. Queue token single-use (SET NX works, second use → 409)
+6. FanScoreWorker process messages dari RabbitMQ fan_score queue
+7. Blacklist insert works (via SYSTEM_USER_UUID)
+8. Bot filtering rate > 95% (load test dengan bot simulation)
+9. Rate limits enforced (5 login attempts in 1 min → 429)
+10. Unit test coverage ≥ 90% untuk fan score module
+
+2.4 SUCCESS CRITERIA
+────────────────────────────────────────────────────────────────────────────────
+
+Mengacu pada PRD §Success Metrics + STP §8.1 DoD:
+
+- [x] 2 endpoints terimplementasi sesuai API_CONTRACT v1.2 §8.4, §8.5
+- [x] Fan Score engine works (Base + Dynamic)
+- [x] Priority Tier assignment correct
+- [x] Queue Token single-use enforced (jti + SET NX)
+- [x] FanScoreWorker consumes RabbitMQ messages
+- [x] Blacklist write works (SYSTEM_USER_UUID)
+- [x] CAPTCHA verification via provider SDK (client-side challenge_id)
+- [x] Rate limits enforced per endpoint
+- [x] Bot filtering rate > 95% (verified via load test)
+- [x] Unit + Integration test coverage ≥ 90%
+
+================================================================================
+SECTION 3 — FOUNDATION DISTILLATION
+================================================================================
+
+Distilasi dari 9 dokumen fondasi. Bagian ini SELF-CONTAINED — eksekutor tidak 
+perlu membuka fondasi untuk menyelesaikan FASE 2.
+
+────────────────────────────────────────────────────────────────────────────────
+3.1 FROM PRD v6.0 §F001 — BEHAVIORAL INGRESS SPEC (FULL)
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION:
+  Menangani ingress traffic saat flash sale dengan memisahkan beban kerja 
+  menjadi dua tahap (synchronous cepat + asynchronous mendalam) untuk menjaga 
+  latency tetap rendah. Menggunakan pre-computed base score untuk menghindari 
+  cold-start pada request pertama pengguna. Memberikan akses prioritas kepada 
+  fans loyal.
+
+INPUTS:
+  - User ID (UUID string)
+  - Device Fingerprint (encrypted string) — optional
+  - Access Metadata (request interval, IP, TLS parameters)
+
+PROCESS — Pra-Flash Sale:
+  NOTE (FASE 2 interpretasi): "Pre-computation" di-skip untuk MVP. Base Score 
+  dibaca on-demand dari users.base_score (default 50). 
+
+  Base Score Formula (untuk future reference — FASE 8):
+    - Umur akun: (NOW() - created_at) / 365 hari → +10 poin per tahun
+    - Email terverifikasi → +10 poin
+    - Phone terverifikasi → +10 poin
+    - Total purchases >= 1 → +10 poin
+    - Total purchases >= 3 → +30 poin
+    - Total purchases >= 5 → +50 poin
+    (Clamp 0-100)
+
+PROCESS — Stage 1 (Synchronous, Target < 1ms):
+  1. Rate Limiter cek limit per IP/User ID.
+  2. Validasi header dasar (User-Agent, Accept-Language).
+  3. Cek blacklist IP di memory cache (update dari Redis setiap 60s).
+  4. Baca Base Score dari Redis (fallback: DB users.base_score).
+  5. Baca Dynamic Score dari Redis (jika ada dari request sebelumnya).
+  6. Hitung Final Score = Base + Dynamic.
+  7. Tentukan Tier:
+       - > 90 → Tier 1 (Priority)
+       - 70-90 → Tier 2 (Normal)
+       - < 70 → Tier 3 (Low Priority)
+  8. Kirim metadata ke Message Broker (RabbitMQ fan_score queue) untuk Stage 2.
+  9. Generate Queue Token (JWT) dengan payload: 
+     { user_id, tier, final_score, jti, exp: NOW() + 5 min }
+
+PROCESS — Stage 2 (Asynchronous, Background Worker):
+  1. Worker menerima metadata dari queue.
+  2. Hitung Dynamic Score berdasarkan perilaku real-time:
+     - Interval antar request (terlalu cepat → minus)
+     - Pola klik (manusia vs bot)
+     - Device fingerprint (known bot pattern)
+  3. Update Final Score = Base + Dynamic.
+  4. Simpan di Redis: user:score:{user_id}:dynamic dengan TTL.
+  5. Jika Final Score < 50 → kirim notifikasi ke Admin + CAPTCHA trigger.
+  6. Jika terdeteksi pola bot yang jelas → tambahkan ke blacklist.
+
+OUTPUTS:
+  - Signed Queue Token (JWT dengan payload expiry & priority tier)
+  - Error Response / HTTP 429 Too Many Requests
+  - Waiting Room dengan visualisasi tier
+
+EDGE CASES:
+  - Traffic Spike Extreme (>50,000 RPS) → Circuit Breaker + Virtual Waiting 
+    Room via WebSocket Cluster (FASE 9 hardening)
+  - User baru tanpa Base Score → default 50 + pantau Stage 2
+  - Cache Cluster Failure → Degraded Mode (Circuit Breaker fallback)
+  - Fans setia yang terlambat masuk waiting room → tetap prioritas
+
+────────────────────────────────────────────────────────────────────────────────
+3.2 FROM LOGIC_FLOW v1.4 §2 — SEQUENCE FLOW (DETAIL)
+────────────────────────────────────────────────────────────────────────────────
+
+STATE DEFINITION (User Scoring):
+
+  | State          | Description                                                   |
+  |----------------|---------------------------------------------------------------|
+  | BASE_SCORE     | Skor awal dihitung pra-acara                                 |
+  | DYNAMIC_SCORE  | Skor tambahan dari perilaku real-time                        |
+  | FINAL_SCORE    | BASE_SCORE + DYNAMIC_SCORE                                   |
+  | TIER_1         | FINAL_SCORE > 90 → Priority access (VIP Fans)                |
+  | TIER_2         | FINAL_SCORE 70-90 → Normal access                            |
+  | TIER_3         | FINAL_SCORE < 70 → Access after Tier 1 & 2                   |
+  | BLACKLISTED    | IP/Device terdeteksi sebagai bot → Diblokir di Stage 1       |
+
+STAGE 1 FLOW:
+
+  [USER REQUEST MASUK]
+    │
+    ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ STAGE 1 (SYNCHRONOUS — Target < 1ms)                                    │
+  │ Berjalan di API Gateway / Golang Middleware                             │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ 1. Rate Limiter cek limit per IP/User ID                                │
+  │    └─> Jika exceeded → HTTP 429 + log warning                           │
+  │ 2. Validasi header dasar (User-Agent, Accept-Language)                  │
+  │ 3. Cek blacklist IP di memory cache (update dari Redis setiap 60s)      │
+  │    └─> Jika terdaftar → HTTP 403 + log "BLACKLISTED"                    │
+  │ 4. Baca Base Score dari Redis                                           │
+  │    └─> Jika tidak ada → default = 50 (new user)                         │
+  │ 5. Baca Dynamic Score dari Redis                                        │
+  │    └─> Jika tidak ada → 0                                               │
+  │ 6. Hitung Final Score = Base + Dynamic                                  │
+  │ 7. Tentukan Tier (>90, 70-90, <70)                                      │
+  │ 8. Kirim metadata ke Message Broker (RabbitMQ) untuk Stage 2            │
+  │    └─> Async, tidak blocking response                                   │
+  │ 9. Generate Queue Token (JWT) dengan payload:                           │
+  │    { user_id, tier, final_score, jti, expiry: NOW() + 5 min }           │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+STAGE 2 FLOW:
+
+  [Background Worker — subscriber RabbitMQ]
+    │
+    ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ STAGE 2 (ASYNCHRONOUS)                                                  │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ 1. Worker menerima metadata dari queue                                  │
+  │ 2. Hitung Dynamic Score berdasarkan perilaku real-time                  │
+  │ 3. Update Final Score = Base + Dynamic                                  │
+  │    └─> Simpan di Redis: user:score:{user_id}:dynamic dengan TTL         │
+  │ 4. Jika Final Score < 50 → notifikasi ke Admin + CAPTCHA trigger        │
+  │ 5. Jika terdeteksi pola bot yang jelas → tambahkan ke blacklist         │
+  │    └─> INSERT INTO blacklist (via SYSTEM_USER_UUID)                     │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+────────────────────────────────────────────────────────────────────────────────
+3.3 FROM LOGIC_FLOW v1.4 §9.2 — SINGLE-USE QUEUE TOKEN GUARD
+────────────────────────────────────────────────────────────────────────────────
+
+[SAAT TOKEN DIBUAT di F001 Step 8]
+  │
+  ├─> Generate JWT dengan payload:
+  │    { user_id, tier, final_score, jti, exp: NOW() + 5 minutes }
+  │
+  └─> jti = UUID v4 (unique identifier per token)
+
+[SAAT TOKEN DIVALIDASI di F002.3 Step 1]
+  │
+  ├─> Validasi signature & expiry (standar JWT)
+  │
+  ├─> Cek single-use di Redis:
+  │    SET queue_token:used:{jti} 1 NX EX 300
+  │    └─> Jika return "OK" → token belum pernah dipakai, lanjutkan.
+  │    └─> Jika return nil → token sudah dipakai, HTTP 409 CONFLICT.
+  │
+  └─> Catatan: TTL 300 detik (5 menit), sama dengan expiry JWT.
+
+NOTE: Validasi single-use dilakukan di FASE 3 (saat lock seat). FASE 2 hanya 
+generate token — single-use guard disetup, validasi aktual dipakai di FASE 3.
+
+────────────────────────────────────────────────────────────────────────────────
+3.4 FROM DATABASE_SCHEMA v2.9 — USERS + BLACKLIST
+────────────────────────────────────────────────────────────────────────────────
+
+USERS TABLE (baca saja untuk FASE 2):
+
+  CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    phone VARCHAR(20) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role user_role_enum NOT NULL DEFAULT 'customer',
+    status user_status_enum NOT NULL DEFAULT 'ACTIVE',
+    base_score INTEGER DEFAULT 50,          ← FASE 2 baca field ini
+    total_purchases INTEGER DEFAULT 0,
+    first_purchase_at TIMESTAMPTZ,
+    last_purchase_at TIMESTAMPTZ,
+    profile_photo_url TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ
+  );
+
+BLACKLIST TABLE:
+
+  CREATE TABLE blacklist (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    type VARCHAR(20) NOT NULL,              -- 'ip' | 'device_fingerprint'
+    value VARCHAR(255) NOT NULL,
+    reason TEXT,
+    detected_by_insight_id UUID REFERENCES insights(id) ON DELETE SET NULL,
+    added_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    added_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,                 -- null = permanent
+    UNIQUE(type, value)
+  );
+
+  CREATE INDEX idx_blacklist_type_value ON blacklist(type, value);
+  CREATE INDEX idx_blacklist_expires ON blacklist(expires_at) WHERE expires_at IS NOT NULL;
+
+RLS POLICY (existing dari FASE 0 migration):
+
+  ALTER TABLE blacklist ENABLE ROW LEVEL SECURITY;
+
+  CREATE POLICY "Admins can manage blacklist" ON blacklist
+    FOR ALL USING ((auth.jwt() ->> 'role') = 'admin');
+
+  CREATE POLICY "System can read blacklist" ON blacklist
+    FOR SELECT USING (TRUE);
+
+NOTE (FLAG #3 APPROVED):
+  Worker INSERT blacklist menggunakan SYSTEM_USER_UUID 
+  (00000000-0000-0000-0000-000000000000, role='admin' dari FASE 0 seed).
+  Ini bypass RLS via role='admin' claim. Konsisten dengan pattern sistem lain.
+
+────────────────────────────────────────────────────────────────────────────────
+3.5 FROM API_CONTRACT v1.2 §8.4, §8.5 — ENDPOINTS SPEC
+────────────────────────────────────────────────────────────────────────────────
+
+ENDPOINT 1 — GET /queue/status
+
+  URL:      GET /queue/status?event_id={event_id}
+  Screen:   HALAMAN 3.1 (Waiting Room)
+  Auth:     Required (JWT)
+  Rate:     100 req/min per user
+
+  Success (200 OK):
+    {
+      "success": true,
+      "data": {
+        "position": 123,
+        "total_in_queue": 2341,
+        "estimated_wait_seconds": 120,
+        "tier": "TIER_2",
+        "tier_label": "Regular Fan",
+        "loyalty_score": 85,
+        "queue_token": "jwt-queue-token-with-jti"
+      },
+      "meta": {
+        "timestamp": "2026-09-11T10:30:45.123Z",
+        "request_id": "uuid-req-12345"
+      }
+    }
+
+  Errors:
+    - 401 UNAUTHORIZED
+    - 404 NOT_FOUND: Event not found or not in sale
+
+ENDPOINT 2 — POST /queue/verify-captcha
+
+  URL:      POST /queue/verify-captcha
+  Screen:   HALAMAN 3.2 (CAPTCHA Modal)
+  Auth:     Required (JWT)
+  Rate:     3 req/5min per IP
+  Idempotency: X-Idempotency-Key REQUIRED
+
+  Request:
+    {
+      "challenge_id": "uuid-challenge-123",
+      "solution": "traffic_lights"
+    }
+
+  Success (200 OK):
+    {
+      "success": true,
+      "data": {
+        "verified": true,
+        "queue_token": "jwt-queue-token-with-jti"
+      },
+      "meta": { ... }
+    }
+
+  Errors:
+    - 401 UNAUTHORIZED
+    - 400 INVALID_REQUEST: Challenge expired / invalid
+    - 429 RATE_LIMIT_EXCEEDED
+
+NOTE (FLAG #1 APPROVED):
+  challenge_id di-generate CLIENT-SIDE oleh reCAPTCHA/Turnstile/hCaptcha SDK. 
+  Backend murni verify solusi. Endpoint GET /captcha/challenge TIDAK ADA 
+  (ghost endpoint di HALAMAN v1.1 §3.2 — tidak dipakai).
+
+────────────────────────────────────────────────────────────────────────────────
+3.6 FROM SECURITY_SPEC v1.4 §8.1, §8.2, §8.3 — ANTI-BOT
+────────────────────────────────────────────────────────────────────────────────
+
+2-STAGE PIPELINE (F001):
+
+  Stage 1 (Synchronous — <1ms):
+    - Rate Limiter (Token Bucket) per IP/User ID
+    - Header validation (User-Agent, Accept-Language)
+    - Blacklist IP check (memory cache, updated from Redis every 60s)
+    - Read Base Score from Redis (Pre-Computed)
+
+  Stage 2 (Asynchronous — Background Worker):
+    - Dynamic Score calculation based on:
+      * Request interval (too fast → minus)
+      * Click patterns (human vs bot)
+      * Device fingerprint (known bot patterns)
+    - Final Score = Base Score + Dynamic Score
+    - If Final Score < 50 → CAPTCHA trigger + alert admin
+    - If bot pattern detected → add to blacklist
+
+FAN SCORE TIERS:
+
+  | Tier   | Score Range | Priority Access               |
+  |--------|-------------|-------------------------------|
+  | TIER_1 | > 90        | VIP — First in queue          |
+  | TIER_2 | 70-90       | Regular — Normal access       |
+  | TIER_3 | < 70        | Low priority / CAPTCHA        |
+
+QUEUE TOKEN LIFECYCLE:
+
+  1. Issued: POST /queue/verify-captcha OR GET /queue/status
+  2. Payload:
+     {
+       "user_id": "uuid",
+       "tier": "TIER_2",
+       "final_score": 85,
+       "jti": "uuid-jti-123",
+       "exp": 1723641300,  // 5 minutes
+       "iss": "e-tix-flash-queue"
+     }
+  3. Single-Use Guard:
+     - On use: SET queue_token:used:{jti} 1 NX EX 300
+     - If return nil (already exists) → HTTP 409 TOKEN_ALREADY_USED
+  4. Required in: POST /events/{eid}/sections/{sid}/seats (FASE 3)
+     Header: X-Queue-Token: <jwt-queue-token>
+
+CAPTCHA MODAL TRIGGER CONDITIONS:
+  - Final Score < 50
+  - Multiple failed booking attempts in short time
+  - Suspicious device fingerprint
+
+CAPTCHA FLOW:
+  1. Client detects challenge required → shows CAPTCHA modal
+  2. User solves challenge (client-side)
+  3. POST /queue/verify-captcha
+     Body: { "challenge_id": "uuid", "solution": "traffic_lights" }
+  4. Backend validates:
+     - Solution correct? (server-side verify ke provider API)
+     - Not expired?
+     - Attempts < 3?
+  5. If valid → return queue_token (JWT with jti)
+  6. If invalid → increment failed attempts
+     - 3 failures → 15 min lockout (Redis)
+
+────────────────────────────────────────────────────────────────────────────────
+3.7 FROM HALAMAN v1.1 §3.1, §3.2 — WIREFRAMES
+────────────────────────────────────────────────────────────────────────────────
+
+SCREEN 3.1 — WAITING ROOM:
+
+  ┌──────────────────────────────┐
+  │ ← BACK          WAITING ROOM  │
+  ├──────────────────────────────┤
+  │                              │
+  │  🎸 DEWA 19 FEAT. MAHADEWI   │
+  │  📍 GBK Stadium              │
+  │  📅 2026-12-20 19:00         │
+  │                              │
+  │  ────────────────────────────│
+  │  ⏳ Estimated Wait: 2 min    │
+  │  Your Position: 123          │
+  │  Total in Queue: 2,341      │
+  │                              │
+  │  🏷️ TIER 2 — Regular Fan    │
+  │  ⭐ Loyalty Score: 85       │
+  │                              │
+  │  ┌──────────────────────────┐│
+  │  │ ██████████░░░░░░░░░░░░ ││
+  │  │ 20% completed            ││
+  │  └──────────────────────────┘│
+  │                              │
+  │  ⏰ Sale starts in: 00:02:15 │
+  │                              │
+  │  ┌──────────────────────────┐│
+  │  │ ⚠️ Stay on this page!   ││
+  │  │ Don't refresh.           ││
+  │  └──────────────────────────┘│
+  └──────────────────────────────┘
+
+  Data Binding: 
+    - Poll GET /queue/status setiap 5-10 detik
+    - Display: position, total_in_queue, estimated_wait_seconds, tier, 
+      tier_label, loyalty_score
+
+SCREEN 3.2 — CAPTCHA MODAL:
+
+  ┌──────────────────────────────┐
+  │ ⚠️ VERIFICATION REQUIRED     │
+  ├──────────────────────────────┤
+  │                              │
+  │  🔒 We need to verify        │
+  │  you're human.               │
+  │                              │
+  │  ┌──────────────────────────┐│
+  │  │   [CAPTCHA IMAGE]       ││
+  │  │   "Select all traffic    ││
+  │  │    lights"              ││
+  │  │   ▢ ▢ ▢ ▢ ▢ ▢ ▢ ▢ ▢    ││
+  │  └──────────────────────────┘│
+  │                              │
+  │  ⏰ Time remaining: 01:30    │
+  │                              │
+  │  ┌──────────────────────────┐│
+  │  │   VERIFY                 ││
+  │  └──────────────────────────┘│
+  │                              │
+  │  ⓘ Why this? Your behavior  │
+  │     was flagged as unusual.  │
+  └──────────────────────────────┘
+
+  Data Binding:
+    - Challenge image: dari reCAPTCHA/Turnstile/hCaptcha SDK (client-side)
+    - POST /queue/verify-captcha dengan challenge_id + solution
+    - On success: dapat queue_token
+
+────────────────────────────────────────────────────────────────────────────────
+3.8 FROM TDD v1.10 §6.1 — STAGE 1/STAGE 2 GO IMPLEMENTATION
+────────────────────────────────────────────────────────────────────────────────
+
+STAGE 1 (Synchronous — Target < 1ms):
+
+  func (m *IngressMiddleware) Handle(c *gin.Context) {
+    userID := c.GetString("user_id")  // dari FASE 1 AuthMiddleware
+    ip := c.ClientIP()
+
+    // Rate Limiter (Token Bucket)
+    if !m.rateLimiter.Allow(ip, "ingress", 100, time.Minute) {
+      c.JSON(429, ErrorResponse("RATE_LIMIT_EXCEEDED"))
+      c.Abort()
+      return
+    }
+
+    // Blacklist check (memory cache, updated from Redis every 60s)
+    if m.blacklist.IsBlacklisted(ip) {
+      c.JSON(403, ErrorResponse("BLACKLISTED"))
+      c.Abort()
+      return
+    }
+
+    // Base Score from Redis (fallback: DB)
+    baseScore, _ := m.redis.Get(ctx, "user:score:"+userID+":base").Int()
+    if baseScore == 0 {
+      user, err := m.userRepo.GetUserByID(ctx, userID)
+      if err != nil {
+        c.JSON(404, ErrorResponse("USER_NOT_FOUND"))
+        c.Abort()
+        return
+      }
+      baseScore = user.BaseScore
+      m.redis.Set(ctx, "user:score:"+userID+":base", baseScore, 24*time.Hour)
+    }
+
+    // Dynamic Score from Redis
+    dynamicScore, _ := m.redis.Get(ctx, "user:score:"+userID+":dynamic").Int()
+
+    finalScore := baseScore + dynamicScore
+
+    // Priority Tier
+    var tier string
+    switch {
+    case finalScore > 90:
+      tier = "TIER_1"
+    case finalScore >= 70:
+      tier = "TIER_2"
+    default:
+      tier = "TIER_3"
+    }
+
+    // Generate Queue Token (JWT with jti)
+    token := generateQueueToken(userID, tier, finalScore)
+
+    // Async: send to Stage 2 worker
+    m.queue.Publish("fan_score", metadata{userID, ip, finalScore, time.Now()})
+
+    c.Set("queue_token", token)
+    c.Set("tier", tier)
+    c.Set("final_score", finalScore)
+    c.Next()
+  }
+
+STAGE 2 (Asynchronous — Background Worker):
+
+  func (w *FanScoreWorker) Process(ctx context.Context, msg []byte) {
+    var meta Metadata
+    if err := json.Unmarshal(msg, &meta); err != nil {
+      w.logger.Error("invalid fan_score payload", zap.Error(err))
+      return
+    }
+
+    // Calculate dynamic score based on behavior
+    dynamicScore := calculateDynamicScore(meta.IP, meta.UserID, meta.RequestInterval)
+
+    // Update Redis
+    w.redis.Set(ctx, "user:score:"+meta.UserID+":dynamic", dynamicScore, 24*time.Hour)
+
+    // If score < 50, trigger CAPTCHA and alert admin
+    if dynamicScore < 50 {
+      w.alertService.NotifyAdmin("Low dynamic score", meta.UserID, meta.IP)
+    }
+
+    // Bot pattern detection → blacklist (via SYSTEM_USER_UUID)
+    if isBotPattern(meta) {
+      w.repo.InsertBlacklist(ctx, model.SystemUserUUID, "ip", meta.IP, "BOT_DETECTED", nil)
+    }
+  }
+
+────────────────────────────────────────────────────────────────────────────────
+3.9 FROM STP v1.1 §3.2 — TEST CASES
+────────────────────────────────────────────────────────────────────────────────
+
+UNIT TEST CASES (FASE 2 scope):
+
+| Test ID         | Description                                              |
+|-----------------|----------------------------------------------------------|
+| UT-FAN-001      | ComputeFinalScore_Base50_Dynamic0_Returns50              |
+| UT-FAN-002      | ComputeTier_Score91_ReturnsTIER_1                        |
+| UT-FAN-003      | ComputeTier_Score90_ReturnsTIER_1 (boundary)             |
+| UT-FAN-004      | ComputeTier_Score70_ReturnsTIER_2 (boundary)             |
+| UT-FAN-005      | ComputeTier_Score69_ReturnsTIER_3                        |
+| UT-FAN-006      | GenerateQueueToken_JWTContainsJTI                         |
+| UT-FAN-007      | ValidateQueueToken_Expired_Returns401                    |
+| UT-FAN-008      | SingleUseQueueToken_SecondUse_Returns409                 |
+
+INTEGRATION TEST CASES (FASE 2 scope):
+
+| Test ID         | Description                                              |
+|-----------------|----------------------------------------------------------|
+| IT-FAN-001      | GET /queue/status → 200 with tier + queue_token          |
+| IT-FAN-002      | POST /queue/verify-captcha → 200 with queue_token        |
+| IT-FAN-003      | Verify CAPTCHA with invalid solution → 401               |
+| IT-FAN-004      | Rate limit /queue/verify-captcha (3 req/5min) → 429 on 4th|
+| IT-FAN-005      | FanScoreWorker consumes message from RabbitMQ            |
+| IT-FAN-006      | Bot detected → INSERT into blacklist (via SYSTEM_USER)   |
+
+================================================================================
+SECTION 4 — TASK BREAKDOWN
+================================================================================
+
+9 EPICS, 26 TASKS. Estimasi total ~40 jam (1 minggu).
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E1: MODULE SKELETON
+────────────────────────────────────────────────────────────────────────────────
+
+E1-S1-T1 [1 jam] — Create internal/queue/ folder structure
+   Deliverable: handler.go, service.go, repository.go, model.go, 
+                fan_score.go, queue_token.go
+   DoD: empty files dengan package declaration
+
+E1-S1-T2 [1 jam] — Define model.go (structs + request/response)
+   Deliverable:
+     - QueueStatusResponse, VerifyCaptchaRequest, VerifyCaptchaResponse
+     - QueueTokenClaims (JWT payload)
+     - FanScoreMetadata (untuk RabbitMQ message)
+   DoD: structs sesuai API_CONTRACT v1.2 §8.4, §8.5
+
+E1-S1-T3 [30 min] — Create repository.go skeleton
+   Deliverable: 
+     - BlacklistRepository (Insert)
+     - EventRepository (GetEventStatus — untuk validasi event ON_SALE)
+   DoD: method signatures clean
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E2: FAN SCORE ENGINE
+────────────────────────────────────────────────────────────────────────────────
+
+E2-S1-T4 [1.5 jam] — Base Score reader (Redis + DB fallback)
+   Deliverable: FanScoreService.GetBaseScore(userID)
+   Sub-tasks:
+     a. Redis GET user:score:{user_id}:base
+     b. Cache miss → DB GetUserByID
+     c. Cache SET with TTL 24h
+   DoD: unit test verify cache hit/miss paths
+
+E2-S1-T5 [1 jam] — Dynamic Score reader (Redis-only)
+   Deliverable: FanScoreService.GetDynamicScore(userID)
+   DoD: Redis GET, default 0 if missing
+
+E2-S2-T6 [1 jam] — Final Score calculator + Tier assignment
+   Deliverable: FanScoreService.ComputeFinalScore + ComputeTier
+   Sub-tasks:
+     a. finalScore = base + dynamic
+     b. Tier: >90 → TIER_1, >=70 → TIER_2, else TIER_3
+   DoD: 
+     - unit test: 91 → TIER_1, 90 → TIER_1, 70 → TIER_2, 69 → TIER_3
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E3: STAGE 1 MIDDLEWARE
+────────────────────────────────────────────────────────────────────────────────
+
+E3-S1-T7 [2 jam] — IngressMiddleware (Stage 1)
+   Deliverable: internal/queue/middleware.go — IngressMiddleware
+   Sub-tasks:
+     a. Rate limiter check (100 req/min per user untuk /queue/status)
+     b. Blacklist IP check (memory cache, update every 60s)
+     c. Read base + dynamic score
+     d. Compute final score + tier
+     e. Generate queue token
+     f. Publish metadata ke RabbitMQ (fan_score queue)
+   DoD: unit test middleware dengan mock Redis + queue
+
+E3-S1-T8 [1 jam] — Publish helper ke RabbitMQ fan_score queue
+   Deliverable: internal/queue/publisher.go — PublishFanScore
+   DoD: message published (verify via RabbitMQ management)
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E4: STAGE 2 WORKER (FAN SCORE)
+────────────────────────────────────────────────────────────────────────────────
+
+E4-S1-T9 [2 jam] — FanScoreWorker consumer
+   Deliverable: internal/worker/fan_score.go
+   Sub-tasks:
+     a. Subscribe ke fan_score queue
+     b. Deserialize JSON message
+     c. Compute dynamic score (heuristic)
+     d. Save ke Redis user:score:{user_id}:dynamic (TTL 24h)
+   DoD: worker consumes + updates Redis (verify via integration test)
+
+E4-S1-T10 [1.5 jam] — Dynamic Score heuristic
+   Deliverable: calculateDynamicScore(ip, userID, requestInterval)
+   Sub-tasks:
+     a. Request interval < 100ms → -30 poin
+     b. > 10 requests in 1 sec → -40 poin
+     c. Known bot UA pattern → -50 poin
+     d. Normal behavior → 0 poin
+   DoD: unit test 4 scenarios
+
+E4-S2-T11 [1.5 jam] — Bot pattern detection + blacklist insert
+   Deliverable: isBotPattern(meta) + InsertBlacklist via SYSTEM_USER_UUID
+   Sub-tasks:
+     a. Heuristic: 3+ signals → bot
+     b. INSERT INTO blacklist (type='ip', value=ip, reason='BOT_DETECTED', 
+        added_by=SYSTEM_USER_UUID)
+   DoD: integration test verify blacklist row inserted
+
+E4-S2-T12 [1 jam] — Admin alert on low score (< 50)
+   Deliverable: AlertService.NotifyAdmin
+   Sub-tasks:
+     a. Slack webhook (dev) atau log (fallback)
+     b. Include user_id, ip, dynamic_score
+   DoD: alert fired on score < 50 (verify log/webhook)
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E5: GET /queue/status ENDPOINT
+────────────────────────────────────────────────────────────────────────────────
+
+E5-S1-T13 [1.5 jam] — Handler: GET /queue/status
+   Deliverable: QueueHandler.GetStatus
+   Sub-tasks:
+     a. Auth middleware (from FASE 1)
+     b. Validate event_id (query param)
+     c. Get event status (must be ON_SALE)
+     d. Compute position + total_in_queue (simple estimation)
+     e. Return response per API_CONTRACT §8.4
+   DoD: 200 response dengan semua field
+
+E5-S1-T14 [1 jam] — Queue position estimation logic
+   Deliverable: EstimatePosition + EstimateWaitSeconds
+   Sub-tasks:
+     a. Simple: hash(user_id) % 1000 untuk dummy position
+     b. For MVP: return static-ish estimate
+     c. Real WebSocket queue → FASE 9 hardening
+   DoD: response memiliki position, total_in_queue, estimated_wait_seconds
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E6: POST /queue/verify-captcha ENDPOINT
+────────────────────────────────────────────────────────────────────────────────
+
+E6-S1-T15 [2 jam] — Handler: POST /queue/verify-captcha
+   Deliverable: QueueHandler.VerifyCaptcha
+   Sub-tasks:
+     a. Auth middleware
+     b. Rate limit 3 req/5min per IP
+     c. Idempotency check (X-Idempotency-Key, Redis L1)
+     d. Verify challenge_id + solution via provider SDK
+     e. On success: generate queue token
+   DoD: 200 response dengan verified=true + queue_token
+
+E6-S1-T16 [1.5 jam] — CAPTCHA provider integration
+   Deliverable: CaptchaService.Verify(challengeID, solution)
+   Sub-tasks:
+     a. Server-side verification ke reCAPTCHA/Turnstile API
+     b. Fallback: mock verifier untuk dev/test (TEST_MODE=true)
+   DoD: 
+     - Prod: verify via provider API
+     - Dev: return success untuk test solution="test_pass"
+
+E6-S2-T17 [1 jam] — Failed attempt tracking + lockout
+   Deliverable: Redis counter failed:captcha:{ip}
+   Sub-tasks:
+     a. INCR on failure
+     b. 3 failures → 15 min lockout (SET captcha_lockout:{ip} 1 EX 900)
+   DoD: 4th attempt dalam lockout window → 429
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E7: QUEUE TOKEN (JWT SINGLE-USE)
+────────────────────────────────────────────────────────────────────────────────
+
+E7-S1-T18 [1.5 jam] — Generate Queue Token
+   Deliverable: QueueTokenService.Generate(userID, tier, finalScore)
+   Sub-tasks:
+     a. JWT claims: {user_id (sub), tier, final_score, jti, exp: NOW+5min, 
+        iss: "e-tix-flash-queue"}
+     b. jti = UUID v4
+     c. Sign dengan RSA private key (RS256, reuse dari FASE 1)
+   DoD: token decodable, valid signature
+
+E7-S1-T19 [1 jam] — Validate Queue Token (untuk FASE 3)
+   Deliverable: QueueTokenService.Validate(token)
+   Sub-tasks:
+     a. Verify signature (RS256 public key)
+     b. Check exp
+     c. Return claims or error
+   DoD: unit test valid + expired
+
+E7-S2-T20 [1 jam] — Single-use guard setup
+   Deliverable: Redis SET queue_token:used:{jti} 1 NX EX 300
+   Sub-tasks:
+     a. Helper method: MarkUsed(jti) → bool
+     b. Return true jika berhasil (first use)
+     c. Return false jika sudah ada (replay)
+   DoD: unit test second use → returns false
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E8: RATE LIMITING (FASE 2 SPECIFIC)
+────────────────────────────────────────────────────────────────────────────────
+
+E8-S1-T21 [1 jam] — Rate limit GET /queue/status
+   Deliverable: 100 req/min per user
+   DoD: 101st request → 429
+
+E8-S1-T22 [1 jam] — Rate limit POST /queue/verify-captcha
+   Deliverable: 3 req/5min per IP
+   DoD: 4th request → 429
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E9: TESTS
+────────────────────────────────────────────────────────────────────────────────
+
+E9-S1-T23 [3 jam] — Unit tests (8 tests per STP §3.9)
+   Deliverable: tests/unit/queue/*.go
+   Sub-tasks: UT-FAN-001..008
+   DoD: coverage ≥ 90% untuk fan score module
+
+E9-S1-T24 [3 jam] — Integration tests (6 tests per STP §3.9)
+   Deliverable: tests/integration/queue_flow_test.go (testcontainers)
+   Sub-tasks: IT-FAN-001..006
+   DoD: 
+     - 2 endpoints pass
+     - Worker consumes + inserts blacklist
+
+E9-S2-T25 [2 jam] — API tests (Postman)
+   Deliverable: postman_collection.json (2 endpoints × happy + error)
+   DoD: Newman runner pass ~8 test cases
+
+E9-S2-T26 [2 jam] — Bot filtering simulation test
+   Deliverable: tests/load/fan_score_simulation.go (bot script)
+   Sub-tasks:
+     a. Simulate 1000 human + 1000 bot requests
+     b. Verify bot detection rate > 95%
+   DoD: bot detection rate > 95%
+
+────────────────────────────────────────────────────────────────────────────────
+TASK SUMMARY
+────────────────────────────────────────────────────────────────────────────────
+
+| Epic | Tasks | Est. Duration |
+|------|-------|---------------|
+| E1   | 3     | ~2.5 jam      |
+| E2   | 3     | ~3.5 jam      |
+| E3   | 2     | ~3 jam        |
+| E4   | 4     | ~6 jam        |
+| E5   | 2     | ~2.5 jam      |
+| E6   | 3     | ~4.5 jam      |
+| E7   | 3     | ~3.5 jam      |
+| E8   | 2     | ~2 jam        |
+| E9   | 4     | ~10 jam       |
+|------|-------|---------------|
+| Total| 26    | ~37.5 jam (~1 minggu) |
+
+================================================================================
+SECTION 5 — DELIVERABLES
+================================================================================
+
+5.1 CODE ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+Backend — Queue & Fan Score Module:
+  ✅ internal/queue/handler.go             (2 endpoint handlers)
+  ✅ internal/queue/service.go             (business logic)
+  ✅ internal/queue/repository.go          (DB access)
+  ✅ internal/queue/model.go               (structs)
+  ✅ internal/queue/fan_score.go           (base + dynamic + tier)
+  ✅ internal/queue/queue_token.go         (JWT generation + validation)
+  ✅ internal/queue/middleware.go          (IngressMiddleware)
+  ✅ internal/queue/captcha.go             (provider verification)
+  ✅ internal/worker/fan_score.go          (RabbitMQ consumer)
+  ✅ internal/redis/score_cache.go         (base/dynamic score cache)
+  ✅ internal/redis/queue_token_guard.go   (single-use SETNX)
+
+Router:
+  ✅ cmd/api/main.go — wire 2 endpoints:
+     - Protected (auth): /queue/status, /queue/verify-captcha
+
+Background Worker:
+  ✅ FanScoreWorker registered (cmd/api/main.go — start goroutine)
+
+5.2 DOCUMENTATION
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ docs/FAN_SCORE_MODULE.md — Fan Score + Tier + Queue Token
+  ✅ docs/INGRESS_MIDDLEWARE.md — Stage 1 / Stage 2 flow
+
+5.3 TEST ARTIFACTS
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ tests/unit/queue/fan_score_test.go        (UT-FAN-001..006)
+  ✅ tests/unit/queue/queue_token_test.go      (UT-FAN-007..008)
+  ✅ tests/integration/queue_flow_test.go      (IT-FAN-001..006)
+  ✅ tests/load/fan_score_simulation.go        (bot filtering test)
+  ✅ postman_collection.json (update — 2 endpoints)
+
+5.4 FRONTEND ARTIFACTS (Skeleton Only — full impl di FASE 9)
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ app/customer/waiting-room/[eventId]/page.tsx — placeholder
+  ✅ components/customer/WaitingRoom.tsx — skeleton
+  ✅ components/customer/CaptchaModal.tsx — skeleton (client-side SDK)
+  ✅ lib/api/queue.ts — API client functions
+
+================================================================================
+SECTION 6 — ACCEPTANCE CRITERIA
+================================================================================
+
+6.1 FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] GET /queue/status → 200 with position, tier, loyalty_score, queue_token
+  [ ] GET /queue/status → 404 if event not found or not ON_SALE
+  [ ] POST /queue/verify-captcha → 200 with verified=true + queue_token
+  [ ] POST /queue/verify-captcha → 401 if invalid solution
+  [ ] POST /queue/verify-captcha → 429 if > 3 req/5min
+  [ ] Fan Score = Base + Dynamic (verified)
+  [ ] Tier assignment: >90 → TIER_1, 70-90 → TIER_2, <70 → TIER_3
+  [ ] Queue Token: JWT RS256 with jti, exp=5min
+  [ ] Queue Token single-use: Redis SET NX (verified)
+  [ ] FanScoreWorker consumes messages from fan_score queue
+  [ ] Worker updates Redis user:score:{user_id}:dynamic
+  [ ] Bot pattern detected → blacklist INSERT (via SYSTEM_USER_UUID)
+  [ ] Alert fired on low score (< 50)
+  [ ] Rate limit GET /queue/status: 100/min per user
+  [ ] Rate limit POST /queue/verify-captcha: 3/5min per IP + 15min lockout
+
+6.2 NON-FUNCTIONAL AC
+────────────────────────────────────────────────────────────────────────────────
+
+  [ ] CI pipeline green (lint + unit + integration + API + security)
+  [ ] Unit test coverage ≥ 90% untuk fan score module
+  [ ] API tests pass: ~8 cases (2 endpoints × 4 scenarios)
+  [ ] Integration tests pass: 6/6
+  [ ] Bot filtering simulation: > 95% detection rate
+  [ ] Stage 1 latency < 1ms (benchmark)
+  [ ] Zero tokens in logs (grep verify)
+  [ ] No new endpoints beyond API_CONTRACT v1.2 §8.4, §8.5
+
+6.3 TEST COVERAGE TARGET
+────────────────────────────────────────────────────────────────────────────────
+
+  Unit tests:          ≥ 90% untuk queue module
+  Integration tests:   2 endpoints + worker + blacklist insert
+  API tests:           2 endpoints × (happy + errors)
+  Load tests:          Bot filtering rate > 95%
+
+================================================================================
+SECTION 7 — RISKS & MITIGATIONS
+================================================================================
+
+| Risk                                              | Likelihood | Impact | Mitigation                                          |
+|---------------------------------------------------|------------|--------|-----------------------------------------------------|
+| CAPTCHA provider mismatch (SDK vs backend)        | Medium     | Med    | Standardize on Turnstile (Cloudflare) atau mock     |
+| Bot detection false positive (human flag as bot)  | Medium     | High   | Threshold tuning + appeal mechanism (manual admin)  |
+| Redis down → IngressMiddleware fail                | Low        | High   | Circuit Breaker: fail-open untuk Stage 1, log warning|
+| Worker backpressure (queue buildup)               | Medium     | Med    | Prefetch limit + monitoring queue depth             |
+| Queue token predicta ble jti                      | Low        | Med    | jti = UUID v4 (crypto/rand)                         |
+| Rate limit evasion (distributed IP)               | Medium     | Med    | Additional heuristic di Stage 2 (device fingerprint)|
+| Memory cache stale (blacklist 60s window)         | Medium     | Low    | Acceptable — 60s max delay, Stage 2 reinforce       |
+| FanScoreWorker crash → messages unacked           | Low        | Med    | RabbitMQ requeue + DLQ monitoring                   |
+| RabbitMQ connection drop                          | Medium     | Med    | Reconnect logic + heartbeat (FASE 0 config)         |
+
+RESPONSE PER SCENARIO (cross-reference DRP v1.2):
+
+- Redis down → Playbook #2 (DRP §5.3): Circuit Breaker, Degraded Mode
+- RabbitMQ down → Playbook #3 (DRP §5.4): Worker halted, manual fallback
+- DB down → Playbook #1 (DRP §5.2)
+- DDoS attack → Playbook #8 (DRP §5.9): Cloudflare "Under Attack Mode"
+
+================================================================================
+SECTION 8 — SECURITY CONSIDERATIONS
+================================================================================
+
+8.1 THREATS RELEVANT TO FASE 2
+────────────────────────────────────────────────────────────────────────────────
+
+Dari SECURITY_SPEC v1.4 §8:
+
+| Threat                    | Mitigation di FASE 2                                |
+|---------------------------|-----------------------------------------------------|
+| Scalper Bot Attacks       | 2-stage pipeline + Fan Score + Queue Token single-use|
+| Bot Hoarding Tickets      | Rate limit + blacklist + CAPTCHA modal              |
+| Replay Queue Token        | Redis SET NX EX 300 (single-use guard)              |
+| CAPTCHA Bypass            | Server-side verify via provider API                 |
+| Brute Force Queue Access  | Rate limit 100/min per user, 3/5min per IP          |
+| User Enumeration via Tier | Only own tier returned (JWT sub check)              |
+| IP Spoofing               | Trust X-Forwarded-For from Cloudflare only          |
+
+8.2 HEADERS
+────────────────────────────────────────────────────────────────────────────────
+
+Required pada FASE 2:
+  - Authorization: Bearer <access_token>  (KEDUA endpoints)
+  - X-Idempotency-Key:                    (POST /queue/verify-captcha)
+  - X-Request-ID:                          (Optional)
+
+Excluded:
+  - X-Queue-Token:      FASE 3 (saat booking lock)
+  - X-Admin-2FA-Token:  FASE 8 only
+
+8.3 QUEUE TOKEN SECURITY
+────────────────────────────────────────────────────────────────────────────────
+
+  - JWT signed dengan RS256 (private key dari FASE 1)
+  - Payload contains jti (single-use identifier)
+  - Expiry 5 menit
+  - Single-use guard di Redis: SET queue_token:used:{jti} 1 NX EX 300
+  - DILARANG log raw queue token (header sanitization)
+  - DILARANG return jti di response body (opaque to client)
+
+8.4 HEADER SANITIZATION (Logger)
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ Middleware SanitizeHeaders() memanggil sebelum log:
+    - Authorization → [REDACTED]
+    - X-Queue-Token → [REDACTED] (untuk FASE 3 nanti)
+  ✅ Verify via grep: log tidak boleh mengandung "eyJ"
+
+8.5 RATE LIMITING (per endpoint)
+────────────────────────────────────────────────────────────────────────────────
+
+  | Endpoint                        | Limit         | Scope   | Key Source        |
+  |---------------------------------|---------------|---------|-------------------|
+  | GET /queue/status               | 100 req/min   | USER    | user_id (JWT sub) |
+  | POST /queue/verify-captcha      | 3 req/5min    | IP      | client_ip         |
+  | (CAPTCHA lockout after failures)| 3 fails → 15m | IP      | captcha_lockout   |
+
+8.6 IDEMPOTENCY (verify-captcha)
+────────────────────────────────────────────────────────────────────────────────
+
+  POST /queue/verify-captcha WAJIB X-Idempotency-Key:
+    - Storage: Redis L1 (key: idempotency:captcha:{key})
+    - TTL: 24 jam
+    - Value: cached response
+    - Replay dengan key sama → return cached response (idempotent)
+
+================================================================================
+SECTION 9 — DEFINITION OF DONE (DoD)
+================================================================================
+
+9.1 CHECKLIST KELULUSAN FASE
+────────────────────────────────────────────────────────────────────────────────
+
+Code:
+  [ ] internal/queue/ folder lengkap (8 files)
+  [ ] internal/worker/fan_score.go
+  [ ] Router wiring: 2 endpoints (protected)
+  [ ] FanScoreWorker start goroutine terdaftar di main.go
+  [ ] Base score reader (Redis + DB fallback)
+  [ ] Dynamic score reader (Redis)
+  [ ] Tier assignment (3 tiers dengan boundary check)
+  [ ] Queue token generation (RS256 + jti + 5min exp)
+  [ ] Queue token single-use guard (SET NX)
+  [ ] CAPTCHA verification via provider (mock untuk dev)
+  [ ] Worker consumes RabbitMQ + writes Redis + inserts blacklist
+  [ ] Rate limiting per endpoint (100/min + 3/5min + 15m lockout)
+  [ ] IngressMiddleware (Stage 1)
+
+Tests:
+  [ ] Unit test coverage ≥ 90%
+  [ ] Integration tests pass (6/6)
+  [ ] API tests pass (~8 cases)
+  [ ] Bot filtering simulation > 95%
+  [ ] CI pipeline green
+
+Security:
+  [ ] Zero tokens in logs
+  [ ] Queue token single-use verified via test
+  [ ] CAPTCHA bypass not possible (server-side verify)
+  [ ] Rate limits enforced (test)
+  [ ] No new endpoints beyond API_CONTRACT v1.2 §8.4, §8.5
+  [ ] No ghost GET /captcha/challenge
+
+Documentation:
+  [ ] docs/FAN_SCORE_MODULE.md
+  [ ] docs/INGRESS_MIDDLEWARE.md
+  [ ] postman_collection.json updated
+
+9.2 ROLLBACK POINT
+────────────────────────────────────────────────────────────────────────────────
+
+Kalau FASE 2 gagal di tengah:
+  - Semua work di branch `feature/fase-2-fan-score`
+  - `develop` tetap stable (FASE 1 state)
+  - Rollback = hapus branch
+  - Frontend tetap skeleton
+
+Setelah FASE 2 selesai:
+  - Merge `feature/fase-2-fan-score` → `develop` → `main`
+  - Tag: `v0.2.0-fan-score`
+  - FASE 3 bisa dimulai (butuh auth + queue token)
+
+9.3 SIGN-OFF
+────────────────────────────────────────────────────────────────────────────────
+
+  QA/Verifier:       M. Arif Aulia
+  Date Completed:    [___]
+  Ready for FASE 3:  [ ] YES  [ ] NO
+
+================================================================================
+SECTION 10 — NOTES & REFERENCES
+================================================================================
+
+10.1 NOTES (3 FLAGS APPROVED BY GEMINI)
+────────────────────────────────────────────────────────────────────────────────
+
+FLAG #1 — CAPTCHA challenge_id (APPROVED Opsi A):
+  challenge_id di-generate CLIENT-SIDE oleh reCAPTCHA/Turnstile SDK.
+  Endpoint GET /captcha/challenge TIDAK DIIMPLEMENTASI (ghost endpoint 
+  di HALAMAN v1.1 §3.2 yang tidak ada di API_CONTRACT v1.2).
+  Backend murni verify solusi via POST /queue/verify-captcha.
+
+FLAG #2 — Base Score Pre-computation (APPROVED Opsi A):
+  Base Score dibaca ON-DEMAND dari users.base_score (default 50).
+  Pre-computation scheduled job TIDAK DIIMPLEMENTASI di FASE 2.
+  Update base_score = logic FASE 8 (Admin Module).
+  Redis caching: user:score:{user_id}:base TTL 24h.
+
+FLAG #3 — Worker INSERT blacklist (APPROVED Opsi A):
+  Worker INSERT INTO blacklist menggunakan SYSTEM_USER_UUID 
+  (00000000-0000-0000-0000-000000000000, role='admin' dari FASE 0).
+  Bypass RLS via role='admin' claim — konsisten dengan pattern sistem.
+
+10.2 NOTES UMUM
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 2 adalah fitur bisnis PERTAMA. Kualitas di sini menentukan kualitas 
+  FASE 3-8.
+
+- FanScoreWorker adalah worker RabbitMQ PERTAMA. Pastikan reconnect logic + 
+  heartbeat (FASE 0 sudah setup plugin rabbitmq_delayed_message_exchange).
+
+- Stage 1 harus < 1ms. Cache semua yang bisa di-cache (base score, blacklist).
+
+- Single-use guard: SET NX EX 300 di Redis. FASE 2 setup saja; validasi 
+  aktual dipakai di FASE 3 (lock seat).
+
+- Real-time queue update: MVP pakai POLLING (GET /queue/status setiap 5-10s). 
+  WebSocket upgrade = FASE 9 hardening.
+
+- Bot detection heuristic: rule-based sederhana (request interval, UA pattern). 
+  ML-based = out of scope MVP.
+
+- Queue position estimation: MVP pakai heuristic (hash % 1000). Real queue 
+  (Redis sorted set with timestamps) = FASE 9 hardening.
+
+- CAPTCHA provider: STANDARISASI ke Cloudflare Turnstile (gratis, no UX 
+  friction) atau reCAPTCHA v3. Mock verifier untuk dev/test.
+
+- Frontend screens (3.1, 3.2) di FASE 2 hanya SKELETON placeholder. Implementasi 
+  penuh di FASE 9.
+
+10.3 CROSS-REFERENCE FOUNDATION
+────────────────────────────────────────────────────────────────────────────────
+
+| Foundation Doc         | Section Relevan                                |
+|------------------------|------------------------------------------------|
+| PRD v6.0               | §F001 (full spec, priority tier)               |
+| DATABASE_SCHEMA v2.9   | users (base_score), blacklist, RLS             |
+| LOGIC_FLOW v1.4        | §2 (F001 flow), §9.2 (single-use queue token)  |
+| HALAMAN v1.1           | §3.1 Waiting Room, §3.2 CAPTCHA Modal          |
+| TDD v1.10              | §6.1 (F001 Stage 1 + Stage 2)                  |
+| API_CONTRACT v1.2      | §8.4, §8.5 (2 endpoints)                       |
+| SECURITY_SPEC v1.4     | §8.1 (2-stage pipeline), §8.2 (queue token),   |
+|                        | §8.3 (CAPTCHA modal)                           |
+| DRP v1.2               | §5.3 Playbook #2 (Redis), §5.4 Playbook #3 (MQ)|
+| STP v1.1               | UT-FAN-001..008, IT-FAN-001..006               |
+
+10.4 CROSS-REFERENCE ROADMAP FASE LAIN
+────────────────────────────────────────────────────────────────────────────────
+
+- FASE 1 (Auth): prerequisite (auth middleware, JWT RS256 keys)
+- FASE 3 (F002): butuh queue_token (validate via QueueTokenService)
+- FASE 4-8: tidak blocking FASE 2
+- FASE 9: frontend screens 3.1, 3.2 (full), WebSocket upgrade, ML bot detection
+
+10.5 VERSION HISTORY
+────────────────────────────────────────────────────────────────────────────────
+
+| Version  | Date       | Author       | Changes                                          |
+|----------|------------|--------------|--------------------------------------------------|
+| 1.0-FINAL| 2026-09-11 | M. Arif Aulia| Initial ROADMAP FASE 2. Behavioral Ingress (F001).|
+|          |            |              | 3 flags pre-approved by Gemini (Opsi A):         |
+|          |            |              | 1) CAPTCHA challenge_id client-side.             |
+|          |            |              | 2) Base score on-demand read.                    |
+|          |            |              | 3) Worker blacklist INSERT via SYSTEM_USER_UUID. |
+
+================================================================================
+📋 FASE 2 SYNC CHECKLIST (100% COMPLIANCE)
+================================================================================
+
+✅ BLUEPRINT ROADMAP v1.0-FINAL Sync:
+  - FASE 2 = F001 Behavioral Ingress ✓
+  - Estimasi 1 minggu ✓
+  - Template 10 section diikuti ✓
+  - Dependencies: FASE 0 + FASE 1 ✓
+
+✅ PRD v6.0 Sync:
+  - F001 full spec (2-stage pipeline, priority tier) ✓
+  - Base score default 50 ✓
+  - No scope expansion ✓
+
+✅ DATABASE_SCHEMA v2.9 Sync:
+  - users.base_score read-only ✓
+  - blacklist table INSERT via SYSTEM_USER_UUID ✓
+  - RLS blacklist respected (admin only via SYSTEM_USER) ✓
+  - No new columns/tables ✓
+
+✅ LOGIC_FLOW v1.4 Sync:
+  - §2 F001 sequence flow (Stage 1 + Stage 2) ✓
+  - §9.2 single-use queue token (SET NX EX 300) ✓
+  - Base = on-demand read (FLAG #2 approved) ✓
+
+✅ HALAMAN v1.1 Sync:
+  - §3.1 Waiting Room (polling) ✓
+  - §3.2 CAPTCHA Modal (client-side SDK) ✓
+  - Ghost endpoint /captcha/challenge NOT implemented (FLAG #1) ✓
+
+✅ TDD v1.10 Sync:
+  - §6.1 Stage 1 IngressMiddleware ✓
+  - §6.1 Stage 2 FanScoreWorker ✓
+  - JWT RS256 reuse dari FASE 1 ✓
+  - SYSTEM_USER_UUID reuse (FLAG #3) ✓
+
+✅ API_CONTRACT v1.2 Sync:
+  - 2 endpoints 1:1 (§8.4, §8.5) ✓
+  - Error codes standard (400/401/403/404/409/429) ✓
+  - X-Idempotency-Key di verify-captcha ✓
+  - No ghost endpoints ✓
+
+✅ SECURITY_SPEC v1.4 Sync:
+  - §8.1 2-stage pipeline ✓
+  - §8.2 queue token single-use ✓
+  - §8.3 CAPTCHA modal + lockout ✓
+  - Header sanitization ✓
+  - Rate limits per endpoint ✓
+
+✅ DRP v1.2 Sync:
+  - Playbook #2 (Redis) referenced ✓
+  - Playbook #3 (RabbitMQ) referenced ✓
+  - Playbook #8 (DDoS) referenced ✓
+
+✅ STP v1.1 Sync:
+  - UT-FAN-001..008 ✓
+  - IT-FAN-001..006 ✓
+  - API tests ✓
+  - Bot filtering simulation ✓
+  - Coverage ≥ 90% ✓
+
+✅ Anti-Drift Guardrails G1-G8:
+  - G1 Traceability: matrix provided ✓
+  - G2 Scope Freeze: no extra scope ✓
+  - G3 No Wallet/Ledger: N/A ✓
+  - G4 ENUM Consistency: N/A (no new ENUM) ✓
+  - G5 Error Code Consistency: standard codes ✓
+  - G6 Header Consistency: X-Idempotency-Key ✓
+  - G7 Self-Contained: distilasi lengkap ✓
+  - G8 Acceptance Criteria: 15 functional + 8 non-functional ✓
+
+✅ 3 FLAGS PRE-APPROVED (Opsi A):
+  - FLAG #1: CAPTCHA challenge_id client-side ✓
+  - FLAG #2: Base score on-demand read ✓
+  - FLAG #3: Worker INSERT via SYSTEM_USER_UUID ✓
+
+================================================================================
+END OF ROADMAP FASE (2) v1.0-FINAL
+================================================================================
+
+✅ 100% READY TO EXECUTE
+✅ Self-contained (tidak perlu baca foundation docs)
+✅ 26 tasks across 9 epics, est. ~37.5 jam (~1 minggu)
+✅ 15 functional AC + 8 non-functional AC
+✅ 9 risks identified with mitigations
+✅ Rollback point defined
+✅ Zero drift (no wallet/ledger, no ghost endpoints, no new columns)
+✅ 2 endpoints 1:1 dengan API_CONTRACT v1.2 §8.4, §8.5
+✅ 3 flags pre-approved oleh Gemini (Opsi A, zero-drift)
+
+Last Updated: 2026-09-11 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED.

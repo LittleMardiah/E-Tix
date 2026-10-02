@@ -1,0 +1,1517 @@
+================================================================================
+LOGIC FLOW: E-Tix Flash (Smart Ticketing Platform) - v1.4-FINAL
+================================================================================
+
+Version:         1.4-FINAL
+Last Updated:    2026-09-08
+Author:          M. Arif Aulia
+Status:          ✅ 100% PRODUCTION-READY — LOCKED (SYNCHRONIZED WITH PRD & DATABASE SCHEMA)
+
+================================================================================
+📌 BISMILLAH — FINAL VERSION (POST-GEMINI REVIEW #5 — UNIFORM REDIS BITMAP + SECURITY)
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. Executive Summary & Key Principles
+2. Flow F001: Behavioral Ingress & Fan-Score Queueing
+3. Flow F002: Bitmask Multi-Seat Atomic Locking (UNIFORM NATIVE REDIS BITMAP)
+4. Flow F003: Group Split-Pay Execution Engine
+5. Flow F004: Dynamic HMAC QR + Offline Fallback PIN (HASHED PIN)
+6. Flow F004b: Gate Analytics & Post-Event Intelligence
+7. Flow F005: Controlled Secondary Resale Market
+8. Flow F006: Admin Emergency & Reconciliation Tools
+9. Cross-Cutting Concerns
+10. State Machine Summary
+11. Event Flow Summary (Saga Patterns)
+12. Exception Handling Matrix
+
+================================================================================
+1. EXECUTIVE SUMMARY & KEY PRINCIPLES
+================================================================================
+
+Dokumen ini menjelaskan **alur logika bisnis (business logic flow)** untuk E-Tix Flash.
+Setiap flow di bawah ini merujuk pada:
+
+- PRD v6.0-FINAL (F001-F006)
+- DATABASE SCHEMA v2.9-FINAL (tabel, enum, trigger, RLS)
+
+KEY PRINCIPLES (WAJIB DIINGAT):
+
+| Principle | Description |
+|-----------|-------------|
+| **Atomicity** | Semua operasi yang melibatkan beberapa tabel atau wallet WAJIB atomic (ALL or NOTHING). |
+| **Idempotency** | Semua operasi finansial WAJIB mendukung X-Idempotency-Key (L1 Redis + L2 PostgreSQL via payment_obligations.idempotency_key). |
+| **Event-Driven** | Tidak ada polling untuk status payment. Webhook + Delayed Message Queue (RabbitMQ). |
+| **Idempotent Lazy-Check** | Pesan delay TIDAK PERNAH dibatalkan. Worker cek status di T+3 menit dan memutuskan action. |
+| **Circuit Breaker** | Jika Redis down > 100ms, sistem masuk Degraded Mode (fallback ke PostgreSQL FIFO). |
+| **Deadlock Prevention** | Semua multi-row transaction WAJIB menggunakan ORDER BY id ASC. |
+| **Single-Use Token** | Queue Token hanya valid untuk 1 kali penggunaan (cegah replay attack). |
+| **Granular Bit Release** | Release bitmask per-kursi menggunakan SETBIT, tidak pernah overwrite seluruh string. |
+| **Native Redis Bitmap** | F002 UNIFORM menggunakan GETBIT/SETBIT (0-based offset), BUKAN manipulasi string ASCII. |
+| **Hashed Fallback PIN** | Fallback PIN disimpan dan dibandingkan sebagai SHA-256 hash (bukan plain-text). |
+
+================================================================================
+2. FLOW F001: BEHAVIORAL INGRESS & FAN-SCORE QUEUEING
+================================================================================
+
+2.1 OVERVIEW
+
+F001 bertugas menyaring bot dan memberikan akses prioritas kepada fans loyal.
+Alur ini menggunakan pendekatan 2-Stage Pipeline + Pre-Computed Base Score.
+
+2.2 STATE DEFINITION (User Scoring)
+
+| State | Description |
+|-------|-------------|
+| **BASE_SCORE** | Skor awal dihitung pra-acara (umur akun, verifikasi, riwayat pembelian). |
+| **DYNAMIC_SCORE** | Skor tambahan dari perilaku real-time (interval request, pola klik). |
+| **FINAL_SCORE** | BASE_SCORE + DYNAMIC_SCORE. |
+| **TIER_1** | FINAL_SCORE > 90 → Priority access (VIP Fans). |
+| **TIER_2** | FINAL_SCORE 70-90 → Normal access. |
+| **TIER_3** | FINAL_SCORE < 70 → Access after Tier 1 & 2. |
+| **BLACKLISTED** | IP/Device terdeteksi sebagai bot → Diblokir di Stage 1. |
+
+2.3 SEQUENCE FLOW
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     F001: BEHAVIORAL INGRESS FLOW                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[PRE-FLASH SALE: Pre-Computation]
+  │
+  ├─> Sistem hitung BASE_SCORE dari users table:
+  │    - Umur akun: (NOW() - created_at) / 365 hari → +10 poin per tahun
+  │    - Email terverifikasi → +10 poin
+  │    - Phone terverifikasi → +10 poin
+  │    - Total purchases >= 1 → +10 poin
+  │    - Total purchases >= 3 → +30 poin
+  │    - Total purchases >= 5 → +50 poin
+  │    - Simpan di Redis: "user:score:{user_id}:base"
+  │
+  └─> Selesai. Siap menerima request.
+
+[USER REQUEST MASUK]
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 1 (SYNCHRONOUS — Target < 1ms)                                      │
+│ Berjalan di API Gateway / Golang Middleware                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. Rate Limiter (Token Bucket) cek limit per IP/User ID.                 │
+│     └─> Jika exceeded → HTTP 429 + log warning.                           │
+│                                                                             │
+│  2. Validasi header dasar (User-Agent, Accept-Language).                  │
+│                                                                             │
+│  3. Cek blacklist IP di memory cache (diupdate dari Redis setiap 60s).   │
+│     └─> Jika terdaftar → HTTP 403 + log "BLACKLISTED".                    │
+│                                                                             │
+│  4. Baca Base Score dari Redis.                                           │
+│     └─> Jika tidak ada → default = 50 (new user).                         │
+│                                                                             │
+│  5. Baca Dynamic Score dari Redis (jika ada dari request sebelumnya).     │
+│     └─> Jika tidak ada → 0.                                               │
+│                                                                             │
+│  6. Hitung Final Score = Base + Dynamic.                                  │
+│     └─> Tentukan Tier:                                                    │
+│         - > 90 → Tier 1 (Priority)                                        │
+│         - 70-90 → Tier 2 (Normal)                                         │
+│         - < 70 → Tier 3 (Low Priority)                                    │
+│                                                                             │
+│  7. Kirim metadata ke Message Broker (NATS/RabbitMQ) untuk Stage 2.      │
+│     └─> Async, tidak blocking response.                                  │
+│                                                                             │
+│  8. Generate Queue Token (JWT) dengan payload:                            │
+│     { user_id, tier, final_score, jti, expiry: NOW() + 5 minutes }       │
+│     └─> FIXED v1.3: jti (JWT ID) untuk single-use guard.                 │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 2 (ASYNCHRONOUS — Background Worker)                                │
+│ Berjalan di Background Worker (subscriber Message Broker)                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. Worker menerima metadata dari queue.                                  │
+│                                                                             │
+│  2. Hitung Dynamic Score berdasarkan perilaku real-time:                  │
+│     - Interval antar request (terlalu cepat → minus).                    │
+│     - Pola klik (manusia vs bot).                                         │
+│     - Device fingerprint (known bot pattern).                             │
+│                                                                             │
+│  3. Update Final Score = Base + Dynamic.                                  │
+│     └─> Simpan di Redis: "user:score:{user_id}:dynamic" dengan TTL.      │
+│                                                                             │
+│  4. Jika Final Score < 50 → kirim notifikasi ke Admin + CAPTCHA trigger. │
+│                                                                             │
+│  5. Jika terdeteksi pola bot yang jelas → tambahkan ke blacklist.        │
+│     └─> INSERT INTO blacklist (type='ip', value=..., reason='BOT_DETECTED')│
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+2.4 EDGE CASES & HANDLING
+
+| Edge Case | Handling |
+|-----------|----------|
+| Redis down saat Stage 1 | Circuit Breaker → Degraded Mode: Rate limiting dilonggarkan, Base Score default 50, semua user dianggap Tier 2. |
+| User baru tanpa Base Score | Default 50 → diproses sebagai Tier 3. Stage 2 akan update Dynamic Score. |
+| Traffic spike > 50.000 RPS | Circuit Breaker → Virtual Waiting Room via WebSocket Cluster. |
+| Bot detected di Stage 2 | INSERT INTO blacklist (type='device_fingerprint' atau 'ip'). Stage 1 akan memblokir request berikutnya. |
+
+2.5 DATABASE TABLE REFERENCES
+
+| Table | Operation |
+|-------|-----------|
+| users | SELECT base_score, total_purchases, first_purchase_at, last_purchase_at |
+| blacklist | SELECT (check), INSERT (add bot) |
+| Redis | SET/GET user score, TTL management, queue_token:used:{jti} |
+
+================================================================================
+3. FLOW F002: BITMASK MULTI-SEAT ATOMIC LOCKING — UNIFORM NATIVE REDIS BITMAP
+================================================================================
+
+3.1 OVERVIEW
+
+F002 mengunci N-kursi secara atomic menggunakan operasi bitwise di Redis.
+Denah kursi dipartisi per section untuk mengurangi konflik.
+Mapping Seat ID ↔ Bit Position bersifat immutable setelah layout diterbitkan.
+
+⚠️ CRITICAL — UNIFORM NATIVE REDIS BITMAP (FIXED v1.4):
+- F002, F003, F006, dan Section 9.3 WAJIB menggunakan native Redis Bitmap (GETBIT/SETBIT).
+- OFFSET: 0-based (posisi kursi 1 → offset 0).
+- TIDAK PERNAH menggunakan manipulasi string ASCII pada key bitmap.
+
+3.2 STATE DEFINITION (Seat & Booking)
+
+| State | Description |
+|-------|-------------|
+| **AVAILABLE** | Bit = 0, kursi kosong. |
+| **LOCKED** | Bit = 1, kursi sedang di-lock (TTL 3 menit). |
+| **PENDING_SPLIT_PAY** | Kursi terkunci, menunggu pembayaran grup. |
+| **CONFIRMED** | Sudah dibayar, tiket valid. |
+| **RESALE_PENDING** | Sedang dalam proses resale. |
+| **CANCELLED** | Dibatalkan. |
+| **USED** | Sudah di-scan di gate. |
+
+3.3 SEQUENCE FLOW
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    F002: BITMASK ATOMIC LOCKING FLOW                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[USER REQUEST: BOOK SEATS]
+  │
+  ├─> Input: Event ID, Section ID, Seat IDs [10,11,12,13], Queue Token
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. VALIDATE INPUT                                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   - Validasi Queue Token (JWT signature & expiry).                        │
+│   - FIXED v1.3: Validasi single-use token via Redis:                      │
+│     SET "queue_token:used:{jti}" 1 NX EX 300                              │
+│     └─> Jika return nil (token sudah dipakai) → HTTP 409 CONFLICT.       │
+│   - Validasi Event masih dalam periode flash sale.                        │
+│   - Validasi Section ID valid.                                            │
+│   - Validasi semua seat position dalam range 1..total_seats.             │
+│   - Validasi maksimum N = 10 (dari system_config.max_group_seats).       │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. EXECUTE REDIS LUA SCRIPT (ATOMIC — NATIVE BITMAP)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   -- FIXED v1.4: UNIFORM NATIVE REDIS BITMAP                              │
+│   -- Key: "seats:{event_id}:{section_id}:v{layout_version}"               │
+│   -- Argument: ARGV[1] = JSON array of seat positions [10,11,12,13]       │
+│   -- Argument: ARGV[2] = booking_id                                       │
+│   -- Argument: ARGV[3] = JSON booking data                                │
+│   -- CRITICAL: OFFSET 0-based (pos - 1)                                   │
+│                                                                             │
+│   local seats = cjson.decode(ARGV[1])                                    │
+│                                                                             │
+│   -- Step 1: Check all seats availability using GETBIT (0-based)         │
+│   for i, pos in ipairs(seats) do                                          │
+│     local bit_val = redis.call('GETBIT', KEYS[1], pos - 1)               │
+│     if bit_val == 1 then                                                  │
+│       return cjson.encode({status = 'CONFLICT', position = pos})         │
+│     end                                                                   │
+│   end                                                                     │
+│                                                                             │
+│   -- Step 2: Lock all seats using SETBIT                                   │
+│   for i, pos in ipairs(seats) do                                          │
+│     redis.call('SETBIT', KEYS[1], pos - 1, 1)                             │
+│   end                                                                     │
+│                                                                             │
+│   -- Step 3: Store booking mapping with TTL 180 seconds                  │
+│   redis.call('SET', 'booking:'..ARGV[2], ARGV[3], 'EX', 180)             │
+│                                                                             │
+│   return cjson.encode({status = 'SUCCESS', booking_id = ARGV[2]})        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 3. CREATE BOOKING RECORD (DB)                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   INSERT INTO bookings (                                                  │
+│     id, event_id, section_id, leader_user_id,                            │
+│     seat_positions, total_seats, total_amount,                           │
+│     payment_mode, payment_status, expires_at                             │
+│   ) VALUES (                                                              │
+│     booking_id, event_id, section_id, user_id,                           │
+│     '[10,11,12,13]', 4, total_amount,                                   │
+│     payment_mode, 'PENDING', expires_at                                 │
+│   );                                                                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 4. SEND DELAYED MESSAGE (F003)                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Kirim pesan ke RabbitMQ dengan x-delay = 3 menit:                       │
+│   { type: 'RELEASE_SEAT_CHECK', booking_id: booking_id }                 │
+│                                                                             │
+│   Catatan: Pesan ini TIDAK PERNAH DIBATALKAN (Idempotent Lazy-Check).    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+[RETURN RESPONSE]
+  │
+  ├─> Booking ID, Seat Allocation Map, Expiry Timestamp
+  │
+  └─> User melihat timer 3 menit di layar.
+
+3.4 EDGE CASES & HANDLING
+
+| Edge Case | Handling |
+|-----------|----------|
+| Partial Seat Lock Conflict (1 dari 4 kursi sudah diambil) | Lua Script langsung rollback (tidak ada kursi yang di-lock). Return "Seats No Longer Available". |
+| Redis Cluster Failure | Circuit Breaker → Degraded Mode: Semua request masuk waiting room FIFO (di PostgreSQL). |
+| Immutability Violation (layout berubah di tengah) | Pencegahan: layout_version di sections dicek. Jika mismatch, tolak request. |
+| TTL 180 detik habis (belum bayar) | Delayed Message worker di F003 mengeksekusi rollback (release bitmask granular via SETBIT). |
+| Queue Token Replay Attack | Single-use guard via Redis SET NX. Token hanya valid 1 kali. |
+
+3.5 DATABASE TABLE REFERENCES
+
+| Table | Operation |
+|-------|-----------|
+| events | SELECT status, seat_layout_version |
+| sections | SELECT total_seats, bitmask_key, layout_version |
+| bookings | INSERT (booking record) |
+| Redis | GETBIT/SETBIT (NATIVE BITMAP), SET booking mapping (with TTL), SET queue_token:used:{jti} |
+| Message Broker | SEND delayed message (F003) |
+
+================================================================================
+4. FLOW F003: GROUP SPLIT-PAY EXECUTION ENGINE
+================================================================================
+
+4.1 OVERVIEW
+
+F003 mengelola pembayaran grup dengan 2 mode: SPLIT dan BULK.
+Menggunakan event-driven (webhook) + Delayed Message Queue (Idempotent Lazy-Check).
+Tidak ada polling. Tidak ada pembatalan pesan di RabbitMQ.
+
+4.2 STATE DEFINITION (Payment)
+
+| State | Description |
+|-------|-------------|
+| **PENDING** | Belum dibayar. |
+| **PAID** | Sudah dibayar (webhook received). |
+| **EXPIRED** | TTL 3 menit habis, belum lunas. |
+| **FAILED** | Payment gateway reject. |
+| **REFUNDED** | Uang dikembalikan (setelah rollback). |
+| **CANCELLED** | Booking dibatalkan. |
+
+4.3 SEQUENCE FLOW — SPLIT MODE
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   F003: SPLIT MODE — PAYMENT FLOW                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[USER REQUEST: SPLIT MODE]
+  │
+  ├─> Booking ID sudah dibuat di F002
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. CREATE PAYMENT OBLIGATIONS                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   FOR EACH user IN group:                                                 │
+│     INSERT INTO payment_obligations (                                     │
+│       booking_id, user_id, seat_position, amount,                        │
+│       payment_link, idempotency_key, status                              │
+│     ) VALUES (                                                           │
+│       booking_id, user_id, seat_pos, amount,                            │
+│       gen_payment_link(), gen_idempotency_key(), 'PENDING'              │
+│     );                                                                   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. SEND NOTIFICATIONS (Async)                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Kirim link pembayaran ke setiap user via:                               │
+│   - Push Notification (FCM)                                               │
+│   - Email (SES/SendGrid)                                                  │
+│   - SMS (Twilio/Wablas) — untuk Fallback PIN juga                         │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 3. WAIT FOR WEBHOOK (Event-Driven)                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   [CASE A: Webhook SUCCESS]                                               │
+│   │                                                                        │
+│   ├─> Payment Gateway kirim webhook ke /webhook/payment                   │
+│   │                                                                        │
+│   ├─> Validasi signature & idempotency key                               │
+│   │   └─> Jika duplikat → return cached response (200 OK)               │
+│   │                                                                        │
+│   ├─> UPDATE payment_obligations SET status = 'PAID'                     │
+│   │   WHERE id = obligation_id AND status = 'PENDING'                    │
+│   │                                                                        │
+│   ├─> Trigger check_booking_payment_complete()                           │
+│   │   └─> Jika semua obligation PAID:                                    │
+│   │       - UPDATE bookings SET payment_status = 'PAID'                  │
+│   │       - Generate tickets (1 per obligation)                          │
+│   │       - Set is_assigned = TRUE                                       │
+│   │       - Generate QR secret key + Fallback PIN                        │
+│   │                                                                        │
+│   └─> Response: 200 OK                                                   │
+│                                                                             │
+│   [CASE B: Webhook FAILED / TIMEOUT]                                     │
+│   │                                                                        │
+│   ├─> Retry dengan exponential backoff (3x max)                         │
+│   │   └─> Jika masih gagal → status FAILED                              │
+│   │                                                                        │
+│   └─> Admin notified via Slack/Email                                    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 4. DELAYED MESSAGE WORKER (IDEMPOTENT LAZY-CHECK)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Worker menerima pesan di T+3 menit:                                     │
+│   { type: 'RELEASE_SEAT_CHECK', booking_id: booking_id }                 │
+│                                                                             │
+│   -- LAZY CHECK:                                                          │
+│   SELECT payment_status FROM bookings WHERE id = booking_id;            │
+│                                                                             │
+│   IF status = 'PAID' THEN                                                │
+│     → No-op (ACK pesan, tidak melakukan apa-apa)                        │
+│   ELSIF status = 'PENDING' OR 'EXPIRED' THEN                            │
+│     → Eksekusi rollback:                                                 │
+│       1. Lock booking FOR UPDATE                                         │
+│       2. Release seats in Redis (granular via SETBIT)                   │
+│          └─> FIXED v1.4: UNIFORM native bitmap release                  │
+│          └─> FOR EACH seat_pos IN booking.seat_positions:               │
+│               redis.call('SETBIT', key, seat_pos - 1, 0)                │
+│       3. UPDATE bookings SET payment_status = 'EXPIRED'                  │
+│       4. UPDATE payment_obligations SET status = 'EXPIRED'              │
+│          WHERE booking_id = booking_id AND status = 'PENDING'           │
+│       5. Refund user(s) yang sudah bayar (via Payment Gateway refund)   │
+│       6. INSERT INTO admin_actions (action = 'FORCE_RELEASE_SEAT')      │
+│       7. Kirim notifikasi ke semua anggota: "Transaksi gagal"            │
+│   END IF;                                                                │
+│                                                                             │
+│   Catatan: Pesan TIDAK PERNAH dibatalkan — worker selalu execute.        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+4.4 SEQUENCE FLOW — BULK MODE
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   F003: BULK MODE — PAYMENT FLOW                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[USER REQUEST: BULK MODE]
+  │
+  ├─> Booking ID sudah dibuat di F002
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. CREATE SINGLE PAYMENT OBLIGATION                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   -- Leader (pembayar)                                                     │
+│   INSERT INTO payment_obligations (                                       │
+│     booking_id, user_id, seat_position, amount,                          │
+│     payment_link, idempotency_key, status                                │
+│   ) VALUES (                                                             │
+│     booking_id, leader_user_id, NULL, total_amount,                     │
+│     gen_payment_link(), gen_idempotency_key(), 'PENDING'                │
+│   );                                                                     │
+│                                                                             │
+│   Catatan: seat_position = NULL (karena leader bayar semua).             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. WAIT FOR WEBHOOK (Sama seperti SPLIT)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   - Webhook SUCCESS → UPDATE obligation PAID                             │
+│   - Trigger check_booking_payment_complete()                             │
+│     → Karena mode BULK, generate 1 tiket PER KURSI                       │
+│     → FIXED v1.2: owner_user_id = leader_user_id,                        │
+│       original_owner_user_id = leader_user_id, is_assigned = FALSE       │
+│   - TTL 3 menit → Delayed Message Worker melakukan lazy-check            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 3. ASSIGN TICKET (Leader ke Anggota) — Opsional                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Leader dapat meng-assign tiket ke anggota grup sebelum acara:          │
+│                                                                             │
+│   UPDATE tickets SET                                                     │
+│     owner_user_id = anggota_user_id,                                     │
+│     is_assigned = TRUE,                                                  │
+│     original_owner_user_id = leader_user_id                              │
+│   WHERE id = ticket_id AND is_assigned = FALSE;                         │
+│                                                                             │
+│   Setelah di-assign, anggota dapat mengelola tiket sendiri (F005).       │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+4.5 WEBHOOK RECONCILIATION WORKER (Fallback)
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                WEBHOOK RECONCILIATION WORKER                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Berjalan setiap 10 menit:                                               │
+│                                                                             │
+│   -- Cari transaksi PENDING yang sudah > 10 menit                        │
+│   SELECT id, user_id, external_transaction_id, amount                   │
+│   FROM payment_obligations                                               │
+│   WHERE status = 'PENDING'                                              │
+│   AND created_at < NOW() - INTERVAL '10 minutes';                       │
+│                                                                             │
+│   FOR EACH pending_transaction:                                          │
+│     → Panggil Payment Gateway API untuk cek status pembayaran           │
+│       GET /transactions/{external_transaction_id}                        │
+│                                                                             │
+│     IF gateway_status = 'PAID' THEN:                                    │
+│       → UPDATE payment_obligations SET status = 'PAID'                  │
+│       → Log ke admin_actions: "RECONCILED_PAYMENT"                      │
+│     ELSIF gateway_status = 'PENDING' THEN:                             │
+│       → Skip (tunggu webhook)                                           │
+│     ELSE:                                                                │
+│       → UPDATE payment_obligations SET status = 'FAILED'               │
+│       → Trigger rollback:                                               │
+│         1. Release seats in Redis (granular via SETBIT)                │
+│            └─> FIXED v1.4: UNIFORM native bitmap release               │
+│         2. UPDATE bookings SET payment_status = 'EXPIRED'               │
+│         3. Kirim notifikasi ke user                                     │
+│     END IF;                                                              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+4.6 EDGE CASES & HANDLING
+
+| Edge Case | Handling |
+|-----------|----------|
+| Webhook duplikat | Idempotency key → cache hit → return 200, no mutation. |
+| Webhook hilang | Webhook Reconciliation Worker polling ke Payment Gateway setiap 10 menit. |
+| Partial payment (1 dari 4 bayar) | TTL 3 menit habis → rollback semua kursi → refund otomatis ke user yang sudah bayar. |
+| Double payment (user bayar 2x) | Idempotency key → tolak transaksi kedua. |
+| Bulk Mode + Assign Ticket | Leader bisa assign tiket ke anggota kapan saja sebelum acara. |
+| seat_position NULL di SPLIT mode | Trigger check_booking_payment_complete() akan RAISE EXCEPTION. Backend WAJIB memastikan seat_position terisi. |
+| Granular bit release race condition | FIXED v1.4: Release per-bit via SETBIT, tidak pernah overwrite. |
+
+4.7 DATABASE TABLE REFERENCES
+
+| Table | Operation |
+|-------|-----------|
+| bookings | SELECT, UPDATE (payment_status) |
+| payment_obligations | INSERT, UPDATE (status) |
+| tickets | INSERT (trigger), SELECT |
+| admin_actions | INSERT (rollback) |
+| Redis | SET booking mapping, TTL, GRANULAR RELEASE bitmask (SETBIT) |
+| Message Broker | CONSUME delayed message |
+| Payment Gateway | WEBHOOK receiver, API poll (Reconciliation Worker) |
+
+================================================================================
+5. FLOW F004: DYNAMIC HMAC QR + OFFLINE FALLBACK PIN (HASHED PIN)
+================================================================================
+
+5.1 OVERVIEW
+
+F004 menyediakan 2 metode validasi tiket:
+1. Dynamic HMAC QR (Primary — berubah setiap 30 detik)
+2. Static Fallback PIN (Secondary — HP mati / sinyal buruk)
+
+⚠️ FIXED v1.4: Fallback PIN disimpan dan dibandingkan sebagai SHA-256 hash (bukan plain-text).
+
+5.2 COMPONENT FLOW
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              F004: QR + PIN GENERATION FLOW                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[WHEN TICKET IS CONFIRMED (Payment Complete)]
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. GENERATE QR SECRET KEY & FALLBACK PIN HASH                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   -- Generate raw PIN (12 digit alfanumerik)                              │
+│   raw_pin = UPPER(SUBSTRING(REPLACE(gen_random_uuid()::text, '-', ''), 1, 12))│
+│                                                                             │
+│   -- FIXED v1.4: Store hashed PIN (SHA-256)                               │
+│   pin_hash = encode(digest(raw_pin, 'sha256'), 'hex')                    │
+│                                                                             │
+│   UPDATE tickets SET                                                      │
+│     qr_secret_key = gen_random_uuid()::text,                            │
+│     fallback_pin_hash = pin_hash,                                        │
+│     status = 'CONFIRMED'                                                 │
+│   WHERE id = ticket_id;                                                  │
+│                                                                             │
+│   -- Kirim raw PIN via SMS/Email (bukan hash)                            │
+│   SEND SMS/EMAIL:                                                        │
+│     "Your E-Tix Flash Fallback PIN: {raw_pin}"                           │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+5.3 QR GENERATION FLOW (Every 30 seconds)
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                F004: QR GENERATION (Background Worker)                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[BACKGROUND WORKER — setiap 30 detik]
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  1. Ambil semua tiket dengan status CONFIRMED / RESALE_PENDING            │
+│     SELECT id, owner_user_id, qr_secret_key FROM tickets                 │
+│     WHERE status IN ('CONFIRMED', 'RESALE_PENDING');                     │
+│                                                                             │
+│  2. FOR EACH ticket:                                                      │
+│     ─── timestamp_block = FLOOR(EXTRACT(EPOCH FROM NOW()) / 30)          │
+│     ─── payload = ticket_id + owner_user_id + timestamp_block            │
+│     ─── signature = HMAC-SHA256(qr_secret_key, payload)                  │
+│     ─── qr_data = base64_encode(ticket_id + '|' + signature)            │
+│                                                                             │
+│  3. Simpan QR data di Redis:                                             │
+│     SET "qr:{ticket_id}" = qr_data EX 35                                 │
+│     (TTL 35 detik, lebih lama dari interval 30 detik)                   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+5.4 GATE SCAN FLOW — FALLBACK PIN VERIFICATION (HASHED)
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                F004: GATE SCAN VALIDATION FLOW                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[USER ARRIVES AT GATE]
+  │
+  ├─> Primary: Scan Dynamic QR (preferred)
+  ├─> Secondary: Enter Fallback PIN (if QR fails)
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ QR SCAN (Primary Method)                                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. Scanner reads QR data from user's phone.                              │
+│                                                                             │
+│  2. Decode QR data → ticket_id + signature.                               │
+│                                                                             │
+│  3. Look up ticket in Redis: GET "qr:{ticket_id}"                         │
+│     └─> Jika tidak ada atau mismatch → INVALID                           │
+│                                                                             │
+│  4. Verify owner_user_id matches (from Redis cache or DB fallback).       │
+│     └─> Jika mismatch → INVALID                                          │
+│                                                                             │
+│  5. If valid:                                                             │
+│     ─── INSERT INTO ticket_scans (ticket_id, gate_id, scan_status = 'VALID')│
+│     ─── Trigger update_ticket_status_on_scan()                           │
+│         → UPDATE tickets SET status = 'USED'                             │
+│                                                                             │
+│  6. If invalid:                                                           │
+│     ─── INSERT INTO ticket_scans (ticket_id, gate_id, scan_status = 'INVALID')│
+│     ─── Kirim alert ke admin (jika multiple attempts)                    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ FALLBACK PIN (Secondary Method — HP Mati / Sinyal Buruk)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. Petugas gate pilih "Manual Entry" di scanner app.                     │
+│                                                                             │
+│  2. User sebutkan 12-digit Fallback PIN (raw).                            │
+│                                                                             │
+│  3. Scanner verifikasi:                                                   │
+│     ─── FIXED v1.4: Hash user input dan compare dengan hash di DB        │
+│     ─── input_hash = encode(digest(user_input, 'sha256'), 'hex')         │
+│                                                                             │
+│     SELECT id, owner_user_id, fallback_pin_used                          │
+│     FROM tickets                                                          │
+│     WHERE fallback_pin_hash = input_hash                                 │
+│     AND fallback_pin_used = FALSE                                        │
+│     AND status = 'CONFIRMED';                                            │
+│                                                                             │
+│     └─> Jika ditemukan:                                                  │
+│         - UPDATE tickets SET fallback_pin_used = TRUE,                  │
+│           fallback_pin_used_at = NOW()                                   │
+│         - INSERT INTO ticket_scans (..., scan_status = 'VALID', scan_method='PIN')│
+│         - Trigger update_ticket_status_on_scan() → status = 'USED'      │
+│                                                                             │
+│     └─> Jika tidak ditemukan:                                            │
+│         - INSERT INTO ticket_scans (..., scan_status = 'INVALID', scan_method='PIN')│
+│         - Tampilkan "Invalid PIN"                                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+5.5 EDGE CASES & HANDLING
+
+| Edge Case | Handling |
+|-----------|----------|
+| PIN bocor | PIN only 1-time use. After used, fallback_pin_used = TRUE. Hash prevents plain-text exposure. |
+| HP mati total | Fallback PIN via SMS/Email (already sent during confirmation). |
+| Offline gate (no internet) | Scanner app has public key to verify signature locally. |
+| Multiple scan attempts (same ticket) | Only first VALID scan sets status = USED. Subsequent scans → ALREADY_USED. |
+| QR expired (30s) | QR regenerated automatically. User pulls to refresh. |
+| SQL Injection attempt | FIXED v1.4: Hash comparison prevents plain-text PIN exposure in queries. |
+
+5.6 DATABASE TABLE REFERENCES
+
+| Table | Operation |
+|-------|-----------|
+| tickets | SELECT (qr_secret_key, fallback_pin_hash, fallback_pin_used), UPDATE |
+| ticket_scans | INSERT (scan record) |
+| Redis | SET/GET qr data, TTL management |
+| SMS/Email API | SEND raw Fallback PIN |
+
+================================================================================
+6. FLOW F004b: GATE ANALYTICS & POST-EVENT INTELLIGENCE
+================================================================================
+
+6.1 OVERVIEW
+
+F004b memanfaatkan data scan QR untuk menghasilkan insight bagi EO.
+Mencakup Post-Event Report dan Feedback Loop (auto-learning).
+
+6.2 SEQUENCE FLOW
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              F004b: POST-EVENT REPORT GENERATION                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[EVENT STATUS → COMPLETED]
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. Trigger generate_post_event_report() (AFTER UPDATE ON events)          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   WITH gate_stats AS (                                                     │
+│     SELECT                                                                │
+│       ts.gate_id,                                                         │
+│       COUNT(*) as total_scans,                                            │
+│       SUM(CASE WHEN ts.scan_status = 'VALID' THEN 1 ELSE 0 END) as valid_scans│
+│     FROM ticket_scans ts                                                  │
+│     JOIN tickets t ON t.id = ts.ticket_id                                │
+│     JOIN bookings b ON b.id = t.booking_id                               │
+│     WHERE b.event_id = NEW.id                                             │
+│     GROUP BY ts.gate_id                                                   │
+│   ),                                                                      │
+│   gate_agg AS (                                                           │
+│     SELECT jsonb_object_agg(                                              │
+│       gate_id,                                                            │
+│       jsonb_build_object('total', total_scans, 'valid', valid_scans)     │
+│     ) as gate_utilization                                                 │
+│     FROM gate_stats                                                        │
+│   ),                                                                      │
+│   ticket_stats AS (                                                       │
+│     SELECT                                                                │
+│       COUNT(*) as total_tickets,                                          │
+│       SUM(CASE WHEN status = 'USED' THEN 1 ELSE 0 END) as used_tickets,  │
+│       SUM(CASE WHEN status = 'CONFIRMED' THEN 1 ELSE 0 END) as unused_tickets│
+│     FROM tickets t                                                        │
+│     JOIN bookings b ON b.id = t.booking_id                               │
+│     WHERE b.event_id = NEW.id                                             │
+│   ),                                                                      │
+│   loyal_fans AS (                                                         │
+│     SELECT COUNT(DISTINCT u.id) as loyal_customers                       │
+│     FROM users u                                                          │
+│     JOIN tickets t ON t.owner_user_id = u.id                             │
+│     JOIN bookings b ON b.id = t.booking_id                               │
+│     WHERE b.event_id = NEW.id                                             │
+│     AND u.total_purchases > 1                                             │
+│   )                                                                       │
+│   SELECT jsonb_build_object(                                              │
+│     'event_id', NEW.id,                                                   │
+│     'event_name', NEW.name,                                               │
+│     'total_tickets', (SELECT total_tickets FROM ticket_stats),           │
+│     'used_tickets', (SELECT used_tickets FROM ticket_stats),             │
+│     'unused_tickets', (SELECT unused_tickets FROM ticket_stats),         │
+│     'no_show_rate', ROUND( ... ),                                        │
+│     'total_scans', COALESCE((SELECT SUM(total_scans) FROM gate_stats), 0),│
+│     'gate_utilization', COALESCE((SELECT gate_utilization FROM gate_agg), '{}'),│
+│     'loyal_customers', (SELECT loyal_customers FROM loyal_fans),         │
+│     'generated_at', NOW()                                                 │
+│   ) INTO report_data;                                                    │
+│                                                                             │
+│   INSERT INTO insights (event_id, insight_type, title, description, recommendation)│
+│   VALUES (NEW.id, 'PEAK_TIME', 'Post-Event Report - ' || NEW.name,       │
+│           'Auto-generated report after event completion', report_data);  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+6.3 FEEDBACK LOOP — AUTO-LEARNING
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              F004b: FEEDBACK LOOP (Background Worker)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Berjalan setiap 24 jam setelah event COMPLETED:                         │
+│                                                                             │
+│   1. Gate Optimization:                                                   │
+│      ─── Dari data gate_utilization historis:                            │
+│      ─── Hitung rata-rata valid_scans per gate per jam.                  │
+│      ─── Rekomendasi: "Gate B needs 3 more staff based on peak data."   │
+│      ─── INSERT INTO insights (type = 'GATE_STAFFING')                  │
+│                                                                             │
+│   2. Bot Pattern Learning:                                               │
+│      ─── Dari data scan invalid (INVALID, EXPIRED, ALREADY_USED):       │
+│      ─── Deteksi pola IP yang sering muncul.                             │
+│      ─── INSERT INTO blacklist (type='ip', value=..., reason='BOT_PATTERN')│
+│                                                                             │
+│   3. Ticket Pricing Insight:                                             │
+│      ─── Dari data no_show_rate dan resale activity:                    │
+│      ─── Rekomendasi: "CAT 1 tickets are overpriced. Consider lowering by 5%."│
+│      ─── INSERT INTO insights (type = 'PRICE_RECOMMENDATION')           │
+│                                                                             │
+│   4. Staffing Recommendation:                                            │
+│      ─── Dari peak entry time data:                                      │
+│      ─── Rekomendasi: "Peak entry 19:30-20:30. Schedule all staff then."│
+│      ─── INSERT INTO insights (type = 'PEAK_TIME')                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+6.4 EDGE CASES & HANDLING
+
+| Edge Case | Handling |
+|-----------|----------|
+| Belum cukup data historis | Rekomendasi menggunakan rule-based default (2 staff per gate). |
+| Multiple invalid scan attempts | System auto-blacklist IP after 5 invalid attempts in 1 hour. |
+| Report generation timeout | Async background worker, not blocking event status update. |
+
+6.5 DATABASE TABLE REFERENCES
+
+| Table | Operation |
+|-------|-----------|
+| ticket_scans | SELECT (gate stats) |
+| tickets | SELECT (status stats) |
+| bookings | SELECT (join) |
+| users | SELECT (loyal customers) |
+| insights | INSERT (report + recommendations) |
+| blacklist | INSERT (auto-blacklist bot patterns) |
+
+================================================================================
+7. FLOW F005: CONTROLLED SECONDARY RESALE MARKET
+================================================================================
+
+7.1 OVERVIEW
+
+F005 memungkinkan pemegang tiket menjual kembali tiketnya dengan price-cap max +10%.
+Menggunakan Payment Gateway sebagai mediator (tanpa internal wallet/ledger).
+
+⚠️ FIXED v1.3: Resale reservation TTL (3 menit) + reset logic.
+⚠️ FIXED v1.4: tickets.status tetap RESALE_PENDING selama reservasi.
+
+7.2 STATE DEFINITION (Resale)
+
+| State | Description |
+|-------|-------------|
+| **PENDING** | Tiket terdaftar di marketplace, menunggu pembeli. |
+| **RESERVED** | Buyer sudah klaim tiket, menunggu pembayaran (TTL 3 menit). |
+| **COMPLETED** | Transaksi selesai, ownership transferred. |
+| **CANCELLED** | Seller batal menjual. |
+| **PENDING_PAYOUT** | Buyer sudah bayar, payout ke seller masih diproses. |
+
+7.3 SEQUENCE FLOW
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                F005: RESALE MARKETPLACE FLOW                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[SELLER: LIST TICKET]
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. VALIDATE & LIST                                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   -- Validasi kepemilikan                                                  │
+│   SELECT id, owner_user_id, status FROM tickets                           │
+│   WHERE id = ticket_id AND owner_user_id = seller_id;                    │
+│                                                                             │
+│   -- Validasi status tiket                                                │
+│   IF status != 'CONFIRMED' THEN → ERROR "Ticket not eligible for resale" │
+│                                                                             │
+│   -- Validasi price cap (+10%)                                            │
+│   SELECT original_price FROM tickets                                      │
+│   JOIN bookings b ON b.id = tickets.booking_id                           │
+│   WHERE tickets.id = ticket_id;                                          │
+│   IF resale_price > original_price * 1.10 THEN → ERROR "Price exceeds cap"│
+│                                                                             │
+│   -- Insert resale transaction                                            │
+│   INSERT INTO resale_transactions (                                       │
+│     ticket_id, event_id, seller_user_id, buyer_user_id,                 │
+│     original_price, resale_price, platform_fee, seller_payout,          │
+│     status, created_at, reservation_expires_at                           │
+│   ) VALUES (                                                             │
+│     ticket_id, event_id, seller_user_id, NULL,                          │
+│     original_price, resale_price, platform_fee, seller_payout,          │
+│     'PENDING', NOW(), NULL                                               │
+│   );                                                                      │
+│                                                                             │
+│   -- Trigger handle_resale_lifecycle() (INSERT)                           │
+│   → UPDATE tickets SET status = 'RESALE_PENDING'                         │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ [BUYER: VIEW & PURCHASE]                                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   -- Buyer melihat katalog:                                               │
+│   SELECT * FROM resale_transactions                                       │
+│   WHERE event_id = $1 AND status = 'PENDING'                             │
+│   ORDER BY resale_price ASC;                                              │
+│                                                                             │
+│   -- FIXED v1.3: Buyer klaim tiket dengan FOR UPDATE + TTL 3 menit       │
+│                                                                             │
+│   BEGIN;                                                                  │
+│     SELECT id FROM resale_transactions                                    │
+│     WHERE id = $resale_id AND status = 'PENDING'                         │
+│     AND (buyer_user_id IS NULL OR reservation_expires_at < NOW())        │
+│     FOR UPDATE;                                                           │
+│                                                                             │
+│     UPDATE resale_transactions SET                                       │
+│       buyer_user_id = $buyer_id,                                         │
+│       reservation_expires_at = NOW() + INTERVAL '3 minutes',             │
+│       status = 'RESERVED'                                                │
+│     WHERE id = $resale_id;                                                │
+│   COMMIT;                                                                 │
+│                                                                             │
+│   -- FIXED v1.4: tickets.status TETAP RESALE_PENDING selama reservasi    │
+│   -- Tidak ada perubahan pada tabel tickets di tahap ini.                │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. PAYMENT & PAYOUT (via Payment Gateway)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   -- Buyer melakukan pembayaran ke Payment Gateway                        │
+│   POST /payment-gateway/charge                                            │
+│   { amount: resale_price, customer: buyer_id }                           │
+│                                                                             │
+│   -- Webhook SUCCESS:                                                     │
+│   UPDATE resale_transactions SET status = 'COMPLETED',                   │
+│   completed_at = NOW() WHERE id = resale_id;                             │
+│                                                                             │
+│   -- Trigger handle_resale_lifecycle() (UPDATE to COMPLETED):             │
+│     1. UPDATE tickets SET status = 'RESOLD',                             │
+│        original_owner_user_id = seller_id,                               │
+│        resale_transaction_id = NEW.id                                    │
+│        WHERE id = ticket_id;                                              │
+│                                                                             │
+│     2. INSERT INTO tickets (new ticket for buyer):                        │
+│        booking_id, payment_obligation_id, owner_user_id = buyer_id,      │
+│        section_id, seat_position, status = 'CONFIRMED',                  │
+│        is_assigned = TRUE,                                               │
+│        qr_secret_key = gen_random_uuid()::text,                          │
+│        fallback_pin_hash = gen_pin_hash(),                               │
+│        original_owner_user_id = seller_id,                               │
+│        resale_transaction_id = NEW.id                                    │
+│                                                                             │
+│   -- Payout ke Seller (via Payment Gateway Payout API)                    │
+│   POST /payment-gateway/payout                                            │
+│   { amount: seller_payout, recipient: seller_bank_account }              │
+│                                                                             │
+│   -- Jika payout gagal → status = 'PENDING_PAYOUT', admin reconciliation │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ [SELLER: CANCEL RESALE — Before Buyer Pays]                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   UPDATE resale_transactions SET status = 'CANCELLED',                   │
+│   cancelled_at = NOW()                                                    │
+│   WHERE id = resale_id AND status = 'PENDING'                            │
+│   AND seller_user_id = auth.uid();                                       │
+│                                                                             │
+│   -- Trigger handle_resale_lifecycle() (UPDATE to CANCELLED):             │
+│   UPDATE tickets SET status = 'CONFIRMED', resale_transaction_id = NULL  │
+│   WHERE id = ticket_id;                                                  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+7.4 RESALE RESERVATION TIMEOUT WORKER (Background)
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              RESALE RESERVATION TIMEOUT WORKER                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Berjalan setiap 1 menit:                                                │
+│                                                                             │
+│   -- Cari transaksi RESERVED yang sudah expired                           │
+│   SELECT id FROM resale_transactions                                      │
+│   WHERE status = 'RESERVED'                                              │
+│   AND reservation_expires_at < NOW();                                     │
+│                                                                             │
+│   FOR EACH expired_reservation:                                          │
+│     → UPDATE resale_transactions SET                                     │
+│         buyer_user_id = NULL,                                             │
+│         reservation_expires_at = NULL,                                   │
+│         status = 'PENDING'                                                │
+│       WHERE id = expired_reservation.id;                                 │
+│                                                                             │
+│     -- tickets.status TETAP RESALE_PENDING (tidak berubah)               │
+│                                                                             │
+│     → Log ke admin_actions: "RESALE_RESERVATION_EXPIRED"                 │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+7.5 EDGE CASES & HANDLING
+
+| Edge Case | Handling |
+|-----------|----------|
+| Seller membatalkan sebelum buyer bayar | Status → CANCELLED. Tiket kembali CONFIRMED. |
+| Buyer gagal bayar / tutup aplikasi | Reservation TTL 3 menit habis → reset ke PENDING. Tiket kembali ke marketplace. |
+| Payout API gagal | Status → PENDING_PAYOUT. Admin manual reconciliation via F006. |
+| Price melebihi cap (+10%) | HTTP 422, ditolak. |
+| Tiket sudah RESOLD | Unique constraint idx_resale_single_active mencegah listing ganda. |
+| Race condition dua buyer klaim sama | SELECT FOR UPDATE mencegah double-claim. |
+| Buyer klaim tapi tidak bayar | Delayed worker reset setelah 3 menit. |
+| Status tiket selama reservasi | FIXED v1.4: TETAP RESALE_PENDING (tidak berubah). |
+
+7.6 DATABASE TABLE REFERENCES
+
+| Table | Operation |
+|-------|-----------|
+| tickets | SELECT (validate), UPDATE (RESOLD), INSERT (new ticket) |
+| resale_transactions | INSERT, UPDATE (status, buyer_user_id, reservation_expires_at) |
+| users | SELECT (seller/buyer) |
+| events | SELECT (event_id) |
+| Payment Gateway | CHARGE (buyer), PAYOUT (seller) |
+| Redis | Optional: track reservation TTL (backup) |
+
+================================================================================
+8. FLOW F006: ADMIN EMERGENCY & RECONCILIATION TOOLS
+================================================================================
+
+8.1 OVERVIEW
+
+F006 menyediakan tools darurat untuk admin (EO) menangani situasi kritis.
+
+8.2 SEQUENCE FLOW — BULK CANCELLATION
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              F006: BULK CANCELLATION FLOW                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ADMIN: Emergency Price Error]
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. ADMIN ACCESS EMERGENCY DASHBOARD                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   - Admin login (role = 'admin' or 'event_organizer')                    │
+│   - Select event                                                          │
+│   - Click "Cancel All Tickets"                                            │
+│   - Fill reason: "Price error"                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. CONFIRMATION DIALOG                                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   "Anda akan membatalkan X tiket dan refund total Rp Y. Lanjutkan?"      │
+│   - Admin confirms: YES                                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 3. EXECUTE BULK CANCELLATION (Async Background Worker)                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   -- Step 1: Lock all tickets in booking                                  │
+│   SELECT id FROM tickets                                                  │
+│   JOIN bookings b ON b.id = tickets.booking_id                           │
+│   WHERE b.event_id = $event_id                                           │
+│   AND tickets.status NOT IN ('CANCELLED', 'USED')                        │
+│   FOR UPDATE;                                                             │
+│                                                                             │
+│   -- Step 2: Update tickets status                                        │
+│   UPDATE tickets SET status = 'CANCELLED', updated_at = NOW()            │
+│   WHERE booking_id IN (SELECT id FROM bookings WHERE event_id = $event_id)│
+│   AND status NOT IN ('CANCELLED', 'USED');                               │
+│                                                                             │
+│   -- Step 3: Refund via Payment Gateway (async)                           │
+│   FOR EACH ticket IN cancelled_tickets:                                  │
+│     → POST /payment-gateway/refund { transaction_id, amount }            │
+│                                                                             │
+│   -- Step 4: Release seats in Redis (granular via SETBIT)                │
+│   -- FIXED v1.4: UNIFORM native bitmap release                           │
+│   FOR EACH booking IN cancelled_bookings:                                 │
+│     → FOR EACH seat_position IN booking.seat_positions:                  │
+│       → redis.call('SETBIT', key, seat_position - 1, 0)                 │
+│                                                                             │
+│   -- Step 5: Notify buyers                                                │
+│   → Send push/email: "Maaf, terjadi kesalahan. Tiket Anda di-refund."   │
+│                                                                             │
+│   -- Step 6: Audit log                                                    │
+│   INSERT INTO admin_actions (admin_id, action_type = 'BULK_CANCEL',      │
+│   target_resource_type = 'event', target_resource_id = event_id,         │
+│   reason = 'PRICE_ERROR', changes_before = ..., changes_after = ...)    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+8.3 SEQUENCE FLOW — MANUAL RECONCILIATION
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              F006: MANUAL RECONCILIATION FLOW                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ADMIN: Payout Gagal / Webhook Hilang]
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. ADMIN VIEWS PENDING TRANSACTIONS                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   SELECT * FROM payment_obligations                                      │
+│   WHERE status = 'PENDING' AND created_at < NOW() - INTERVAL '30 minutes'│
+│   OR status = 'PENDING_PAYOUT';                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. ADMIN VERIFIES VIA PAYMENT GATEWAY DASHBOARD                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   - Admin checks transaction status in Midtrans/Xendit dashboard.        │
+│   - If PAID but webhook missing:                                         │
+│     → UPDATE payment_obligations SET status = 'PAID'                     │
+│     → Trigger check_booking_payment_complete()                           │
+│   - If PAYOUT failed:                                                    │
+│     → UPDATE resale_transactions SET status = 'PENDING_PAYOUT'           │
+│     → Retry payout manually via admin                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 3. ADMIN LOGS ACTION                                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   INSERT INTO admin_actions (admin_id, action_type = 'MANUAL_PAID' or    │
+│   'MANUAL_REFUND', target_resource_type = 'payment_obligation',          │
+│   target_resource_id = obligation_id, reason = 'WEBHOOK_MISSING',       │
+│   changes_before = ..., changes_after = ...)                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+8.4 EDGE CASES & HANDLING
+
+| Edge Case | Handling |
+|-----------|----------|
+| Bulk cancellation di tengah flash sale | Async background worker — sistem tetap responsif. |
+| Refund API gagal | Status → PENDING_REFUND. Admin retry via F006. |
+| Admin tidak punya 2FA | Semua admin action membutuhkan X-Admin-2FA-Token. |
+| Rate limiting admin | 3 failed attempts → lockout 15 menit (Redis + PostgreSQL). |
+| Granular bit release race condition | FIXED v1.4: Release per-bit via SETBIT, tidak pernah overwrite. |
+
+8.5 DATABASE TABLE REFERENCES
+
+| Table | Operation |
+|-------|-----------|
+| tickets | UPDATE (CANCELLED) |
+| bookings | SELECT (event_id) |
+| admin_actions | INSERT |
+| Payment Gateway | REFUND, PAYOUT |
+| Redis | SETBIT (granular release per seat - 0-based offset) |
+
+================================================================================
+9. CROSS-CUTTING CONCERNS
+================================================================================
+
+9.1 IDEMPOTENCY PATTERN
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    IDEMPOTENCY PATTERN                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[REQUEST MASUK dengan X-Idempotency-Key]
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. L1 Redis Cache (Fast — Primary)                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   GET "idempotency:{key}"                                                │
+│   IF found → RETURN cached response                                      │
+│   IF not found → Continue                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. L2 PostgreSQL (Persistent — Fallback)                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   -- Idempotency key disimpan di payment_obligations.idempotency_key    │
+│   SELECT id FROM payment_obligations                                     │
+│   WHERE idempotency_key = $key;                                         │
+│                                                                             │
+│   IF found → RETURN cached response (from Redis or re-query)            │
+│   ELSE → Process request:                                                │
+│     1. Generate idempotency_key                                          │
+│     2. INSERT INTO payment_obligations (..., idempotency_key)           │
+│     3. Store response in Redis: SET "idempotency:{key}" = response EX 86400│
+│     4. RETURN response                                                   │
+│                                                                             │
+│   Catatan: L2 PostgreSQL menggunakan kolom idempotency_key di            │
+│   payment_obligations sebagai referensi. L1 Redis adalah primary         │
+│   storage untuk fast lookup.                                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+9.2 SINGLE-USE QUEUE TOKEN GUARD
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                 SINGLE-USE QUEUE TOKEN GUARD (F001 & F002)                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+-- FIXED v1.3: Mencegah replay attack pada Queue Token
+
+[SAAT TOKEN DIBUAT di F001.3 Step 8]
+  │
+  ├─> Generate JWT dengan payload:
+  │    { user_id, tier, final_score, jti, exp: NOW() + 5 minutes }
+  │
+  └─> jti = UUID v4 (unique identifier per token)
+
+[SAAT TOKEN DIVALIDASI di F002.3 Step 1]
+  │
+  ├─> Validasi signature & expiry (standar JWT)
+  │
+  ├─> FIXED v1.3: Cek single-use di Redis:
+  │    SET "queue_token:used:{jti}" 1 NX EX 300
+  │    └─> Jika return "OK" → token belum pernah dipakai, lanjutkan.
+  │    └─> Jika return nil → token sudah dipakai, HTTP 409 CONFLICT.
+  │
+  └─> Catatan: TTL 300 detik (5 menit), sama dengan expiry JWT.
+
+9.3 GRANULAR BIT RELEASE VIA NATIVE REDIS BITMAP (UNIFORM)
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              GRANULAR BIT RELEASE (F002, F003, F006)                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+-- FIXED v1.4: UNIFORM native Redis Bitmap (GETBIT/SETBIT) di seluruh dokumen.
+-- OFFSET: 0-based (seat position 1 → offset 0).
+-- TIDAK PERNAH menggunakan manipulasi string ASCII.
+
+[SAAT RELEASE SEATS (Rollback / Expired / Admin Cancel)]
+  │
+  ├─> WAJIB menggunakan perintah native Redis:
+  │
+  └─> FOR EACH seat_position IN seats_to_release:
+        redis.call('SETBIT', KEYS[1], seat_position - 1, 0)  -- 0 = AVAILABLE
+
+[SAAT CHECK SEATS AVAILABILITY]
+  │
+  └─> redis.call('GETBIT', KEYS[1], seat_position - 1)
+
+[SAAT LOCK SEATS]
+  │
+  └─> redis.call('SETBIT', KEYS[1], seat_position - 1, 1)
+
+-- KONSISTEN di seluruh dokumen: F002 (Section 3.3), F003 (Section 4.3, 4.5),
+-- F006 (Section 8.2), dan Section 9.3 ini.
+
+9.4 CIRCUIT BREAKER + DEGRADED MODE
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CIRCUIT BREAKER — Redis Failure                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[REDIS DOWN > 100ms]
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Circuit Breaker OPENS                                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   - Rate Limiting: Dilemahkan (allow semua request, log warning)         │
+│   - Bitmask Lock: Ditangguhkan. Semua request masuk FIFO queue (PG).     │
+│   - Tampilkan ke user: "Sistem sedang sibuk, mohon tunggu..."            │
+└─────────────────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ [REDIS PULIH]                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   - Circuit Breaker CLOSES                                               │
+│   - Sistem kembali normal                                                │
+│   - Proses antrean FIFO                                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+9.5 DEADLOCK PREVENTION (ORDER BY id ASC)
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    DEADLOCK PREVENTION                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+-- WAJIB: Semua transaksi dengan multiple rows:
+
+BEGIN;
+  SELECT * FROM table1 WHERE id = $1 FOR UPDATE;
+  SELECT * FROM table2 WHERE id IN ($2, $3) ORDER BY id ASC FOR UPDATE;
+  -- Proses...
+COMMIT;
+
+-- Contoh konkret (F003 settlement):
+walletIDs := []uuid.UUID{customerWalletID, merchantWalletID, driverWalletID}
+sort.Slice(walletIDs, func(i, j int) bool { return walletIDs[i].String() < walletIDs[j].String() })
+rows, _ := tx.Query(`
+  SELECT id, balance FROM wallets
+  WHERE id = ANY($1)
+  ORDER BY id ASC
+  FOR UPDATE
+`, pq.Array(walletIDs))
+
+================================================================================
+10. STATE MACHINE SUMMARY
+================================================================================
+
+10.1 TICKET STATUS STATE MACHINE
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    TICKET STATUS STATE MACHINE                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+        ┌──────────────────────────────────────────────────────────────────┐
+        │                                                                  │
+        ▼                                                                  │
+   [LOCKED] ──(TTL 3 min)──▶ [PENDING_SPLIT_PAY] ──(Payment Complete)─▶ [CONFIRMED]
+        │                         │                                         │
+        │                         │                                         │
+        └────(Conflict)──┘        └───(Expired)──┘                         │
+              │                         │                                   │
+              ▼                         ▼                                   │
+         [AVAILABLE]               [CANCELLED]                             │
+                                                                             │
+   [CONFIRMED] ──(Resale Listed)─▶ [RESALE_PENDING]                        │
+        │                         │                                         │
+        │                         ├──(Completed)──▶ [RESOLD] ◄── TERMINAL STATE │
+        │                         │                 │   (Audit Trail)        │
+        │                         │                 │                       │
+        │                         │                 └──▶ [CONFIRMED] (new ticket)│
+        │                         │                                         │
+        │                         └──(Cancelled)──▶ [CONFIRMED] (revert)   │
+        │                                                                  │
+        └──(Scanned Valid)──▶ [USED]                                       │
+        │                                                                  │
+        └──(Admin Cancel)──▶ [CANCELLED]                                  │
+
+   ⚠️ KETERANGAN PENTING:
+   [RESOLD] = TERMINAL STATE (AUDIT TRAIL) untuk tiket seller.
+   Tiket yang sudah berstatus RESOLD TIDAK PERNAH diproses ulang oleh
+   sistem (tidak bisa di-scan, tidak bisa di-resale lagi).
+   Tiket pembeli terbit sebagai entri baru berstatus [CONFIRMED]
+   dengan ID tiket yang berbeda.
+
+   ⚠️ FIXED v1.4: Selama resale reservasi (status RESERVED), tickets.status
+   TETAP RESALE_PENDING (tidak berubah). Hanya berubah saat COMPLETED
+   (menjadi RESOLD) atau CANCELLED (kembali ke CONFIRMED).
+
+10.2 RESALE STATUS STATE MACHINE
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    RESALE STATUS STATE MACHINE                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   [PENDING] ──(Buyer Claim)──▶ [RESERVED] ──(Payment Complete)──▶ [COMPLETED]
+        │                         │                         │
+        │                         │                         └──▶ (Ownership Transferred)
+        │                         │
+        │                         └──(TTL 3 min expired)──▶ [PENDING] (reset)
+        │
+        └──(Seller Cancels)──▶ [CANCELLED]
+        │
+        └──(Payout Failed)──▶ [PENDING_PAYOUT] ──(Admin Retry)──▶ [COMPLETED]
+
+   ⚠️ Catatan: Selama RESERVED, tickets.status TETAP RESALE_PENDING.
+
+================================================================================
+11. EVENT FLOW SUMMARY (SAGA PATTERNS)
+================================================================================
+
+11.1 BOOKING SAGA
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    BOOKING SAGA (F002 + F003)                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   Step 1: Lock Seats (F002 — native GETBIT/SETBIT)     [COMPENSATABLE]
+     │
+     ▼
+   Step 2: Create Booking Record                        [PIVOTAL]
+     │
+     ▼
+   Step 3: Create Payment Obligations                   [COMPENSATABLE]
+     │
+     ▼
+   Step 4: Send Notifications                          [COMPENSATABLE]
+     │
+     ▼
+   [WAIT: Webhook OR Delayed Message]
+     │
+     ├── Webhook SUCCESS ──▶ Step 5: Generate Tickets  [PIVOTAL]
+     │                        │
+     │                        └──▶ [SAGA COMPLETE]
+     │
+     └── Delayed Message (T+3 min) ──▶ COMPENSATION:
+          1. Release Seats (Redis — granular SETBIT per seat)
+          2. Cancel Booking
+          3. Cancel Payment Obligations
+          4. Refund Paid Users
+          5. Notify All Members
+
+11.2 RESALE SAGA (F005)
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    RESALE SAGA                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   Step 1: Lock Ticket (status = RESALE_PENDING)        [COMPENSATABLE]
+     │
+     ▼
+   Step 2: Create Resale Transaction                    [PIVOTAL]
+     │
+     ▼
+   Step 3: Buyer Claim (status = RESERVED, TTL 3m)      [COMPENSATABLE]
+     │   └─> tickets.status TETAP RESALE_PENDING
+     │
+     ▼
+   Step 4: Buyer Payment via Gateway                   [COMPENSATABLE]
+     │
+     ▼
+   Step 5: Payout to Seller                            [COMPENSATABLE]
+     │
+     ▼
+   Step 6: Transfer Ownership (old→RESOLD, new ticket)  [PIVOTAL]
+     │
+     └──▶ [SAGA COMPLETE]
+
+================================================================================
+12. EXCEPTION HANDLING MATRIX
+================================================================================
+
+| Exception | Trigger | Recovery |
+|-----------|---------|----------|
+| **Redis Down** | Redis cluster failure | Circuit Breaker → Degraded Mode (FIFO queue). Auto-recover when Redis up. |
+| **Webhook Missing** | Payment gateway callback timeout | Reconciliation Worker polls PG every 10 min. |
+| **Database Deadlock** | Concurrent transactions | Retry with exponential backoff (3x). ORDER BY id prevents. |
+| **Payment Gateway Timeout** | PG API slow | Retry 3x with backoff. Fallback to manual reconciliation. |
+| **Admin 2FA Failed** | Wrong OTP/Token | Rate limit: 3 attempts → 15 min lockout. |
+| **Bulk Cancel Partial Failure** | Some refunds fail | Async worker retries. Admin notified. |
+| **Payout API Failed** | Seller payout failed | Status = PENDING_PAYOUT. Admin manual reconciliation. |
+| **Partial Seat Lock Conflict** | Another user took 1 seat | Lua script rollback all. User notified "Seats No Longer Available". |
+| **Duplicate Webhook** | Same webhook received twice | Idempotency key → ignore duplicate. |
+| **Expired Delayed Message** | TTL 3 min passed | Worker lazy-check: if PAID → no-op; if PENDING → rollback. |
+| **User Already Paid (Double Charge)** | User paid 2x via different method | Idempotency key → second payment rejected. |
+| **QR Expired** | QR not refreshed | User pulls to refresh. New QR generated. |
+| **Fallback PIN Used Twice** | Someone tries same PIN | fallback_pin_used = TRUE → INVALID. |
+| **Resale Race Condition** | Two buyers claim same resale | SELECT FOR UPDATE prevents double-claim. |
+| **Resale Buyer Doesn't Pay** | Buyer claims but never pays | Reservation TTL 3 min → reset to PENDING. |
+| **Queue Token Replay Attack** | Token reused within 5 min | Single-use guard via Redis SET NX → HTTP 409. |
+| **Granular Bit Release Conflict** | Overwriting whole bitmap | FIXED v1.4: Use SETBIT per position, never overwrite. |
+| **Fallback PIN Plain-text Exposure** | SQL injection or read replica leak | FIXED v1.4: Store and compare as SHA-256 hash. |
+
+================================================================================
+📋 SCHEMA VALIDATION CHECKLIST (FINAL)
+================================================================================
+
+✅ All flows synchronized with PRD v6.0-FINAL (F001-F006)
+✅ All flows synchronized with DATABASE SCHEMA v2.9-FINAL
+✅ All state machines match ENUM definitions
+✅ All edge cases documented
+✅ All saga patterns defined
+✅ All exception handling documented
+✅ Deadlock prevention strategy specified
+✅ Idempotency pattern documented (L1 Redis + L2 payment_obligations.idempotency_key)
+✅ Circuit Breaker + Degraded Mode documented
+✅ Event-driven architecture (no polling) documented
+✅ RESOLD clarified as Terminal State (Audit Trail)
+✅ Webhook Reconciliation Worker includes granular Redis bitmask release step
+✅ FIXED v1.2: Lua script NO TTL on section bitmap (persistent key)
+✅ FIXED v1.2: Resale purchase uses SELECT FOR UPDATE to prevent race condition
+✅ FIXED v1.2: Bulk Mode explicitly sets owner_user_id = leader_user_id
+✅ FIXED v1.3: Resale reservation TTL (3 min) + reset logic
+✅ FIXED v1.3: Granular bit release via SETBIT (no overwrite)
+✅ FIXED v1.3: Single-use Queue Token with jti + Redis guard
+✅ FIXED v1.4: UNIFORM native Redis Bitmap (GETBIT/SETBIT) across ALL sections
+✅ FIXED v1.4: Fallback PIN stored and compared as SHA-256 hash
+✅ FIXED v1.4: Clarified tickets.status remains RESALE_PENDING during resale reservation
+
+================================================================================
+📌 VERSION HISTORY
+================================================================================
+
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0-FINAL | 2026-09-08 | M. Arif Aulia | Initial LOGIC FLOW document for E-Tix Flash. |
+| 1.1-FINAL | 2026-09-08 | M. Arif Aulia | **Fixes applied:** 1) Updated idempotency pattern (Section 9.1) to use payment_obligations.idempotency_key. 2) Added RESOLD terminal state clarification (Section 10.1). 3) Added Redis bitmask release step in Webhook Reconciliation Worker (Section 4.5). |
+| 1.2-FINAL | 2026-09-08 | M. Arif Aulia | **Critical fixes applied:** 1) F002.3: Removed TTL from section bitmap (persistent key). TTL only on booking:{booking_id}. 2) F005.3: Added SELECT FOR UPDATE to prevent race condition on resale purchase. 3) F003.4: Explicitly set owner_user_id = leader_user_id, original_owner_user_id = leader_user_id for Bulk Mode tickets. |
+| 1.3-FINAL | 2026-09-08 | M. Arif Aulia | **Critical fixes applied:** 1) F005: Resale reservation TTL (3 min) + reset logic to prevent permanent lockout. 2) F002/F003/F006: Granular bit release via SETBIT (never overwrite entire bitmap). 3) F001/F002: Single-use Queue Token with jti + Redis SET NX guard to prevent replay attack. |
+| 1.4-FINAL | 2026-09-08 | M. Arif Aulia | **Final fixes applied:** 1) F002: UNIFORM native Redis Bitmap (GETBIT/SETBIT) across ALL sections — eliminate ASCII string manipulation. 2) F004: Fallback PIN stored and compared as SHA-256 hash (security). 3) F005: Clarified tickets.status remains RESALE_PENDING during resale reservation. 4) Updated Section 9.3 to reflect uniform native bitmap usage. 5) Updated Exception Handling Matrix. |
+
+================================================================================
+END OF LOGIC FLOW v1.4-FINAL
+================================================================================
+
+✅ 100% PRODUCTION-READY — LOCKED
+✅ Synchronized with PRD v6.0-FINAL
+✅ Synchronized with DATABASE SCHEMA v2.9-FINAL
+✅ All Gemini Review fixes applied (5 rounds)
+✅ UNIFORM native Redis Bitmap across ALL sections (no ASCII string manipulation)
+✅ Fallback PIN hashed (SHA-256) for security
+✅ Resale reservation status clarified
+✅ Ready for HALAMAN (Wireframes) and TDD (Technical Design)
+
+Last Updated: 2026-09-08 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED. NO MORE REVISIONS.

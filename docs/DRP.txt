@@ -1,0 +1,1587 @@
+================================================================================
+DISASTER RECOVERY PLAN (DRP): E-Tix Flash (Smart Ticketing Platform) (v1.2-FINAL)
+================================================================================
+
+Version:         1.2-FINAL
+Last Updated:    2026-09-11
+Author:          M. Arif Aulia
+Status:          ✅ 100% PRODUCTION-READY — REVISED & LOCKED
+Platform:        Golang (Gin) + PostgreSQL (Supabase) + Redis (Upstash) + RabbitMQ (CloudAMQP)
+Hosting:         Render.com (backend) + Vercel (frontend) + Supabase (DB) + Upstash (Redis) + CloudAMQP (MQ)
+
+================================================================================
+📌 BISMILLAH — DISASTER RECOVERY PLAN FINAL VERSION (POST-GEMINI REVIEW #2)
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. Executive Summary
+2. Scope & Systems Inventory
+3. Disaster Scenarios & Risk Assessment
+4. Backup & Redundancy Strategy
+5. Disaster Response Playbooks
+6. Roles, Responsibilities & Escalation
+7. Testing, Validation & Drills
+8. Maintenance & Continuous Improvement
+9. Appendix
+
+================================================================================
+1. EXECUTIVE SUMMARY
+================================================================================
+
+1.1 PROJECT INFORMATION
+────────────────────────────────────────────────────────────────────────────────
+
+Project Name:      E-Tix Flash (Smart Ticketing Platform)
+Owner/Team:        M. Arif Aulia (Solo Developer Portfolio Project)
+Last Updated:      2026-09-11
+Next Review Date:  2026-12-11 (Quarterly)
+Version:           1.2-FINAL
+
+1.2 DRP OBJECTIVES
+────────────────────────────────────────────────────────────────────────────────
+
+Mengacu pada PRD v6.0-FINAL (NFR Reliability & Availability):
+
+✅ Meminimalkan downtime sistem saat terjadi disaster (target uptime 99.9%)
+✅ Melindungi integritas data tiket, booking, dan transaksi pembayaran
+✅ Memastikan business continuity selama flash sale event
+✅ Memenuhi SLA internal: RTO < 15 menit, RPO < 1 menit (PRD v6.0)
+✅ Menetapkan roles & responsibilities yang jelas untuk setiap skenario
+✅ Mematuhi prinsip Payment Gateway as Source of Truth (SECURITY_SPEC v1.4 §6.2)
+✅ Menjaga integritas idempotency & state machine (ticket_status_enum, resale_status_enum)
+
+1.3 KEY METRICS (DARI PRD v6.0 NFR RELIABILITY)
+────────────────────────────────────────────────────────────────────────────────
+
+| Metric                          | Value       | Justification                              |
+|---------------------------------|-------------|--------------------------------------------|
+| RTO (Recovery Time Objective)   | < 15 menit  | PRD v6.0 NFR: "RTO < 15 menit"             |
+| RPO (Recovery Point Objective)  | < 1 menit   | PRD v6.0 NFR: "RPO < 1 menit"              |
+| Target Uptime                   | 99.9%       | PRD v6.0 NFR: selama flash sale period     |
+| Backup Frequency (High-Traffic) | Hourly      | PRD v6.0: "Automated Snapshot setiap jam"  |
+| Backup Frequency (Baseline)     | Daily       | Supabase automated daily backup            |
+| Webhook Reconciliation Cycle    | 10 menit    | LOGIC_FLOW v1.4 §4.5 — payment recovery    |
+| Circuit Breaker Timeout         | 30 detik    | TDD v1.10 §7 — recovery window             |
+
+1.4 DRP PRINCIPLES
+────────────────────────────────────────────────────────────────────────────────
+
+✅ Fail-Safe, Not Fail-Down: Setiap komponen punya fallback (Circuit Breaker → DB Queue)
+✅ Idempotent Recovery: Semua operasi recovery dapat diulang tanpa efek samping
+✅ Payment Gateway is Authoritative: Recovery pembayaran selalu cross-check ke Payment Gateway
+✅ Data Integrity First: Tidak ada "partial recovery" — all-or-nothing untuk transaksi
+✅ Observable: Setiap langkah recovery ter-log (Zap JSON) & ter-metric (Prometheus)
+✅ State Consistency: Setiap restore PostgreSQL WAJIB diikuti purge + rebuild Redis state
+   untuk mencegah desync antara DB (state lampau) dan Redis (state kini).
+
+================================================================================
+2. SCOPE & SYSTEMS INVENTORY
+================================================================================
+
+2.1 IN SCOPE
+────────────────────────────────────────────────────────────────────────────────
+
+Sistem/komponen yang covered DRP ini (mengacu TDD v1.10 §2 & §3):
+
+✅ Infrastructure Layer:
+   - Backend: Golang (Gin) monolithic binary → Render.com
+   - Frontend: Next.js 14 PWA → Vercel (CDN)
+   - Database: Supabase PostgreSQL 15+ (12 tabel)
+   - Cache: Upstash Redis 7 (bitmask locking, rate limiting, idempotency L1, token blacklist)
+   - Message Broker: CloudAMQP RabbitMQ (delayed messages, fan score, reconciliation)
+   - DNS & TLS: Cloudflare DNS + Let's Encrypt (auto-managed by Render)
+
+✅ Application Layer:
+   - REST API (37 endpoints — API_CONTRACT v1.2)
+   - WebSocket (waiting room updates — optional)
+   - Background Workers:
+     * BookingExpiryWorker (F003 rollback)
+     * WebhookReconciliationWorker (F003 fallback)
+     * ResaleExpiryWorker (F005 reservation timeout)
+     * ReportGeneratorWorker (F004b post-event)
+     * FeedbackLoopWorker (F004b auto-learning)
+     * DBQueueSyncWorker (Circuit Breaker recovery — TDD v1.10 §6.6)
+
+✅ Data Layer:
+   - PostgreSQL (12 tabel dari DATABASE_SCHEMA v2.9):
+     users, events, sections, bookings, payment_obligations, tickets,
+     ticket_scans, resale_transactions, admin_actions, insights,
+     blacklist, system_config
+   - Redis keyspaces:
+     seats:{event_id}:{section_id}:v{layout_version}  (bitmap locking)
+     booking:{booking_id}                              (TTL 180s)
+     queue_token:used:{jti}                            (TTL 300s)
+     refresh_blacklist:{jti}                           (TTL 7d)
+     user:score:{user_id}:base / :dynamic              (fan score)
+     idempotency:{key}                                 (TTL 24h)
+     rate:{client_id}                                  (rate limiting)
+   - RabbitMQ queues:
+     fan_score, release_seat_check (delayed), resale_expiry_check (delayed),
+     report_generation, reconciliation_cycle
+
+✅ Security Layer (mengacu SECURITY_SPEC v1.4):
+   - JWT signing keys (RSA 2048-bit) — JWT_PRIVATE_KEY, JWT_PUBLIC_KEY
+   - Admin 2FA token store (Redis + PostgreSQL dual-write)
+   - Secrets management (Render.com environment variables)
+   - TLS 1.3 termination (Render + Vercel auto)
+
+✅ External Integrations (dari PRD v6.0 §Integration):
+   - Payment Gateway: Midtrans / Xendit (charge, refund, payout, webhook)
+   - Push Notification: Firebase Cloud Messaging (FCM)
+   - SMS/WhatsApp: Twilio / Wablas (OTP, fallback PIN)
+   - Email: SendGrid / Resend (transactional)
+
+2.2 OUT OF SCOPE
+────────────────────────────────────────────────────────────────────────────────
+
+Sistem/komponen yang TIDAK covered DRP ini (dengan alasan):
+
+❌ Internal Wallet/Ledger System — TIDAK ADA di E-Tix Flash
+   Alasan: PRD v6.0 "Out of Scope": semua transaksi keuangan via Payment Gateway.
+   Tidak ada tabel wallets/ledger_entries di DATABASE_SCHEMA v2.9.
+
+❌ Physical Data Center — Cloud-only architecture.
+   Alasan: Menggunakan Render.com + Supabase + Upstash + CloudAMQP (managed services).
+
+❌ Frontend Client Device Recovery (HP/browser user)
+   Alasan: Tanggung jawab user. Fallback PIN tetap tersedia (F004).
+
+❌ Compliance/Legal Framework (UU PDP Indonesia) — hanya sebagai referensi
+   Alasan: Portfolio project, bukan production legal-grade. Ditandai sebagai future work.
+
+❌ Live Event Physical Operations (tenda, generator, gate fisik)
+   Alasan: Fokus DRP ini adalah software infrastructure.
+
+2.3 INFRASTRUCTURE OVERVIEW
+────────────────────────────────────────────────────────────────────────────────
+
+TOPOGRAPHY (mengacu TDD v1.10 §3 System Architecture Diagram):
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                        FRONTEND (Vercel CDN — Multi-Region)                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐  │
+│  │  Customer    │  │      EO      │  │  Gate Staff  │  │  Admin Panel   │  │
+│  │  (Mobile PWA)│  │  (Mobile)    │  │  (Mobile PWA)│  │  (Desktop)     │  │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └────────┬───────┘  │
+│         └─────────────────┴─────────────────┴───────────────────┘          │
+│                                    │                                        │
+│                        Next.js App Router (SSR/SSG)                         │
+└────────────────────────────────────┬──────────────────────────────────────────┘
+                                     │ HTTPS / REST / WebSocket
+┌────────────────────────────────────▼──────────────────────────────────────────┐
+│               BACKEND (Render.com — Golang Modular Monolith)                 │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │                       GIN HTTP SERVER (Port 8080)                      │  │
+│  │  Middleware: Logger | CORS | Rate Limit | Auth | Circuit Breaker      │  │
+│  ├────────────────────────────────────────────────────────────────────────┤  │
+│  │ Handlers (Auth/Booking/Payment/Ticket/Gate/Resale/Admin)               │  │
+│  │ Service Layer → Repository Layer → Data Access                         │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                          │
+│              ┌─────────────────────┼─────────────────────┐                  │
+│              ▼                     ▼                     ▼                  │
+│         PostgreSQL            Redis 7              RabbitMQ                 │
+│         (Supabase)            (Upstash)            (CloudAMQP)              │
+│         - ACID                - Bitmask Lock       - Delayed Messages       │
+│         - RLS                 - Rate Limiting      - Fan Score Worker       │
+│         - Triggers            - Idempotency L1     - Reconciliation Worker  │
+│         - DB Queue Fallback   - Token Blacklist    - Idempotent Lazy-Check  │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+                        ┌────────────────────────────┐
+                        │   PAYMENT GATEWAY (External)│
+                        │   Midtrans / Xendit         │
+                        │   - Charge, Refund, Payout  │
+                        │   - Webhook (X-Gateway-Sig) │
+                        └────────────────────────────┘
+
+DATA FLOW CLASSIFICATION:
+  - Client → Backend: HTTPS REST (stateless, JSON)
+  - Backend → Supabase: TCP PostgreSQL (pgx/v5, connection pool MaxConns=15)
+  - Backend → Upstash: TCP Redis (TLS, circuit breaker wrapped)
+  - Backend → CloudAMQP: AMQP (TLS, delayed message exchange)
+  - Backend → Payment Gateway: HTTPS REST + Webhook receiver
+  - Frontend ← Vercel: CDN edge (global)
+
+================================================================================
+3. DISASTER SCENARIOS & RISK ASSESSMENT
+================================================================================
+
+3.1 DISASTER SCENARIO MATRIX
+────────────────────────────────────────────────────────────────────────────────
+
+| # | Scenario                                | Severity | RTO     | RPO     | Likelihood | Impact                          |
+|---|-----------------------------------------|----------|---------|---------|------------|---------------------------------|
+| 1 | PostgreSQL primary failure / corruption | Critical | 15 min  | 1 min   | Low        | Service down, ticket data lost  |
+| 2 | Redis cluster total failure             | High     | 5 min   | N/A     | Low        | Booking lock degraded (DB queue)|
+| 3 | RabbitMQ cluster failure                | High     | 10 min  | N/A     | Low        | Delayed msgs queue, async stall |
+| 4 | Backend region (Render.com) failure     | Critical | 15 min  | 0 (stateless)| Low    | API down                        |
+| 5 | Frontend region (Vercel) failure        | Medium   | 5 min   | 0 (stateless)| Low    | PWA unreachable                 |
+| 6 | Payment Gateway extended outage (>30m)  | Critical | 30 min  | 0       | Medium     | Booking/payment blocked         |
+| 7 | JWT signing key compromise              | Critical | 15 min  | N/A     | Very Low   | Auth bypass risk                |
+| 8 | DB credentials / secrets compromise     | Critical | 15 min  | N/A     | Very Low   | Full DB access                  |
+| 9 | Data corruption / accidental mass delete| Critical | 15 min  | 1 min   | Low        | Data loss                       |
+| 10| DDoS / volumetric attack                | High     | 5 min   | N/A     | Medium     | Service degraded                |
+| 11| DNS / TLS certificate failure           | High     | 10 min  | N/A     | Low        | Service unreachable             |
+| 12| Full region outage (all SaaS providers) | Critical | 60 min  | 5 min   | Very Low   | Complete outage                 |
+| 13| SMS/Email provider outage               | Medium   | 60 min  | N/A     | Medium     | OTP/PIN delivery delay          |
+| 14| FCM push provider outage                | Low      | 24 hr   | N/A     | Medium     | Notification delay              |
+| 15| CloudAMQP quota exceeded                | High     | 30 min  | N/A     | Low        | Async workers halt              |
+
+3.2 SEVERITY LEVELS DEFINITION
+────────────────────────────────────────────────────────────────────────────────
+
+CRITICAL (RTO: < 15 menit, RPO: 0-1 menit)
+  Skenario yang langsung mengancam core business operations.
+  Data loss minimal tidak dapat diterima.
+  Wajib trigger Incident Response (SECURITY_SPEC v1.4 §13).
+  Contoh: PostgreSQL corruption, JWT compromise, DB credential leak,
+  full-region outage, Payment Gateway extended outage.
+
+HIGH (RTO: 5-15 menit, RPO: ≤ 5 menit)
+  Skenario significant impact tapi bukan immediate threat ke core business.
+  Bisa direcover via fallback atau alternative means.
+  Contoh: Redis cluster total failure, RabbitMQ failure, backend region down,
+  DDoS attack, DNS/TLS failure, CloudAMQP quota exceeded.
+
+MEDIUM (RTO: 15-60 menit, RPO: ≤ 1 jam)
+  Impact terbatas atau partial functionality loss.
+  Contoh: Frontend region failure, Payment Gateway short outage,
+  SMS/Email provider outage.
+
+LOW (RTO: > 1 jam, RPO: ≤ 1 hari)
+  Minimal business impact, dapat di-defer.
+  Contoh: FCM push provider outage (bisa di-retry), non-critical UI issues.
+
+3.3 RISK ASSESSMENT MAPPING KE FOUNDATION
+────────────────────────────────────────────────────────────────────────────────
+
+Semua scenario di atas dipetakan ke Risk Mitigation di PRD v6.0 §Risk & Mitigation:
+
+| DRP Scenario                 | PRD Risk ID                          | Mitigation (Foundation)                 |
+|------------------------------|--------------------------------------|------------------------------------------|
+| PostgreSQL primary failure   | Cache Cluster Failure (mirror)       | Supabase snapshot + PITR                 |
+| Redis cluster failure        | Cache Cluster Failure                | Circuit Breaker + DB Queue (LOGIC_FLOW §9.4) |
+| RabbitMQ failure             | Webhook Timeout risk                 | Webhook Reconciliation Worker (§4.5)     |
+| Backend region failure       | Traffic Spike Extreme                | Stateless backend + Render auto-deploy   |
+| Payment Gateway outage       | Payment Webhook Timeout / Hilang     | Webhook Reconciliation Worker (§4.5)     |
+| Data corruption              | (Implied) Bitmask Lock Overlap       | Supabase PITR + hourly snapshot          |
+| DDoS attack                  | Bypass Bot via Scripting Direct API  | Rate Limiting + Cloudflare WAF           |
+| JWT compromise               | (Implied) Account Compromise         | Quarterly JWT key rotation (SEC_SPEC §10.2)|
+
+================================================================================
+4. BACKUP & REDUNDANCY STRATEGY
+================================================================================
+
+4.1 BACKUP ARCHITECTURE
+────────────────────────────────────────────────────────────────────────────────
+
+4.1.1 DATABASE BACKUPS (Supabase PostgreSQL)
+
+Strategy:       Full Daily + Point-in-Time Recovery (PITR) + Hourly Snapshot (High-Traffic)
+Tool/Method:    Supabase Automated Backups + pg_basebackup + WAL archiving
+
+Configuration:
+  - Full Backup Frequency:      Daily (00:00 UTC, off-peak)
+  - PITR Granularity:           Up to 7 days (Supabase Pro tier)
+  - Hourly Snapshot:            Aktif selama flash sale period (dari PRD NFR)
+  - Retention Period:           7 days (PITR), 30 days (daily snapshots)
+  - Storage Location:
+      * Primary:   Supabase managed storage (same region as DB)
+      * Secondary: Manual export to AWS S3 (different region) — weekly
+  - Verification:               Automated restore test — mingguan
+  - Backup Size Estimation:     ~5 GB per 100k bookings (estimate)
+  - RPO Achieved:               ≤ 1 menit (via WAL streaming)
+  - RTO Achieved:               ≤ 15 menit (via snapshot restore)
+
+Tables Covered (12 dari DATABASE_SCHEMA v2.9):
+  users, events, sections, bookings, payment_obligations, tickets,
+  ticket_scans, resale_transactions, admin_actions, insights,
+  blacklist, system_config
+
+Critical Constraints:
+  - Transaksi keuangan WAJIB idempotent setelah restore (via payment_obligations.idempotency_key)
+  - Rekonsiliasi pembayaran WAJIB setelah restore (via Webhook Reconciliation Worker)
+  - RLS policies WAJIB ter-restore bersamaan (bundle dalam migration)
+  - Redis state WAJIB purge + rebuild setelah restore (untuk cegah desync dengan PostgreSQL)
+
+4.1.2 APPLICATION & CODE BACKUPS
+
+Version Control:        GitHub (private repo: e-tix-flash)
+Backup Frequency:       Real-time (setiap commit/push)
+Repository Mirroring:   GitHub + local bare clone (offline backup)
+Configuration Files:
+  - .env.example         → repo (template only, no secrets)
+  - migrations/*.sql     → repo (versioned)
+  - Dockerfile           → repo
+  - docker-compose.yml   → repo
+Secrets Management:
+  - Render.com Environment Variables (encrypted at rest)
+  - Local .env (never committed — .gitignore)
+  - Backup: exported encrypted ke password manager (Bitwarden/1Password) — bulanan
+
+4.1.3 REDIS STATE BACKUPS (Upstash)
+
+Strategy:       Snapshot-based (Upstash managed)
+Frequency:      Automatic (Upstash default) + manual backup sebelum flash sale
+Retention:      7 days
+Critical Note:
+  Redis state TIDAK critical untuk data permanen — bisa di-rebuild dari PostgreSQL.
+  Yang perlu recoverable:
+    - seats:{event_id}:{section_id}:v* → rebuild dari tickets.status + Redis Lua init
+    - booking:{booking_id}             → rebuild dari bookings table (status=PENDING)
+    - queue_token:used:{jti}           → NON-CRITICAL (TTL 300s, akan expire otomatis)
+    - idempotency:{key}                → L2 PostgreSQL (payment_obligations.idempotency_key)
+    - refresh_blacklist:{jti}          → NON-CRITICAL (re-login acceptable)
+
+4.1.4 RABBITMQ STATE BACKUPS (CloudAMQP)
+
+Strategy:       CloudAMQP managed (durable queues)
+Critical Note:
+  Delayed messages TIDAK perlu di-backup — semua async operations idempotent.
+  Jika RabbitMQ hilang:
+    - Booking expiry    → di-recover via admin_actions + manual trigger
+    - Resale expiry     → di-recover via scheduled scan (SELECT yang RESERVED expired)
+    - Reconciliation    → di-recover via Webhook Reconciliation Worker manual trigger
+    - Fan score         → NON-CRITICAL (base score ada di PostgreSQL)
+
+4.1.5 SECRETS & KEYS BACKUPS
+
+| Secret                       | Storage                      | Backup Location                          | Rotation    |
+|------------------------------|------------------------------|------------------------------------------|-------------|
+| JWT_PRIVATE_KEY (RSA 2048)   | Render env vars              | Bitwarden (encrypted)                    | Quarterly   |
+| JWT_PUBLIC_KEY               | Render env vars              | Bitwarden (encrypted)                    | Quarterly   |
+| DATABASE_URL                 | Render env vars              | Bitwarden (encrypted)                    | Annual      |
+| REDIS_URL                    | Render env vars              | Bitwarden (encrypted)                    | Annual      |
+| RABBITMQ_URL                 | Render env vars              | Bitwarden (encrypted)                    | Annual      |
+| PAYMENT_GATEWAY_API_KEY      | Render env vars              | Bitwarden (encrypted)                    | Semi-Annual |
+| TWILIO_AUTH_TOKEN            | Render env vars              | Bitwarden (encrypted)                    | Semi-Annual |
+| SENDGRID_API_KEY             | Render env vars              | Bitwarden (encrypted)                    | Semi-Annual |
+| SYSTEM_USER_UUID             | Migration + env var          | Repo (constant)                          | Never       |
+
+4.2 REDUNDANCY & HIGH AVAILABILITY
+────────────────────────────────────────────────────────────────────────────────
+
+| Component     | Redundancy Type    | Implementation                              | Failover Time |
+|---------------|--------------------|---------------------------------------------|---------------|
+| PostgreSQL    | Active-Passive     | Supabase managed (auto-replica + PITR)      | ≤ 15 min      |
+| Redis         | Active-Active      | Upstash multi-AZ (managed)                  | ≤ 5 min       |
+| RabbitMQ      | Active-Passive     | CloudAMQP cluster (managed)                 | ≤ 10 min      |
+| Backend       | Active-Active      | Render.com auto-scale (stateless)           | ≤ 5 min       |
+| Frontend      | Active-Active      | Vercel Edge Network (global CDN)            | ≤ 5 min       |
+| DNS           | Active-Passive     | Cloudflare + Render auto-failover           | ≤ 10 min      |
+
+FAILOVER MECHANISMS:
+
+Load Balancer:
+  - Backend: Render.com managed LB (auto)
+  - Frontend: Vercel Edge (auto)
+
+Database Replication:
+  - Supabase streaming replication (managed)
+  - Read replicas untuk SELECT-heavy queries (di production scale)
+
+DNS Failover:
+  - Cloudflare automatic health check
+  - Manual CNAME switch: api.e-tix-flash.com → backup region
+
+Health Checks:
+  - Backend: /healthz/liveness (5s interval) + /healthz/readiness (10s interval)
+  - Database: Supabase internal checks + application-level SELECT 1
+  - Redis: PING via Circuit Breaker wrapper
+  - RabbitMQ: AMQP heartbeat (30s)
+
+4.3 GEOGRAPHIC DISTRIBUTION
+────────────────────────────────────────────────────────────────────────────────
+
+Primary Region (Production):
+  - Backend:  Render.com Singapore region (Southeast Asia, low latency untuk Indonesia)
+  - Database: Supabase Singapore region
+  - Redis:    Upstash Singapore region
+  - RabbitMQ: CloudAMQP Singapore region (or nearest APAC)
+  - Frontend: Vercel Global Edge (Singapore POP untuk Indonesia)
+
+Secondary Region (Cold Standby):
+  - Backend:  Render.com backup region (config ready, deploy on-demand)
+  - Database: Supabase PITR cross-region restore capability
+  - Redis:    Rebuild from PostgreSQL (no direct backup needed)
+  - RabbitMQ: Re-provision on-demand (CloudAMQP)
+  - Frontend: Vercel auto (global CDN)
+
+RTO if Primary Region Fails: 30-60 menit (full-region disaster — Scenario 12)
+
+================================================================================
+5. DISASTER RESPONSE PLAYBOOKS
+================================================================================
+
+⚠️ CATATAN ANTI-DUPLIKASI:
+Section ini FOKUS pada infrastruktur-level disaster recovery.
+Runbook incident-level (payment backlog, circuit breaker, replay attack, offline scan conflict)
+SUDAH ADA di SECURITY_SPEC v1.4 Section 13.3 — jangan diduplikasi di sini.
+Untuk incident-level: rujuk SECURITY_SPEC v1.4 §13.
+
+5.1 GENERIC PLAYBOOK STRUCTURE
+────────────────────────────────────────────────────────────────────────────────
+
+Setiap playbook mengikuti struktur:
+  - Severity
+  - Symptoms / Detection
+  - Impact Assessment
+  - Immediate Actions (First 15 minutes)
+  - Recovery Steps (Preparation → Execution → Validation → Post-Recovery)
+  - Rollback Plan
+  - Expected RTO / RPO
+
+5.2 PLAYBOOK #1: PostgreSQL PRIMARY FAILURE / CORRUPTION
+────────────────────────────────────────────────────────────────────────────────
+
+Severity: CRITICAL
+
+Symptoms / Detection:
+  - Alert: `database_connection_pool_exhausted` (Prometheus) — active conns >= 14 of 15
+  - Alert: `http_requests_total{status=~"5.."}` error rate > 5% in 5-min window
+  - Application log (Zap): `error connecting to postgres: connection refused` atau
+    `pgx: FATAL: the database system is in recovery mode`
+  - /healthz/readiness → `{"checks": {"database": "fail"}}` (HTTP 503)
+
+Impact Assessment:
+  - Affected Systems: Seluruh backend (REST API), semua workers, seluruh transaksi
+  - User Impact: Total service unavailability (browse, booking, payment, gate scan)
+  - Business Impact: Total revenue loss during outage, ticket sales halted, SLA breach
+
+Immediate Actions (First 15 minutes):
+  1. Incident Commander (M. Arif Aulia) konfirmasi issue via Supabase Dashboard + alert
+  2. Aktifkan Circuit Breaker (jika belum) → backend masuk Degraded Mode (LOGIC_FLOW §9.4)
+     → Semua request masuk PostgreSQL FIFO queue (bukan Redis bitmap)
+  3. Kirim notifikasi ke user via status banner: "Sistem sedang sibuk, mohon tunggu..."
+  4. Dokumentasikan timestamp mulai outage
+
+Recovery Steps:
+
+  Phase 1 — Preparation:
+    - [ ] Cek Supabase Dashboard: apakah ada indikasi maintenance/incident dari Supabase
+    - [ ] Cek Supabase Status Page (status.supabase.com)
+    - [ ] Identifikasi apakah korupsi data atau hardware failure
+    - [ ] Tentukan backup target: latest snapshot atau PITR ke timestamp tertentu
+          (PITR ke timestamp sebelum corruption = best practice)
+
+  Phase 2 — Execution (via Supabase Dashboard / CLI):
+
+    Step 1: Jika Supabase managed failover, tunggu auto-recovery (biasanya < 15 min).
+            Verifikasi: Supabase Dashboard → Database → Health.
+
+    Step 2: Jika perlu PITR restore manual:
+            Supabase Dashboard → Database → Backups → Point in Time Recovery.
+            Pilih timestamp: T-minus-corruption (mis. 2 menit sebelum alert fire).
+            Konfirmasi restore (akan recreate database instance).
+
+    Step 3: Setelah restore selesai, jalankan migration untuk memastikan schema up-to-date:
+
+            migrate -path ./migrations -database $DATABASE_URL up
+
+    Step 4: Verify critical tables exist (12 tabel):
+
+            psql $DATABASE_URL -c "\dt"
+
+    Step 5: Verify RLS policies aktif:
+
+            psql $DATABASE_URL -c "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname='public';"
+
+    Step 6: Verify SYSTEM_USER_UUID:
+
+            psql $DATABASE_URL -c "SELECT id, role FROM users WHERE id='00000000-0000-0000-0000-000000000000';"
+
+    Step 7 (WAJIB — NEW v1.2): Purge Stale Redis Cache & Rebuild State
+            Konteks: PITR restore mundur ke T-minus-corruption (mis. 2 menit lalu),
+            tetapi Redis masih menyimpan state bitmask dari titik "future" (T).
+            Ini menyebabkan desync antara DB (state lampau) dan Redis (state kini).
+            WAJIB purge + rebuild:
+
+            7a. Purge keyspace yang stale (PILIHAN UTAMA — targeted delete):
+                redis-cli -u $REDIS_URL --scan --pattern 'seats:*' | xargs -r redis-cli -u $REDIS_URL DEL
+                redis-cli -u $REDIS_URL --scan --pattern 'booking:*' | xargs -r redis-cli -u $REDIS_URL DEL
+
+            7b. OPSI EMERGENCY (jika targeted delete gagal): FLUSHDB
+                ⚠️ WARNING: FLUSHDB akan wipe SEMUA keyspace, termasuk:
+                    - rate:{client_id}          → rate limit reset (acceptable)
+                    - refresh_blacklist:{jti}   → refresh token blacklist hilang
+                                                  (dampak: user dengan refresh token yang
+                                                  sudah diblacklist bisa refresh lagi)
+                    - idempotency:{key}         → L1 cache hilang (L2 PostgreSQL tetap ada)
+                    - user:score:*              → fan score hilang (rebuild dari users.base_score)
+                Gunakan HANYA jika targeted delete tidak feasible.
+
+            7c. Rebuild state dari PostgreSQL hasil restore
+                (lihat Playbook #2 Phase 2 Step 3 untuk detail):
+                - seats:* bitmap → rebuild dari tickets.status
+                - user:score:*:base → rebuild dari users.base_score
+                - Keys L1 idempotency tidak perlu rebuild (L2 PostgreSQL tetap authoritative)
+
+            7d. Verifikasi desync hilang:
+                - Ambil sample 5 tickets dengan status 'CONFIRMED' dari DB
+                - Cek GETBIT seats:{event_id}:{section_id}:v{n} {pos-1} → harus return 1
+                - Ambil sample 5 tickets dengan status 'AVAILABLE' → GETBIT harus return 0
+
+  Phase 3 — Validation:
+    - [ ] /healthz/readiness → `{"checks": {"database": "ok"}}`
+    - [ ] Run smoke test: SELECT count(*) FROM users, bookings, tickets (returns > 0)
+    - [ ] Test login flow: POST /auth/login → 200
+    - [ ] Test booking flow: POST /events/{id}/sections/{sid}/seats → 201
+    - [ ] Verify idempotency: GET /admin/ledger — summary.unreconciled_count
+    - [ ] Verify Payment Gateway reconciliation still active (worker running)
+    - [ ] Verify Redis-DB consistency (sample check dari Step 7d)
+
+  Phase 4 — Post-Recovery:
+    - [ ] Rekonsiliasi pembayaran PENDING setelah restore:
+          Trigger WebhookReconciliationWorker manual run (lihat SECURITY_SPEC §13.3)
+    - [ ] Monitor /healthz/readiness + Prometheus metrics selama 60 menit
+    - [ ] Identifikasi root cause (log, Supabase report)
+    - [ ] Update DRP berdasarkan temuan
+
+Rollback Plan:
+  - Jika restore gagal atau korupsi berlanjut: switch ke secondary region
+    Supabase (cold standby) → update DATABASE_URL env var → restart backend
+  - Trigger: restore tidak berhasil dalam 30 menit
+
+Expected RTO: ≤ 15 menit | Expected RPO: ≤ 1 menit
+
+5.3 PLAYBOOK #2: REDIS CLUSTER TOTAL FAILURE
+────────────────────────────────────────────────────────────────────────────────
+
+Severity: HIGH
+
+Symptoms / Detection:
+  - Alert: `circuit_breaker_state{name="Redis"} == 1` (OPEN) selama > 60 detik
+  - Application log: `redis: connection refused` atau `i/o timeout`
+  - Upstash Status Page (status.upstash.com) menunjukkan incident
+
+Impact Assessment:
+  - Affected Systems: Bitmask locking, rate limiting, idempotency L1, fan score
+  - User Impact: Booking flow degraded (masuk DB FIFO queue), rate limit dilonggarkan
+  - Business Impact: Booking tetap bisa jalan (degraded mode), tapi throughput turun
+
+Immediate Actions:
+  1. Circuit Breaker AKAN auto-trigger (LOGIC_FLOW §9.4) — pastikan sudah aktif
+  2. Backend otomatis masuk Degraded Mode: rate limit longgar, bitmap lock ditangguhkan,
+     semua request masuk PostgreSQL FIFO queue
+  3. Banner user: "Sistem sedang sibuk, mohon tunggu..."
+  4. Cek Upstash Status Page
+
+Recovery Steps:
+
+  Phase 1 — Preparation:
+    - [ ] Identifikasi apakah Upstash managed outage atau Redis instance issue
+    - [ ] Siapkan rebuild script (redis_seats_rebuild.go — dari tickets.status)
+
+  Phase 2 — Execution:
+
+    Step 1: Jika Upstash managed outage → tunggu auto-recovery.
+            Monitor: Upstash Dashboard + circuit_breaker_state metric.
+
+    Step 2: Jika Redis instance corrupt → re-provision via Upstash Dashboard.
+            Setelah provision selesai, update REDIS_URL env var di Render.com.
+
+    Step 3: Rebuild Redis state (critical keyspaces) — dengan DEL dulu untuk
+            memastikan key bersih dari sisa bit korup:
+
+            Untuk SETIAP section:
+              DEL "seats:{event_id}:{section_id}:v{layout_version}"
+              Lalu untuk setiap ticket dengan status IN
+              ('CONFIRMED','LOCKED','PENDING_SPLIT_PAY','RESALE_PENDING','USED'):
+                SETBIT "seats:{event_id}:{section_id}:v{layout_version}" {pos-1} 1
+
+            Rebuild base_score dari users.base_score:
+              SET "user:score:{user_id}:base" {base_score} EX 86400
+
+            Keys berikut NON-CRITICAL (akan expire otomatis):
+              queue_token:used:{jti}    (TTL 300s)
+              booking:{booking_id}      (TTL 180s)
+              refresh_blacklist:{jti}   (user re-login acceptable)
+
+    Step 4: Idempotency fallback — PENTING:
+            Selama Redis down, SEMUA idempotency penanganan transaksi duplicate
+            BERPIJAH 100% ke L2 PostgreSQL via payment_obligations.idempotency_key
+            (LOGIC_FLOW v1.4 §9.1).
+            Setelah Redis pulih, L1 idempotency cache (idempotency:{key})
+            akan kembali aktif untuk fast lookup, TETAPI L2 tetap sebagai
+            source-of-truth untuk konsistensi jangka panjang.
+            Verifikasi: SELECT idempotency_key FROM payment_obligations
+            WHERE created_at > {outage_start} — pastikan tidak ada duplicate.
+
+    Step 5: Drain DB FIFO queue (DBQueueSyncWorker — TDD v1.10 §6.6):
+            Worker auto-run setiap 30 detik saat circuit CLOSED.
+
+  Phase 3 — Validation:
+    - [ ] `circuit_breaker_state == 0` (CLOSED)
+    - [ ] Test GET /events/{id}/sections/{sid}/seats → seat availability correct
+    - [ ] Test POST booking → 201 (bitmap lock works)
+    - [ ] Rate limiter aktif kembali (X-RateLimit-* headers muncul)
+    - [ ] Verify no duplicate in payment_obligations.idempotency_key
+
+  Phase 4 — Post-Recovery:
+    - [ ] Monitor booking_lock_conflicts_total untuk anomali
+    - [ ] Verifikasi tidak ada double-booking:
+          SELECT section_id, seat_position FROM tickets
+          GROUP BY section_id, seat_position HAVING count(*) > 1
+    - [ ] Update DRP
+
+Rollback Plan:
+  - Jika rebuild gagal: refresh dari Upstash snapshot (jika ada) atau rebuild ulang
+
+Expected RTO: ≤ 5 menit (auto-recovery) | Expected RPO: N/A (state rebuildable)
+
+5.4 PLAYBOOK #3: RABBITMQ (CLOUDAMQP) FAILURE
+────────────────────────────────────────────────────────────────────────────────
+
+Severity: HIGH
+
+Symptoms / Detection:
+  - Alert: `rabbitmq_connection_status == 0` atau queue depth stagnan
+  - Application log: `amqp: connection closed` atau `channel error`
+  - Delayed messages tidak dieksekusi (booking expiry tidak fire)
+
+Impact Assessment:
+  - Affected Systems: Booking expiry (F003), resale expiry (F005),
+    webhook reconciliation, fan score Stage 2, report generation
+  - User Impact: Booking lock TIDAK auto-release setelah 3 menit (perlu manual/scheduled)
+  - Business Impact: Seat stuck, booking queue menumpuk, tapi user tetap bisa akses sistem
+
+Immediate Actions:
+  1. Cek CloudAMQP Status Page
+  2. Jika outage > 30 menit: trigger manual fallback:
+     - BookingExpiryWorker manual run (scan bookings WHERE expires_at < NOW() AND status='PENDING')
+     - ResaleExpiryWorker manual run (scan resale_transactions WHERE status='RESERVED' AND reservation_expires_at < NOW())
+
+Recovery Steps:
+
+  Phase 1 — Preparation:
+    - [ ] Cek apakah outage adalah CloudAMQP managed atau instance-specific
+    - [ ] Siapkan fallback scheduled job (cron) untuk scan expired entries
+
+  Phase 2 — Execution:
+
+    Step 1: Jika managed outage → tunggu auto-recovery CloudAMQP.
+
+    Step 2: Jika instance corrupt → re-provision via CloudAMQP Dashboard.
+            Update RABBITMQ_URL env var di Render.com → restart backend.
+
+    Step 3: AKTIFKAN PLUGIN PRASYARAT SEBELUM re-declare exchange:
+            Plugin `rabbitmq_delayed_message_exchange` BUKAN plugin default RabbitMQ.
+            Tanpa plugin ini, membuat exchange bertipe `x-delayed-message` akan
+            GAGAL dengan error: "unknown exchange type 'x-delayed-message'".
+            Langkah:
+              - CloudAMQP Dashboard → Instance → Plugins
+              - Enable: rabbitmq_delayed_message_exchange
+              - Verifikasi: rabbitmq-plugins list (via dashboard) → plugin E* aktif
+            HANYA SETELAH plugin aktif, lanjut ke step berikutnya.
+
+    Step 4: Re-declare exchanges dan queues (dari konfigurasi TDD v1.10):
+            - Exchange: delayed_exchange (type: x-delayed-message)
+            - Queues:
+                * fan_score
+                * release_seat_check (bound ke delayed_exchange)
+                * resale_expiry_check (bound ke delayed_exchange)
+                * report_generation
+                * reconciliation_cycle
+
+    Step 5: Manual fallback jika outage panjang (>30 min):
+            Trigger admin endpoint atau scheduled job untuk:
+              1. Booking expiry:
+                 SELECT * FROM bookings
+                 WHERE payment_status='PENDING' AND expires_at < NOW()
+              2. Resale expiry:
+                 SELECT * FROM resale_transactions
+                 WHERE status='RESERVED' AND reservation_expires_at < NOW()
+
+  Phase 3 — Validation:
+    - [ ] Test delayed message: POST booking → tunggu 3 menit → release check fire
+    - [ ] Test worker: log menunjukkan worker consume message
+    - [ ] Verifikasi exchange type x-delayed-message aktif
+
+  Phase 4 — Post-Recovery:
+    - [ ] Drain queue backlog
+    - [ ] Verifikasi tidak ada booking stuck:
+          SELECT count(*) FROM bookings
+          WHERE payment_status='PENDING' AND expires_at < NOW()
+
+Rollback Plan: N/A (managed service)
+
+Expected RTO: ≤ 10 menit | Expected RPO: N/A (idempotent)
+
+5.5 PLAYBOOK #4: BACKEND REGION (RENDER.COM) FAILURE
+────────────────────────────────────────────────────────────────────────────────
+
+Severity: CRITICAL
+
+Symptoms / Detection:
+  - Alert: /healthz/liveness tidak responsif dari monitoring eksternal
+  - Semua endpoint return 502/503
+  - Render.com Status Page menunjukkan incident di region Singapore
+
+Impact Assessment:
+  - Affected Systems: Seluruh REST API
+  - User Impact: Total service unavailability
+  - Business Impact: Total revenue loss
+
+Immediate Actions:
+  1. Cek Render.com Status Page
+  2. Kirim status page update: "API sedang mengalami gangguan"
+  3. Jika outage > 5 menit: aktifkan failover procedure
+
+Recovery Steps:
+
+  Phase 1 — Preparation:
+    - [ ] Konfirmasi outage bukan dari Cloudflare/DNS issue
+    - [ ] Siapkan render.yaml / Docker image untuk deploy ke region alternatif
+
+  Phase 2 — Execution:
+
+    Opsi A: Tunggu Render.com auto-recovery (biasanya < 15 menit).
+
+    Opsi B: Deploy ke region alternatif (mis. US-East, Europe-West).
+            Langkah:
+              1. Render.com Dashboard → New Web Service → pilih region alternatif
+              2. Deploy dari repo GitHub (auto build via Dockerfile)
+              3. Set env vars SAMA (dari Bitwarden backup)
+              4. Update DNS: api.e-tix-flash.com → endpoint region alternatif
+                 (Cloudflare CNAME update, propagate < 60s)
+
+  Phase 3 — Validation:
+    - [ ] /healthz/liveness → 200
+    - [ ] /healthz/readiness → 200 (checks: database, redis, rabbitmq)
+    - [ ] Test login flow → 200
+    - [ ] Test booking flow → 201
+
+  Phase 4 — Post-Recovery:
+    - [ ] Update DNS kembali ke primary region setelah recovered
+    - [ ] Monitor latency (region alt mungkin lebih jauh dari Indonesia)
+
+Rollback Plan: N/A
+
+Expected RTO: ≤ 15 menit | Expected RPO: 0 (stateless backend)
+
+5.6 PLAYBOOK #5: PAYMENT GATEWAY EXTENDED OUTAGE (> 30 MENIT)
+────────────────────────────────────────────────────────────────────────────────
+
+Severity: CRITICAL
+
+Symptoms / Detection:
+  - Payment Gateway API return 5xx/timeout untuk initiate/refund/payout
+  - Webhook tidak masuk
+  - Midtrans/Xendit Status Page menunjukkan incident
+
+Impact Assessment:
+  - Affected Systems: Booking payment flow (F003), resale buy (F005), refund (F006)
+  - User Impact: Tidak bisa bayar atau refund; booking stuck di PENDING
+  - Business Impact: Revenue loss selama outage
+
+Immediate Actions:
+  1. Cek Payment Gateway status page
+  2. Jika outage > 30 menit:
+     - Hentikan pembuatan booking baru (opsional — banner user: "Pembayaran sedang down")
+     - Aktivasi Webhook Reconciliation Worker dengan interval lebih cepat (5 menit)
+  3. Tracking semua PENDING obligations yang dibuat selama outage
+  4. KEBIJAKAN EXPIRY (NEW v1.2 — diklarifikasi):
+     - Transaksi PENDING dengan TTL 180 detik TETAP DIBIARKAN EXPIRE secara alami
+       oleh BookingExpiryWorker. Alasan:
+         * Kuota kursi tidak terkunci tanpa kepastian pembayaran.
+         * Konsisten dengan LOGIC_FLOW v1.4 §4.3 (Idempotent Lazy-Check pattern):
+           pesan delayed TIDAK PERNAH dibatalkan, worker cek status di T+3 menit
+           dan eksekusi rollback jika masih PENDING.
+         * User tetap bisa re-booking seat baru setelah payment gateway pulih.
+     - WebhookReconciliationWorker hanya akan memproses pembayaran yang berhasil
+       memperoleh callback/status PAID dari Gateway — jadi transaksi yang sudah
+       di-expire (kursi sudah di-release) tidak akan "kembali hidup".
+     - Jika user sudah terlanjur bayar di Gateway saat expiry terpicu:
+         * Webhook masuk → WebhookReconciliationWorker deteksi status PAID
+         * Payment_obligations sudah EXPIRED → tidak auto-mutate ke PAID
+         * Trigger refund otomatis via Payment Gateway (idempotency key mencegah double-refund)
+         * Log ke admin_actions (action_type = 'MANUAL_REFUND') untuk audit
+
+Recovery Steps:
+
+  Phase 1 — Preparation:
+    - [ ] Track semua external_transaction_id yang stuck
+
+  Phase 2 — Execution:
+
+    Setelah Payment Gateway pulih:
+
+    Step 1: Trigger manual reconciliation untuk semua payment_obligations PENDING:
+            GET /transactions/{external_transaction_id} dari Gateway
+              - Jika PAID    → UPDATE status = 'PAID' + log admin_actions (MANUAL_PAID)
+              - Jika FAILED  → UPDATE status = 'FAILED' + rollback (release seats)
+              - Jika PENDING → tunggu webhook
+
+    Step 2: Verifikasi webhook backlog: replay missed webhooks (via Gateway dashboard).
+
+  Phase 3 — Validation:
+    - [ ] Semua payment_obligations PENDING resolved (PAID/FAILED/EXPIRED)
+    - [ ] Seats released untuk FAILED obligations
+    - [ ] Users yang PAID dapat tiketnya
+
+  Phase 4 — Post-Recovery:
+    - [ ] Monitoring metric payment_webhook_reconciliation_pending kembali ke 0
+    - [ ] Post-mortem: negosiasi SLA dengan Payment Gateway
+
+Rollback Plan: N/A
+
+Expected RTO: 30 menit (setelah Gateway pulih) | Expected RPO: 0
+
+5.7 PLAYBOOK #6: JWT SIGNING KEY / DB CREDENTIALS COMPROMISE
+────────────────────────────────────────────────────────────────────────────────
+
+Severity: CRITICAL
+
+Symptoms / Detection:
+  - Unauthorized access terdeteksi di log (unusual IPs, anomalous role usage)
+  - Bug bounty / user report
+  - Security monitoring tools alert
+
+Impact Assessment:
+  - Affected Systems: Seluruh autentikasi & otorisasi
+  - User Impact: Risk of account takeover, ticket theft, unauthorized bookings
+  - Business Impact: Trust erosion, potential financial loss
+
+Immediate Actions:
+  1. Aktifkan Incident Response (SECURITY_SPEC v1.4 §13 — Severity CRITICAL)
+  2. Snapshot database untuk forensics
+  3. Rotasi JWT signing key / DB credentials (SECURITY_SPEC v1.4 §10.2)
+
+Recovery Steps:
+
+  Phase 1 — Preparation:
+    - [ ] Generate new RSA key pair (JWT) / new DB password
+    - [ ] Backup semua secrets ke password manager
+
+  Phase 2 — Execution (mengacu SECURITY_SPEC v1.4 §10.2):
+
+    JWT Rotation:
+      openssl genrsa -out new_private_key.pem 2048
+      openssl rsa -in new_private_key.pem -pubout -out new_public_key.pem
+
+      Deploy new public key (backward compatible):
+        - Old key still validates existing tokens
+        - New tokens signed with new private key
+      Update JWT_PRIVATE_KEY + JWT_PUBLIC_KEY di Render env vars → restart backend
+
+      Grace period: 1 jam (existing access tokens expire naturally)
+      Setelah 1 jam: revoke old public key
+
+    DB Credentials Rotation:
+      1. Generate new DB password di Supabase
+      2. Update DATABASE_URL env var di Render → restart backend
+      3. Revoke old password di Supabase
+
+    Blacklist semua refresh_tokens di Redis:
+      Untuk setiap user: SET refresh_blacklist:{jti} 1 EX {remaining_ttl}
+      Force re-login untuk semua user
+
+  Phase 3 — Validation:
+    - [ ] Test login dengan token baru → 200
+    - [ ] Test login dengan token lama → 401 (expected: blacklisted or invalid signature)
+    - [ ] Test DB connection pool → 200
+
+  Phase 4 — Post-Recovery:
+    - [ ] Audit admin_actions untuk aktivitas mencurigakan
+    - [ ] Notify affected users (jika ada evidence of compromise)
+    - [ ] Update SECURITY_SPEC / DRP berdasarkan learning
+
+Rollback Plan: N/A (tidak boleh rollback ke compromised key)
+
+Expected RTO: ≤ 15 menit | Expected RPO: N/A
+
+5.8 PLAYBOOK #7: DATA CORRUPTION / ACCIDENTAL MASS DELETE
+────────────────────────────────────────────────────────────────────────────────
+
+Severity: CRITICAL
+
+Symptoms / Detection:
+  - Anomalous row counts (SELECT count(*) dari tabel utama drop signifikan)
+  - Unexpected data pattern (semua tickets status CANCELLED, dll)
+  - User reports missing bookings/tickets
+
+Impact Assessment:
+  - Affected Systems: Tergantung scope korupsi
+  - User Impact: Data hilang — booking/tiket invalid
+  - Business Impact: Potensi financial loss & reputasi
+
+Immediate Actions:
+  1. STOP writes jika masih aktif (jika perlu: mode read-only sementara)
+  2. Snapshot current state (untuk forensics)
+  3. Identifikasi timestamp corruption (via audit trail admin_actions atau log)
+
+Recovery Steps:
+
+  Phase 1 — Preparation:
+    - [ ] Tentukan target timestamp restore (T-sebelum-corruption)
+    - [ ] Verifikasi backup tersedia (Supabase PITR)
+
+  Phase 2 — Execution:
+
+    Step 1: Restore via Supabase PITR ke timestamp T-sebelum-corruption
+            (prosedur sama dengan Playbook #1 Phase 2 Step 1-6).
+
+    Step 2: Setelah restore, replay transaksi yang valid antara T-dan-NOW:
+            - Cek admin_actions untuk actions setelah T
+            - Cek payment_obligations dengan created_at > T
+            - Rekonsiliasi ulang dengan Payment Gateway
+
+    Step 3 (WAJIB — NEW v1.2): Purge Stale Redis Cache & Rebuild State
+            Sama seperti Playbook #1 Phase 2 Step 7:
+            - Purge keyspace 'seats:*' dan 'booking:*' dari Redis
+            - Rebuild bitmap dari tickets.status hasil restore
+            - Rebuild user:score:*:base dari users.base_score
+            - Verifikasi Redis-DB consistency (sample check)
+
+  Phase 3 — Validation:
+    - [ ] Semua tabel punya row count reasonable
+    - [ ] Cross-check payment_obligations dengan Payment Gateway
+    - [ ] Verify tickets status vs bookings
+    - [ ] Run data integrity checks:
+          SELECT COUNT(*) FROM tickets vs COUNT(*) FROM bookings * avg_seats
+    - [ ] Verify Redis-DB consistency (sample check dari Step 3)
+
+  Phase 4 — Post-Recovery:
+    - [ ] Update access control untuk mencegah akses destruktif
+    - [ ] Tambah DB trigger atau constraint tambahan
+    - [ ] Root cause analysis (bug? human error? external attack?)
+
+Rollback Plan: N/A (restore adalah rollback itu sendiri)
+
+Expected RTO: ≤ 15 menit | Expected RPO: ≤ 1 menit (via WAL streaming)
+
+5.9 PLAYBOOK #8: DDoS / VOLUMETRIC ATTACK
+────────────────────────────────────────────────────────────────────────────────
+
+Severity: HIGH
+
+Symptoms / Detection:
+  - Traffic spike > 10x normal
+  - Rate limit exceeded untuk banyak IP
+  - Backend resource exhaustion (CPU/memory)
+
+Impact Assessment:
+  - User Impact: Legit users terganggu
+  - Business Impact: Booking flow disrupted
+
+Immediate Actions:
+  1. Aktifkan Cloudflare "Under Attack Mode"
+  2. Rate limit diperketat
+  3. Identifikasi source IP pattern
+  4. Blacklist IP di Cloudflare WAF
+
+Recovery Steps:
+
+  Phase 1 — Preparation: N/A (Cloudflare managed)
+
+  Phase 2 — Execution:
+
+    Cloudflare Dashboard:
+      1. Enable "Under Attack Mode" (challenge all traffic dengan JS challenge)
+      2. Configure WAF rules: block known bot signatures, rate limit per IP
+      3. Add IP/CIDR ke blocklist (dari log analysis)
+      4. Aktifkan BOT management rules
+
+    Backend (jika sudah lolos WAF):
+      1. Rate limit middleware diperketat sementara (mis. 50 req/min per IP)
+      2. Log semua request untuk forensics
+
+  Phase 3 — Validation:
+    - [ ] Traffic kembali normal
+    - [ ] Latency kembali ke baseline (< 100ms p95)
+    - [ ] Legit users bisa akses
+
+  Phase 4 — Post-Recovery:
+    - [ ] Analisis pola serangan
+    - [ ] Update WAF rules permanen
+    - [ ] Update blacklist table (DATABASE_SCHEMA v2.9) dengan IP/device fingerprint
+
+Rollback Plan: Disable "Under Attack Mode" setelah aman (bisa disrupt UX)
+
+Expected RTO: ≤ 5 menit | Expected RPO: N/A
+
+5.10 PLAYBOOK #9: FULL-REGION OUTAGE (SEMUA SAAS PROVIDER)
+────────────────────────────────────────────────────────────────────────────────
+
+Severity: CRITICAL
+
+Symptoms / Detection:
+  - Multiple providers status pages menunjukkan incident di Singapore region
+  - Semua komponen (DB, Redis, MQ, Backend) unreachable
+
+Impact Assessment:
+  - User Impact: Total service unavailability
+  - Business Impact: Total revenue loss, SLA breach
+
+Immediate Actions:
+  1. KONFIRMASI: apakah ini benar-benar full-region atau issue DNS lokal?
+  2. Notifikasi semua stakeholder
+  3. Aktifkan "cold standby" procedure
+
+Recovery Steps:
+
+  Phase 1 — Preparation:
+    - [ ] Siapkan konfigurasi deploy untuk region alternatif (US-East / Europe)
+    - [ ] Siapkan env vars (dari Bitwarden)
+
+  Phase 2 — Execution:
+
+    Step 1: Provision Supabase di region alternatif (US-East)
+            - Restore dari latest backup
+            - Setelah restore, PURGE + REBUILD Redis state (lihat Playbook #1 Step 7)
+
+    Step 2: Provision Upstash Redis di region alternatif
+
+    Step 3: Provision CloudAMQP di region alternatif
+            - Enable plugin rabbitmq_delayed_message_exchange (lihat Playbook #3 Step 3)
+
+    Step 4: Deploy backend ke Render region alternatif (US-East)
+
+    Step 5: Update env vars: DATABASE_URL, REDIS_URL, RABBITMQ_URL
+
+    Step 6: Deploy frontend: tidak perlu (Vercel global CDN)
+
+    Step 7: Update DNS: api.e-tix-flash.com → region alternatif
+
+  Phase 3 — Validation:
+    - [ ] Full smoke test suite
+    - [ ] Latency acceptable (meskipun lebih tinggi dari Singapore)
+
+  Phase 4 — Post-Recovery:
+    - [ ] Migrate back ke primary region setelah pulih
+    - [ ] Post-mortem
+
+Rollback Plan: N/A
+
+Expected RTO: 30-60 menit | Expected RPO: ≤ 5 menit
+
+================================================================================
+6. ROLES, RESPONSIBILITIES & ESCALATION
+================================================================================
+
+6.1 INCIDENT RESPONSE TEAM (SOLO DEVELOPER CONTEXT)
+────────────────────────────────────────────────────────────────────────────────
+
+Catatan: E-Tix Flash adalah solo developer portfolio project. Role matrix
+di bawah ini berasumsi "role pooling" untuk solo/small team. Jika di masa depan
+ada tim, role ini bisa di-split.
+
+| Role                     | Responsibilities (Solo = Pooled)                 | Contact           | Escalation              |
+|--------------------------|--------------------------------------------------|-------------------|-------------------------|
+| Incident Commander       | Coordinate response, decision-making, comms      | M. Arif Aulia     | Self (autonomy)         |
+| Database Administrator   | Supabase recovery, backup management             | M. Arif Aulia     | Self                    |
+| Infrastructure/DevOps    | Render/Upstash/CloudAMQP ops, failover           | M. Arif Aulia     | Self                    |
+| Application Lead         | Backend code issues, rollback decisions          | M. Arif Aulia     | Self                    |
+| Communications Lead      | Internal (status page), external (user notif)    | M. Arif Aulia     | Self                    |
+| Security Officer         | JWT rotation, credential rotation, forensics     | M. Arif Aulia     | Self                    |
+
+NOTE: Untuk external escalation (jika proyek di-scale ke production):
+  - Payment Gateway support (Midtrans/Xendit) — SLA provided
+  - Supabase support (Pro tier) — 24/7 support
+  - Render.com support — priority ticket
+  - Cloudflare support — 24/7 for Enterprise tier
+
+6.2 ESCALATION PATH
+────────────────────────────────────────────────────────────────────────────────
+
+Level 1 (On-Call / Solo Dev) → Level 2 (Documented Decision) → Level 3 (External)
+
+Escalation Triggers (mengacu SECURITY_SPEC v1.4 §13):
+  - RTO exceeded by 30 minutes → Documented decision on continue/wait
+  - Data loss confirmed → Forensics + notification
+  - Multiple systems affected → Consolidated response
+  - Potential compliance/legal issue → Consult legal (future work)
+
+6.3 COMMUNICATION PLAN
+────────────────────────────────────────────────────────────────────────────────
+
+INTERNAL COMMUNICATIONS:
+  - Channel: Slack #e-tix-flash-incident (personal workspace)
+  - Update Frequency: Setiap 15 menit selama incident
+  - Template:
+
+    [INCIDENT #{id}] {Severity}
+    Status: {Investigating|Identified|Monitoring|Resolved}
+    Impact: {user-facing description}
+    ETA: {estimated resolution time}
+    Actions: {current action being taken}
+
+EXTERNAL COMMUNICATIONS:
+  - Customer Notification: In-app banner + email (untuk outage > 15 menit)
+  - Social Media: Twitter/X + Instagram (jika outage > 1 jam)
+  - Status Page: https://status.e-tix-flash.com (planned — UptimeRobot / BetterStack)
+  - Update Frequency:
+    * Critical: Setiap 15 menit
+    * High: Setiap 30 menit
+    * Medium/Low: Setiap 1 jam
+
+================================================================================
+7. TESTING, VALIDATION & DRILLS
+================================================================================
+
+7.1 TESTING STRATEGY
+────────────────────────────────────────────────────────────────────────────────
+
+BACKUP RESTORATION TESTS:
+  Frequency:        Monthly (baseline) + sebelum setiap flash sale event besar
+  Scope:            Full restore ke staging environment
+  Success Criteria:
+    - Data integrity check (row count match pre-restore)
+    - Restore time < 15 menit (RTO target)
+    - All 12 tables + RLS + triggers intact
+    - SYSTEM_USER_UUID present
+    - Redis state purged + rebuilt setelah restore (v1.2)
+    - Redis-DB consistency verified (v1.2)
+  Owner:            M. Arif Aulia
+  Documentation:    docs/drp-tests/restore-{date}.md
+
+FAILOVER TESTS:
+  Frequency:        Quarterly
+  Scope:            Backend region failover (Render.com)
+  Success Criteria:
+    - Failover time < 15 menit
+    - Zero user-facing errors setelah failover
+    - DNS propagation < 60s
+  Owner:            M. Arif Aulia
+  Documentation:    docs/drp-tests/failover-{date}.md
+
+APPLICATION SMOKE TESTS:
+  Frequency:        Setelah setiap recovery / deployment
+  Scope:            Critical user flows (login, browse, book, pay, scan)
+  Success Criteria: Semua critical endpoints pass (200/201)
+  Owner:            M. Arif Aulia
+  Documentation:    Automated via /tests/integration/
+
+CIRCUIT BREAKER TESTS:
+  Frequency:        Bulanan (scheduled chaos engineering)
+  Scope:            Simulasi Redis down via feature flag
+  Success Criteria:
+    - Circuit Breaker auto-trigger
+    - Degraded Mode aktif (< 100ms)
+    - DB Queue Sync Worker drain setelah recovery
+    - No data loss
+  Owner:            M. Arif Aulia
+
+PITR + REDIS RESYNC TEST (NEW v1.2):
+  Frequency:        Sebelum setiap flash sale event besar
+  Scope:            Restore PostgreSQL ke T-5min, verifikasi Redis purge + rebuild
+  Success Criteria:
+    - Redis keyspace 'seats:*' dan 'booking:*' ter-purge
+    - Bitmap di-rebuild sesuai tickets hasil restore
+    - Tidak ada "ghost lock" (kursi terkunci di Redis tapi tidak ada di DB)
+    - Smoke test booking flow pass
+  Owner:            M. Arif Aulia
+
+7.2 DISASTER RECOVERY DRILLS
+────────────────────────────────────────────────────────────────────────────────
+
+MONTHLY DRILL (30 menit — Tabletop Exercise):
+  - Scenario: Rotasi setiap bulan (Playbook #1-#9)
+  - Participants: Solo (self-assessment)
+  - Goals: Test playbook accuracy, measure response time
+  - No-Impact: Gunakan staging environment atau dry-run
+
+QUARTERLY DRILL (2-4 jam — Full System Simulation):
+  - Scenario: Full restore ke staging + smoke test suite
+  - Participants: Solo (documented walkthrough)
+  - Goals: Test entire DRP, identify gaps
+  - Realistic: Gunakan production-like data volumes (anonymized)
+
+ANNUAL REVIEW:
+  - Full DRP audit
+  - Update berdasarkan infrastructure changes
+  - Incorporate lessons learned dari incidents
+
+7.3 DRILL EXECUTION CHECKLIST
+────────────────────────────────────────────────────────────────────────────────
+
+Pre-Drill:
+  [ ] Notify (self-reminder)
+  [ ] Prepare staging/safe environment
+  [ ] Backup current state (jika applicable)
+  [ ] Set drill duration & success criteria
+  [ ] Verify monitoring & logging aktif
+
+During Drill:
+  [ ] Start timer
+  [ ] Execute playbook steps
+  [ ] Log all actions & timings
+  [ ] Document issues/blockers
+  [ ] Screenshot critical evidence
+
+Post-Drill:
+  [ ] Verify system recovery
+  [ ] Calculate actual RTO/RPO
+  [ ] Collect feedback (self-reflection)
+  [ ] Create after-action report
+  [ ] Update playbook berdasarkan findings
+
+7.4 METRICS & KPIS
+────────────────────────────────────────────────────────────────────────────────
+
+Track dari setiap drill/incident:
+  - Actual RTO                → Target: < 15 menit
+  - Actual RPO                → Target: < 1 menit
+  - Playbook Accuracy         → Target: > 90% steps correct/relevant
+  - Team Response Time        → Target: < 5 menit (solo dev — self-alert)
+  - Knowledge Gaps            → Target: 0 unaddressed
+  - Redis-DB Consistency      → Target: 100% (setelah setiap PITR restore)
+
+Metrics dari Prometheus (SECURITY_SPEC v1.4 §9.3):
+  - circuit_breaker_state{name}
+  - payment_webhook_reconciliation_pending
+  - http_request_duration_seconds
+  - http_requests_total{status}
+  - payment_reconciliation_pending (menggantikan ledger_balance_check yang deprecated)
+
+================================================================================
+8. MAINTENANCE & CONTINUOUS IMPROVEMENT
+================================================================================
+
+8.1 REGULAR MAINTENANCE TASKS
+────────────────────────────────────────────────────────────────────────────────
+
+| Task                              | Frequency    | Owner         | Notes                                     |
+|-----------------------------------|--------------|---------------|-------------------------------------------|
+| Review playbooks                  | Quarterly    | M. Arif Aulia | Update untuk new systems/changes          |
+| Test backup restoration           | Monthly      | M. Arif Aulia | Verify data integrity                     |
+| Update contact list               | Monthly      | M. Arif Aulia | Ensure current phone/email                |
+| Review RTO/RPO targets            | Semi-annually| M. Arif Aulia | Align dengan business needs               |
+| Audit backup storage              | Monthly      | M. Arif Aulia | Verify size, retention, security          |
+| JWT key rotation                  | Quarterly    | M. Arif Aulia | SECURITY_SPEC v1.4 §10.2                  |
+| DB credentials rotation           | Annual       | M. Arif Aulia | SECURITY_SPEC v1.4 §10.2                  |
+| Payment GW API key rotation       | Semi-annually| M. Arif Aulia | SECURITY_SPEC v1.4 §10.2                  |
+| Circuit Breaker chaos test        | Monthly      | M. Arif Aulia | Simulasi Redis down                       |
+| Full DRP drill                    | Quarterly    | M. Arif Aulia | Tabletop + full system simulation         |
+| Verify CloudAMQP plugin aktif     | Quarterly    | M. Arif Aulia | rabbitmq_delayed_message_exchange         |
+| Verify Redis-DB consistency check | Monthly      | M. Arif Aulia | Sample check bitmap vs tickets            |
+| PITR + Redis resync test          | Pre-event    | M. Arif Aulia | Sebelum flash sale besar                  |
+
+8.2 POST-INCIDENT REVIEW PROCESS
+────────────────────────────────────────────────────────────────────────────────
+
+Mengacu pada SECURITY_SPEC v1.4 §13.2 Step 7.
+
+Within 24 hours:
+  - Document what happened (timeline, actions taken)
+  - Identify root cause
+  - Measure actual RTO/RPO
+  - Collect team feedback (self-reflection)
+
+Within 1 week:
+  - Complete incident report
+  - Identify preventive measures
+  - Update playbooks if needed
+  - Share lessons learned (jika applicable)
+
+Within 30 days:
+  - Implement preventive measures
+  - Run drill berdasarkan new learnings
+  - Close incident ticket
+
+8.3 VERSION CONTROL & CHANGE LOG
+────────────────────────────────────────────────────────────────────────────────
+
+| Version  | Date       | Changes                                                                                              | Author        |
+|----------|------------|------------------------------------------------------------------------------------------------------|---------------|
+| 1.0-FINAL| 2026-09-11 | Initial DRP creation untuk E-Tix Flash                                                               | M. Arif Aulia |
+| 1.1-FINAL| 2026-09-11 | Post-Gemini fixes: formatting cleanup, Redis DEL-before-SETBIT, L2 idempotency explicit, RabbitMQ plugin prerequisite | M. Arif Aulia |
+| 1.2-FINAL| 2026-09-11 | Post-Gemini fixes: Redis purge + rebuild pasca PITR (Playbook #1 Step 7 & Playbook #7 Step 3), TTL Policy PG Outage (Playbook #5 Immediate Actions item 4), PITR+Redis resync test, Redis-DB consistency metric | M. Arif Aulia |
+
+================================================================================
+9. APPENDIX
+================================================================================
+
+9.1 GLOSSARY
+────────────────────────────────────────────────────────────────────────────────
+
+- RTO (Recovery Time Objective): Waktu maksimal sistem boleh down.
+  Target E-Tix Flash: < 15 menit (PRD v6.0 NFR).
+- RPO (Recovery Point Objective): Data maksimal yang boleh hilang.
+  Target E-Tix Flash: < 1 menit (PRD v6.0 NFR).
+- Circuit Breaker: Pola resilience untuk auto-detect failure dan switch ke fallback.
+  E-Tix Flash menggunakan Circuit Breaker untuk Redis (TDD v1.10 §7).
+- Degraded Mode: Mode operasi saat Redis down. Semua request masuk PostgreSQL FIFO queue.
+- Idempotent Lazy-Check: Pola di mana pesan delay selalu dikirim, worker cek status di T+3m.
+- PITR (Point-in-Time Recovery): Restore DB ke timestamp tertentu.
+  Supabase Pro tier mendukung PITR hingga 7 hari.
+- RLS (Row-Level Security): PostgreSQL access control per-row. 12 tabel E-Tix Flash.
+- Webhook Reconciliation Worker: Background worker yang poll Payment Gateway setiap 10 menit.
+- DBQueueSyncWorker: Worker yang drain PostgreSQL FIFO queue saat Circuit Breaker CLOSED.
+- Flash Sale: Periode tiket dijual cepat (high concurrency).
+- Idempotency Key: Header X-Idempotency-Key untuk mencegah duplicate transaction.
+- L1 / L2 Idempotency: L1 = Redis cache (fast); L2 = PostgreSQL (persistent, source-of-truth).
+- x-delayed-message: RabbitMQ exchange type untuk delayed delivery.
+  BUTUH plugin rabbitmq_delayed_message_exchange (bukan default).
+- Purge Stale Redis Cache: Operasi menghapus keyspace Redis ('seats:*', 'booking:*')
+  yang tidak cocok dengan DB hasil PITR restore (mencegah desync).
+- Redis-DB Desync: Kondisi di mana state Redis tidak sinkron dengan state PostgreSQL
+  (mis. setelah PITR restore mundur, Redis masih menyimpan state dari titik "future").
+- Ghost Lock: Kondisi di mana kursi terkunci di Redis tetapi tidak ada transaksi di DB
+  (disebabkan oleh Redis-DB desync).
+
+9.2 RELATED DOCUMENTS
+────────────────────────────────────────────────────────────────────────────────
+
+Mengacu pada SUSUNAN DOKUMEN.txt pipeline:
+
+- [✅] PRD.txt (v6.0-FINAL) — Product Requirements
+- [✅] DATABASE_SCHEMA.txt (v2.9-FINAL) — 12 tabel, ENUM, RLS, triggers
+- [✅] LOGIC_FLOW.txt (v1.4-FINAL) — State machines, Circuit Breaker §9.4
+- [✅] HALAMAN.txt (v1.1-FINAL) — 24 screens wireframes
+- [✅] TDD.txt (v1.10-FINAL) — Technical design, DBQueueSyncWorker §6.6
+- [✅] API_CONTRACT.txt (v1.2-FINAL) — 37 endpoints
+- [✅] SECURITY_SPEC.txt (v1.4-FINAL) — Threat model, Incident Response §13
+- [🔄] DRP.txt (v1.2-FINAL) — [THIS DOCUMENT]
+- [⏳] STP.txt — Next (System Test Plan)
+- [⏳] ROADMAP.txt — Next (Execution Roadmap)
+- [⏳] TECHNICAL_DEBT.txt — Portfolio polish items
+
+9.3 TOOLS & RESOURCES
+────────────────────────────────────────────────────────────────────────────────
+
+| Tool/Resource             | Purpose                          | Access                                  |
+|---------------------------|----------------------------------|-----------------------------------------|
+| Supabase Dashboard        | DB management, backups, PITR     | app.supabase.com                        |
+| Upstash Dashboard         | Redis management                 | console.upstash.com                     |
+| CloudAMQP Dashboard       | RabbitMQ management              | customer.cloudamqp.com                  |
+| Render.com Dashboard      | Backend deploy, logs, env vars   | dashboard.render.com                    |
+| Vercel Dashboard          | Frontend deploy, analytics       | vercel.com/dashboard                    |
+| Cloudflare Dashboard      | DNS, WAF, "Under Attack Mode"    | dash.cloudflare.com                     |
+| Prometheus + Grafana      | Metrics & alerting               | Self-hosted on Render (TDD §2)          |
+| UptimeRobot / BetterStack | External health monitoring       | (planned)                               |
+| Bitwarden / 1Password     | Secrets backup                   | Personal vault                          |
+| GitHub                    | Code repo, CI/CD (Actions)       | github.com/{user}/e-tix-flash           |
+| Payment Gateway Dashboard | Charge/Refund/Payout tracking    | Midtrans / Xendit dashboard             |
+
+9.4 RECOVERY COMMANDS REFERENCE
+────────────────────────────────────────────────────────────────────────────────
+
+DATABASE RECOVERY (Supabase PITR):
+
+  Restore via Supabase Dashboard:
+    Database → Backups → Point in Time Recovery → pilih timestamp
+
+  Setelah restore, verify:
+
+    psql $DATABASE_URL -c "\dt"
+    psql $DATABASE_URL -c "SELECT COUNT(*) FROM users;"
+    psql $DATABASE_URL -c "SELECT id, role FROM users WHERE id='00000000-0000-0000-0000-000000000000';"
+
+  Verify RLS aktif:
+
+    psql $DATABASE_URL -c "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname='public';"
+
+REDIS PURGE + RECOVERY (Setelah PITR Restore — NEW v1.2):
+
+  Step 1 — Purge keyspace stale (targeted delete):
+
+    redis-cli -u $REDIS_URL --scan --pattern 'seats:*' | xargs -r redis-cli -u $REDIS_URL DEL
+    redis-cli -u $REDIS_URL --scan --pattern 'booking:*' | xargs -r redis-cli -u $REDIS_URL DEL
+
+  Step 2 — Emergency fallback (jika targeted delete gagal):
+    ⚠️ HATI-HATI: FLUSHDB wipe SEMUA keyspace (rate, refresh_blacklist, idempotency L1, dll):
+
+    redis-cli -u $REDIS_URL FLUSHDB
+
+  Step 3 — Rebuild bitmap dari PostgreSQL hasil restore (per section):
+
+    redis-cli -u $REDIS_URL DEL "seats:{event_id}:{section_id}:v{layout_version}"
+
+    psql $DATABASE_URL -c "SELECT section_id, seat_position FROM tickets WHERE status IN ('CONFIRMED','LOCKED','PENDING_SPLIT_PAY','RESALE_PENDING','USED');"
+
+    redis-cli -u $REDIS_URL SETBIT "seats:{event_id}:{section_id}:v{layout_version}" {pos-1} 1
+
+  Step 4 — Rebuild base score:
+
+    psql $DATABASE_URL -c "SELECT id, base_score FROM users;"
+    redis-cli -u $REDIS_URL SET "user:score:{user_id}:base" {base_score} EX 86400
+
+  Step 5 — Verifikasi Redis-DB consistency:
+
+    Ambil sample 5 tickets status CONFIRMED → GETBIT harus return 1
+    Ambil sample 5 tickets status AVAILABLE → GETBIT harus return 0
+
+  Step 6 — Idempotency fallback aktif di L2 PostgreSQL selama Redis down:
+
+    Verifikasi: SELECT idempotency_key FROM payment_obligations WHERE created_at > {outage_start}
+
+BACKEND FAILOVER (Render.com):
+
+  1. Buat new Web Service di region alternatif via Render.com Dashboard
+  2. Link ke repo GitHub, build via Dockerfile
+  3. Set env vars (dari Bitwarden backup)
+  4. Update DNS via Cloudflare Dashboard:
+       api.e-tix-flash.com → CNAME → {new-render-endpoint}
+  5. Verify:
+       curl https://api.e-tix-flash.com/healthz/readiness
+
+SECRET ROTATION (JWT):
+
+  Generate new RSA key pair:
+
+    openssl genrsa -out new_private_key.pem 2048
+    openssl rsa -in new_private_key.pem -pubout -out new_public_key.pem
+
+  Update Render env vars: JWT_PRIVATE_KEY, JWT_PUBLIC_KEY
+  Restart backend service
+  Grace period: 1 hour (existing tokens expire)
+
+RABBITMQ RE-PROVISION (CloudAMQP):
+
+  1. Enable plugin rabbitmq_delayed_message_exchange via CloudAMQP Dashboard → Plugins
+  2. Verify plugin aktif (rabbitmq-plugins list)
+  3. Re-declare exchange: delayed_exchange (type: x-delayed-message)
+  4. Re-declare queues: fan_score, release_seat_check, resale_expiry_check,
+     report_generation, reconciliation_cycle
+
+9.5 CROSS-REFERENCE KE SECURITY_SPEC v1.4 §13 (RUNBOOKS)
+────────────────────────────────────────────────────────────────────────────────
+
+Untuk menghindari duplikasi, runbook incident-level berikut SUDAH DIDEFINISIKAN di
+SECURITY_SPEC v1.4 §13.3 dan TIDAK diulang di DRP ini:
+
+- Payment Webhook Reconciliation Backlog
+- Redis Circuit Breaker Open
+- Mass Queue Token Replay Attempt
+- Offline Multi-Device Scan Conflict Spike
+
+DRP ini fokus pada infrastruktur-level disaster recovery (Playbook #1-#9).
+Untuk incident-level operational response, rujuk SECURITY_SPEC v1.4 §13.
+
+9.6 DIAGRAM UPDATE POLICY
+────────────────────────────────────────────────────────────────────────────────
+
+Topology diagram (§2.3) WAJIB di-update jika:
+  - Ada provider baru (mis. payment gateway kedua)
+  - Ada region tambahan
+  - Ada komponen infrastruktur baru
+  - Ada perubahan stack signifikan (TDD update)
+
+9.7 STATE CONSISTENCY POLICY (NEW v1.2)
+────────────────────────────────────────────────────────────────────────────────
+
+Setiap operasi restore PostgreSQL (PITR) WAJIB diikuti dengan:
+  1. Purge Redis keyspace 'seats:*' dan 'booking:*' (targeted delete)
+  2. Rebuild Redis bitmap dari tickets.status hasil restore
+  3. Rebuild user:score:*:base dari users.base_score
+  4. Verifikasi sample 5 tickets CONFIRMED → GETBIT = 1
+  5. Verifikasi sample 5 tickets AVAILABLE → GETBIT = 0
+
+Alasan: PITR restore mundur ke T-minus-corruption, tetapi Redis tetap di T (future).
+Tanpa purge + rebuild, akan ada Ghost Lock yang menyebabkan kursi terkunci di Redis
+tanpa transaksi valid di DB.
+
+================================================================================
+📋 DRP SYNC CHECKLIST (100% COMPLIANCE)
+================================================================================
+
+✅ PRD v6.0-FINAL Sync:
+  - RTO < 15 menit, RPO < 1 menit (NFR Reliability) ✓
+  - Target Uptime 99.9% ✓
+  - Circuit Breaker + Degraded Mode ✓
+  - Webhook Reconciliation Worker ✓
+  - Out of Scope "Internal wallet/ledger" respected ✓
+
+✅ DATABASE_SCHEMA v2.9-FINAL Sync:
+  - 12 tabel covered (users, events, sections, bookings, payment_obligations,
+    tickets, ticket_scans, resale_transactions, admin_actions, insights,
+    blacklist, system_config) ✓
+  - ENUM values referenced correctly ✓
+  - SYSTEM_USER_UUID referenced ✓
+  - RLS policies referenced ✓
+
+✅ LOGIC_FLOW v1.4-FINAL Sync:
+  - Circuit Breaker + Degraded Mode (§9.4) ✓
+  - Webhook Reconciliation Worker (§4.5) ✓
+  - Idempotent Lazy-Check (§4.3) ✓
+  - L1 / L2 Idempotency (§9.1) explicitly referenced ✓
+  - ORDER BY id ASC deadlock prevention referenced ✓
+
+✅ HALAMAN v1.1-FINAL Sync:
+  - Semua 24 screens ter-cover secara user-flow ✓
+  - Offline Sync (Screen 11.3) referenced ✓
+  - Admin Emergency Tools (Screen 10.1) referenced ✓
+
+✅ TDD v1.10-FINAL Sync:
+  - Stack teknologi (Golang, Supabase, Upstash, CloudAMQP, Render, Vercel) ✓
+  - DBQueueSyncWorker (§6.6) referenced ✓
+  - Circuit Breaker spec (§7) ✓
+  - Connection pool config (MaxConns=15, statement_timeout=3000ms) ✓
+
+✅ API_CONTRACT v1.2-FINAL Sync:
+  - 37 endpoints referenced implicitly ✓
+  - /healthz/liveness + /healthz/readiness ✓
+  - /admin/ledger (as event-sourced view) referenced ✓
+  - No wallet/ledger drift ✓
+
+✅ SECURITY_SPEC v1.4-FINAL Sync:
+  - Cross-reference §13 (Incident Response) — no duplication ✓
+  - Cross-reference §10.2 (Secret Rotation) ✓
+  - Cross-reference §3.1 (TLS 1.3) ✓
+  - Header sanitization referenced ✓
+  - No drift (no wallet/ledger, no ghost endpoint, no ghost column) ✓
+
+✅ POST-GEMINI v1.1 FIXES:
+  - Formatting artifacts cleanup (no stray "text" leaks) ✓
+  - Playbook #2 & §9.4: DEL key before SETBIT rebuild ✓
+  - Playbook #2: L2 idempotency explicit (payment_obligations.idempotency_key) ✓
+  - Playbook #3: rabbitmq_delayed_message_exchange plugin prerequisite ✓
+  - Playbook #9 Step 3: plugin prerequisite referenced ✓
+  - §8.1 maintenance: added CloudAMQP plugin verification task ✓
+  - §9.1 glossary: added x-delayed-message plugin note ✓
+
+✅ POST-GEMINI v1.2 FIXES:
+  - Playbook #1 Phase 2 Step 7 (NEW): Purge Stale Redis Cache & Rebuild State
+    setelah PITR restore (targeted delete primary, FLUSHDB emergency fallback) ✓
+  - Playbook #7 Phase 2 Step 3 (NEW): Same purge + rebuild after data corruption restore ✓
+  - Playbook #5 Immediate Actions item 4 (NEW): Kebijakan Expiry TTL 180 detik
+    saat Payment Gateway extended outage — booking expire alami (LOGIC_FLOW §4.3) ✓
+  - Playbook #9 Step 1: added Redis purge reference setelah Supabase restore ✓
+  - §4.1.1 Critical Constraints: added Redis state purge + rebuild requirement ✓
+  - §7.1 Testing: added PITR + Redis Resync Test ✓
+  - §7.4 KPIs: added Redis-DB Consistency target (100%) ✓
+  - §8.1 Maintenance: added monthly Redis-DB consistency check + pre-event PITR+resync test ✓
+  - §9.1 Glossary: added Purge Stale Redis Cache, Redis-DB Desync, Ghost Lock ✓
+  - §9.4 Recovery Commands: added Redis PURGE step (Step 1) before rebuild ✓
+  - §9.7 State Consistency Policy (NEW): explicit policy after PITR restore ✓
+
+================================================================================
+📌 VERSION HISTORY
+================================================================================
+
+| Version  | Date       | Author       | Changes                                                                                                                                                             |
+|----------|------------|--------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0-FINAL| 2026-09-11 | M. Arif Aulia| Initial DRP document for E-Tix Flash. Synchronized with PRD v6.0, DATABASE_SCHEMA v2.9, LOGIC_FLOW v1.4, HALAMAN v1.1, TDD v1.10, API_CONTRACT v1.2, SECURITY_SPEC v1.4. 9 playbooks (PostgreSQL, Redis, RabbitMQ, Backend region, Payment GW outage, Secrets compromise, Data corruption, DDoS, Full-region outage). Cross-referenced SECURITY_SPEC §13 to avoid duplication. |
+| 1.1-FINAL| 2026-09-11 | M. Arif Aulia| **Post-Gemini review fixes:** 1) Cleaned formatting artifacts. 2) Playbook #2 & §9.4: DEL key before SETBIT. 3) Playbook #2: L2 idempotency explicit. 4) Playbook #3 Step 3 & Playbook #9 Step 3: rabbitmq_delayed_message_exchange plugin prerequisite. 5) §8.1 CloudAMQP plugin verification task. 6) §9.1 glossary x-delayed-message note. |
+| 1.2-FINAL| 2026-09-11 | M. Arif Aulia| **Post-Gemini review fixes #2:** 1) Playbook #1 Phase 2 Step 7 (NEW): Purge Stale Redis Cache & Rebuild State pasca PITR restore (targeted delete 'seats:*' dan 'booking:*', FLUSHDB emergency fallback, rebuild bitmap, verifikasi Redis-DB consistency). 2) Playbook #7 Phase 2 Step 3 (NEW): same purge + rebuild. 3) Playbook #5 Immediate Actions item 4 (NEW): Kebijakan Expiry TTL 180 detik saat PG extended outage (booking expire alami sesuai LOGIC_FLOW §4.3; auto-refund jika user terlanjur bayar). 4) Playbook #9 Step 1: added Redis purge reference. 5) §4.1.1 Critical Constraints: added Redis state purge + rebuild requirement. 6) §7.1 Testing: added PITR + Redis Resync Test. 7) §7.4 KPIs: added Redis-DB Consistency target. 8) §8.1 Maintenance: monthly consistency check + pre-event PITR+resync test. 9) §9.1 Glossary: Purge Stale Redis Cache, Redis-DB Desync, Ghost Lock. 10) §9.4 Recovery Commands: Redis PURGE step. 11) §9.7 State Consistency Policy (NEW). |
+
+================================================================================
+END OF DRP v1.2-FINAL
+================================================================================
+
+✅ 100% PRODUCTION-READY — REVISED & LOCKED
+✅ Synchronized with ALL foundation documents (PRD v6.0, DATABASE_SCHEMA v2.9,
+   LOGIC_FLOW v1.4, HALAMAN v1.1, TDD v1.10, API_CONTRACT v1.2, SECURITY_SPEC v1.4)
+✅ RTO < 15 min, RPO < 1 min (PRD v6.0 NFR)
+✅ 9 disaster scenarios with response playbooks
+✅ Cross-referenced SECURITY_SPEC §13 to avoid duplication
+✅ 12 tables covered, ENUM values correct, no wallet/ledger drift
+✅ Post-Gemini fixes #1 & #2 applied
+✅ Redis-DB state consistency policy documented (§9.7)
+✅ Booking TTL policy during PG outage clarified (Playbook #5)
+✅ Ready for STP.txt, ROADMAP.txt
+
+Last Updated: 2026-09-11 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED.

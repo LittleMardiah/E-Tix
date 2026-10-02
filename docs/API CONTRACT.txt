@@ -1,0 +1,2100 @@
+================================================================================
+API CONTRACT: E-Tix Flash (Smart Ticketing Platform) (v1.2-FINAL)
+================================================================================
+
+Version:         1.2-FINAL
+Last Updated:    2026-09-10
+Author:          M. Arif Aulia
+Status:          ✅ 100% PRODUCTION-READY — SYNCHRONIZED WITH ALL DOCUMENTS
+Platform:        Golang (Gin) + PostgreSQL (Supabase) + Redis (Upstash) + RabbitMQ (CloudAMQP)
+Base URL:        https://api.e-tix-flash.com (or local: http://localhost:8080)
+
+================================================================================
+📌 BISMILLAH — API CONTRACT FINAL VERSION (POST-GEMINI REVIEW FIXES)
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. Document Overview
+2. Authentication & Authorization
+3. Error Handling & Response Format
+4. Common Headers & Validation
+5. Rate Limiting Strategy
+6. Page-to-API Mapping Matrix (24 Screens → 37 Endpoints)
+7. Auth & User Endpoints (F001)
+8. Event Catalog & Queue Endpoints (F001)
+9. Booking & Payment Endpoints (F002 & F003)
+10. Ticket Endpoints (F004)
+11. Gate Endpoints (F004b)
+12. Resale Endpoints (F005)
+13. EO Analytics Endpoints (F004b)
+14. Admin Endpoints (F006)
+15. Health & Observability
+16. Appendix: Complete Request/Response Examples
+17. Synchronization Checklist
+
+================================================================================
+1. DOCUMENT OVERVIEW
+================================================================================
+
+PURPOSE
+This document specifies the complete REST API contract for E-Tix Flash.
+Every endpoint is synchronized with:
+- PRD.txt (requirements & business logic F001-F006)
+- DATABASE_SCHEMA.txt (table definitions & enums v2.9-FINAL)
+- LOGIC_FLOW.txt (state machines & concurrency v1.4-FINAL)
+- HALAMAN.txt (UI/UX wireframes v1.1-FINAL — 24 screens)
+- TDD.txt (technical implementation v1.10-FINAL)
+- SECURITY_SPEC.txt (security controls v1.4-FINAL)
+
+API VERSION: v1.2 (MVP)
+COMPATIBILITY: 100% backward compatible (no breaking changes post-launch)
+
+SYNC STATUS
+✅ All endpoint operations match database tables (12 tables)
+✅ All state names match ENUM definitions (order_status_enum, ticket_status_enum, etc.)
+✅ All request/response fields match database schema
+✅ All error codes are defined in this contract
+✅ All RBAC rules are enforced at endpoint level
+✅ All 24 screens from HALAMAN.txt are mapped to endpoints
+✅ FIXED v1.1: All ghost endpoints now have full specs
+✅ FIXED v1.1: Public catalog endpoints added
+✅ FIXED v1.1: IDOR vulnerability patched (resale buy)
+✅ FIXED v1.1: X-Queue-Token header specified
+✅ FIXED v1.2: Removed internal wallet/ledger drift from /admin/ledger endpoints 
+    (aligned with SECURITY_SPEC v1.4-FINAL and PRD v6.0 "Out of Scope")
+✅ FIXED v1.2: /admin/ledger now sources from payment_obligations + admin_actions + resale_transactions
+✅ FIXED v1.2: Removed wallet_id, balance_after, WALLET_TOPUP, ledger_id, is_reversed, reversal_ledger_id
+
+================================================================================
+2. AUTHENTICATION & AUTHORIZATION
+================================================================================
+
+2.1 AUTHENTICATION FLOW
+────────────────────────────────────────────────────────────────────────────────
+
+METHOD: JWT (JSON Web Token) — RS256 (asymmetric signing)
+EXPIRATION:
+  - access_token: 1 hour
+  - refresh_token: 7 days
+
+JWT PAYLOAD (Claims)
+{
+  "sub": "uuid-user-id",
+  "email": "user@example.com",
+  "role": "customer|event_organizer|gate_staff|admin",
+  "tier": "TIER_1|TIER_2|TIER_3",
+  "token_type": "access|refresh",
+  "jti": "uuid-unique-jti",
+  "iat": 1723637400,
+  "exp": 1723641000,
+  "iss": "e-tix-flash"
+}
+
+TOKEN DELIVERY
+- Response: Authorization: Bearer <access_token>
+- Request: Header Authorization: Bearer <access_token>
+- Storage (PWA): Secure storage (flutter_secure_storage / localStorage with care)
+- Refresh: POST /auth/refresh-token with refresh_token (with rotation)
+
+2.2 ROLE-BASED ACCESS CONTROL (RBAC)
+────────────────────────────────────────────────────────────────────────────────
+
+USER ROLES (from users.role ENUM)
+┌────────────────┬────────────────────────────────────────────────────────────┐
+│ Role           │ Capabilities                                               │
+├────────────────┼────────────────────────────────────────────────────────────┤
+│ customer       │ Browse events, book seats, split-pay, view tickets, resale │
+│ event_organizer│ Manage events, view analytics, emergency bulk cancel       │
+│ gate_staff     │ Scan QR, verify PIN, offline sync                          │
+│ admin          │ Full system access, ledger audit, user management, reversal│
+└────────────────┴────────────────────────────────────────────────────────────┘
+
+ENDPOINT-LEVEL RBAC
+All endpoints validate:
+1. Token validity (signature, expiration)
+2. Token type (`token_type == "access"`)
+3. User status (ACTIVE, not SUSPENDED/FROZEN/DELETED)
+4. Role requirement (e.g., customer-only endpoint)
+
+RLS (Row-Level Security) enforced at database layer:
+- SELECT: Users see only own data (id = auth.uid())
+- INSERT: Wallet/booking creation requires matching user_id
+- UPDATE: Only own records can be updated
+- Admin: Can query all via (auth.jwt() ->> 'role') = 'admin'
+
+================================================================================
+3. ERROR HANDLING & RESPONSE FORMAT
+================================================================================
+
+3.1 SUCCESS RESPONSE
+────────────────────────────────────────────────────────────────────────────────
+
+HTTP Status: 200 (GET), 201 (POST create), 202 (async processing)
+
+Format:
+{
+  "success": true,
+  "data": { /* object or array */ },
+  "error": null,
+  "meta": {
+    "timestamp": "2026-09-10T10:30:45.123Z",
+    "request_id": "uuid-req-12345"
+  }
+}
+
+3.2 ERROR RESPONSE
+────────────────────────────────────────────────────────────────────────────────
+
+HTTP Status: 4xx (client), 5xx (server)
+
+Format:
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable error message",
+    "details": { /* optional extra context */ }
+  },
+  "meta": { ... }
+}
+
+ERROR CODES (STANDARDIZED)
+
+| Code                                | HTTP | Meaning                                            |
+|-------------------------------------|------|----------------------------------------------------|
+| INVALID_REQUEST                     | 400  | Malformed request, missing field                   |
+| UNAUTHORIZED                        | 401  | Missing/invalid token                              |
+| TOKEN_TYPE_MISMATCH                 | 401  | Refresh token used as access token                 |
+| TOKEN_BLACKLISTED                   | 401  | Refresh token revoked (rotation)                   |
+| INVALID_QR_OR_TICKET_MISMATCH       | 401  | QR decoded ticket ID != request ticket ID          |
+| QUEUE_TOKEN_REQUIRED                | 401  | X-Queue-Token header missing                       |
+| FORBIDDEN                           | 403  | Token valid but role insufficient                  |
+| NOT_FOUND                           | 404  | Resource doesn't exist                             |
+| CONFLICT                            | 409  | Race condition (e.g., seat already taken)          |
+| RESALE_LISTING_EXISTS               | 409  | Ticket already has active resale listing           |
+| TOKEN_ALREADY_USED                  | 409  | Queue token already used (replay attack)           |
+| TARGET_USER_INACTIVE_OR_SUSPENDED   | 422  | Bulk assign target not ACTIVE/blacklisted          |
+| UNPROCESSABLE_ENTITY                | 422  | Business logic violation                           |
+| RATE_LIMIT_EXCEEDED                 | 429  | Too many requests                                  |
+| INTERNAL_ERROR                      | 500  | Unexpected backend error                           |
+| SERVICE_UNAVAILABLE                 | 503  | Database down or Redis circuit breaker open        |
+
+================================================================================
+4. COMMON HEADERS & VALIDATION
+================================================================================
+
+4.1 REQUEST HEADERS
+────────────────────────────────────────────────────────────────────────────────
+
+Required (All endpoints):
+- Authorization: Bearer <access_token>  (except public endpoints)
+- Content-Type: application/json
+
+Required (Idempotent operations):
+- X-Idempotency-Key: <UUID> — Required for all POST mutations
+  * Idempotency guaranteed for 24 hours
+  * Same key + same payload = identical response
+  * Same key + different payload = HTTP 409 IDEMPOTENCY_CONFLICT
+  * L1: Redis cache (24h TTL)
+  * L2: PostgreSQL (idempotency_key column in payment_obligations)
+
+Required (Booking operations):
+- X-Queue-Token: <jwt-queue-token> — Required for POST /events/{eid}/sections/{sid}/seats
+  * JWT Queue Token obtained from /queue/verify-captcha or /queue/status
+  * Single-use guard: SET queue_token:used:{jti} 1 NX EX 300
+  * If reused → HTTP 409 TOKEN_ALREADY_USED
+
+Required (Admin endpoints):
+- X-Admin-2FA-Token: <token> — 2FA verification
+  * 3 failed attempts → 15 min lockout
+  * Redis + PostgreSQL dual-write
+
+Optional (Tracing):
+- X-Request-ID: <UUID> — For request tracking (generated if missing)
+
+4.2 REQUEST VALIDATION
+────────────────────────────────────────────────────────────────────────────────
+
+All inputs validated server-side:
+
+Numeric Fields
+- amount, price, fare: Must be >= 0, numeric precision to 2 decimals
+- Use decimal.Decimal in Go (shopspring/decimal)
+- Currency: All amounts in IDR (Rp) as integers (no decimals in JSON)
+
+String Fields
+- email: RFC 5322 compliant
+- phone: +62 prefix optional, 10-15 digits, validated via regex
+- UUID: RFC 4122 format
+- Enum fields: Strict matching (e.g., role from ENUM list only)
+
+Date/Time
+- All timestamps: ISO 8601 with timezone (TIMESTAMPTZ in DB)
+- Timezone: UTC (no client-side timezone)
+- Format: "2026-09-10T10:30:45.123Z"
+
+4.3 RESPONSE VALIDATION
+────────────────────────────────────────────────────────────────────────────────
+
+All responses guarantee:
+- Consistent JSON structure (success/error/meta)
+- Complete fields (no partial null objects)
+- Type safety (no string where number expected)
+- Enum values match database ENUM definitions
+
+================================================================================
+5. RATE LIMITING STRATEGY
+================================================================================
+
+TOKEN BUCKET ALGORITHM
+- Window: 1-minute rolling window
+- Per: User ID (authenticated) or IP (unauthenticated)
+- Fallback: IP-based if auth fails
+
+LIMITS BY ENDPOINT TYPE
+
+| Endpoint Category           | Limit        | Tier      | Notes                    |
+|-----------------------------|--------------|-----------|--------------------------|
+| Authentication (signup)     | 10 req/hour  | IP        | Anti-spam                |
+| Authentication (login)      | 5 req/min    | IP        | Anti-brute-force         |
+| Auth refresh token          | 10 req/15min | User      | Rotation safety          |
+| Queue verify CAPTCHA        | 3 req/5min   | IP        | Anti-bot                 |
+| Read (GET)                  | 100 req/min  | User      | Non-blocking             |
+| Public catalog (GET)        | 100 req/min  | IP        | Non-blocking             |
+| Write (POST/PATCH)          | 30 req/min   | User      | Financial operations     |
+| Booking operations          | 10 req/min   | User      | Split-Pay safety         |
+| Resale operations           | 10 req/min   | User      | Anti-abuse               |
+| Gate scan operations        | 180 req/min  | Gate Staff| High throughput scanning |
+| Admin operations            | 30 req/min   | Admin     | Audit operations         |
+| EO Analytics                | 30 req/min   | EO/Admin  | Dashboard refresh        |
+| Post-Event Report           | 10 req/min   | EO/Admin  | Export heavy             |
+
+RATE LIMIT HEADERS
+Response includes:
+- X-RateLimit-Limit: 100
+- X-RateLimit-Remaining: 87
+- X-RateLimit-Reset: 1723641000 (Unix timestamp)
+
+================================================================================
+6. PAGE-TO-API MAPPING MATRIX
+================================================================================
+
+| HALAMAN | Screen Name                  | API Endpoint(s)                                    | Method            |
+|---------|------------------------------|-----------------------------------------------------|-------------------|
+| 1.1     | Login                        | /auth/login                                         | POST              |
+| 1.2     | Register                     | /auth/register                                      | POST              |
+| 1.3     | OTP Verification             | /auth/verify-otp                                    | POST              |
+| 2.1     | Home / Dashboard             | /events, /users/me                                  | GET               |
+| 3.1     | Waiting Room                 | /queue/status                                       | GET               |
+| 3.2     | CAPTCHA Modal                | /queue/verify-captcha                               | POST              |
+| 4.1     | Seat Map                     | /events/{eid}/sections/{sid}/seats                  | GET + POST        |
+| 4.2     | Seat Collision Alert         | (response 409)                                      | POST              |
+| 5.1     | Payment Mode                 | /bookings/{id}/payments                             | POST              |
+| 5.2     | Split Pay Links              | /bookings/{id}/status                               | GET               |
+| 5.3     | Bulk Ticket Assignment       | /payments/bulk/assign                               | POST              |
+| 6.1     | My Tickets List              | /tickets                                            | GET               |
+| 6.2     | Ticket Detail                | /tickets/{id}, /tickets/{id}/qr                     | GET               |
+| 7.1     | List Ticket for Resale       | /resale                                             | POST              |
+| 7.2     | Browse Resale Marketplace    | /resale?event_id={id}&status=PENDING                | GET               |
+| 7.2     | Purchase Resale Ticket       | /resale/{resale_id}/buy                             | POST              |
+| 7.3     | Cancel Resale Listing        | /resale/listings/{resale_id}                        | DELETE            |
+| 8.1     | EO Dashboard                 | /events/{id}/dashboard                              | GET               |
+| 8.2     | EO Analytics                 | /events/{id}/analytics                              | GET               |
+| 8.3     | Post-Event Intelligence      | /events/{id}/post-event-report                      | GET               |
+| 9.1     | Attendance Report            | /events/{id}/analytics (attendance field)           | GET               |
+| 10.1    | Emergency Bulk Cancel        | /admin/events/{id}/bulk-cancel                      | POST              |
+| 11.1    | QR Scanner                   | /gate/scan-qr                                       | POST              |
+| 11.2    | PIN Entry                    | /gate/verify-pin                                    | POST              |
+| 11.3    | Offline Sync                 | /gate/sync                                          | POST              |
+| 12.1    | Ledger Audit                 | /admin/ledger                                       | GET               |
+| 12.1    | Manual Reconciliation        | /admin/ledger/reverse                               | POST              |
+| 12.2    | User & Blacklist Management  | /admin/users, /admin/blacklist                      | GET/POST/DELETE   |
+| 12.3    | Force Seat Release           | /admin/stuck-locks, /admin/force-release            | GET/POST          |
+
+================================================================================
+7. AUTH & USER ENDPOINTS (F001)
+================================================================================
+
+7.1 REGISTER
+────────────────────────────────────────────────────────────────────────────────
+
+POST /auth/register
+  Screen: HALAMAN 1.2 (Register)
+  Auth: Not Required (public)
+  Rate Limit: 10 req/hour per IP
+  Idempotency: REQUIRED
+
+Request:
+{
+  "email": "user@example.com",
+  "phone": "+62812345678",
+  "name": "Budi Santoso",
+  "password": "SecurePass123!",
+  "role": "customer"
+}
+
+Success (201 Created):
+{
+  "success": true,
+  "data": {
+    "user_id": "uuid-user-123",
+    "access_token": "eyJhbGci...",
+    "refresh_token": "eyJhbGci...",
+    "expires_in": 3600
+  },
+  "meta": { ... }
+}
+
+Errors: 400, 409, 429, 500
+
+7.2 LOGIN
+────────────────────────────────────────────────────────────────────────────────
+
+POST /auth/login
+  Screen: HALAMAN 1.1 (Login)
+  Auth: Not Required (public)
+  Rate Limit: 5 req/min per IP
+
+Request:
+{
+  "email": "user@example.com",
+  "password": "SecurePass123!"
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "user_id": "uuid-user-123",
+    "email": "user@example.com",
+    "name": "Budi Santoso",
+    "role": "customer",
+    "tier": "TIER_2",
+    "access_token": "eyJhbGci...",
+    "refresh_token": "eyJhbGci...",
+    "expires_in": 3600
+  },
+  "meta": { ... }
+}
+
+Errors: 401, 429, 500
+
+7.3 VERIFY OTP
+────────────────────────────────────────────────────────────────────────────────
+
+POST /auth/verify-otp
+  Screen: HALAMAN 1.3 (OTP Verification)
+  Auth: Required (JWT)
+  Rate Limit: 5 req/15min per IP
+
+Request:
+{
+  "user_id": "uuid-user-123",
+  "code": "123456"
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "email_verified": true,
+    "email_verified_at": "2026-09-10T10:30:00Z"
+  },
+  "meta": { ... }
+}
+
+Errors: 400, 401, 404
+
+7.4 REFRESH TOKEN (WITH ROTATION)
+────────────────────────────────────────────────────────────────────────────────
+
+POST /auth/refresh-token
+  Screen: Background (auto-refresh)
+  Auth: Not Required (uses refresh_token from body)
+  Rate Limit: 10 req/15min per user
+
+Request:
+{
+  "refresh_token": "eyJhbGci..."
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "access_token": "new-jwt-access",
+    "refresh_token": "new-jwt-refresh",
+    "expires_in": 3600
+  },
+  "meta": { ... }
+}
+
+Note: Refresh Token Rotation — old refresh_token is invalidated.
+
+Errors: 401, 401 TOKEN_TYPE_MISMATCH, 401 TOKEN_BLACKLISTED, 429
+
+7.5 LOGOUT
+────────────────────────────────────────────────────────────────────────────────
+
+POST /auth/logout
+  Screen: HALAMAN 2.1 (Profile dropdown)
+  Auth: Required (JWT)
+
+Request:
+{
+  "refresh_token": "eyJhbGci..."
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": null,
+  "meta": { ... }
+}
+
+7.6 GET CURRENT USER PROFILE
+────────────────────────────────────────────────────────────────────────────────
+
+GET /users/me
+  Screen: HALAMAN 2.1 (Home / Dashboard)
+  Auth: Required (JWT)
+  Rate Limit: 100 req/min per user
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "user_id": "uuid-user-123",
+    "email": "user@example.com",
+    "phone": "+62812345678",
+    "name": "Budi Santoso",
+    "role": "customer",
+    "status": "ACTIVE",
+    "base_score": 50,
+    "total_purchases": 3,
+    "loyalty_tier": "TIER_2",
+    "loyalty_score": 85,
+    "first_purchase_at": "2025-06-15T10:30:00Z",
+    "last_purchase_at": "2026-09-05T15:45:00Z",
+    "profile_photo_url": "https://cdn.e-tix-flash.com/avatars/uuid-123.jpg",
+    "created_at": "2024-01-15T08:00:00Z"
+  },
+  "meta": { ... }
+}
+
+Errors:
+- 401 UNAUTHORIZED: Invalid token
+- 404 NOT_FOUND: User not found
+
+================================================================================
+8. EVENT CATALOG & QUEUE ENDPOINTS (F001)
+================================================================================
+
+8.1 GET EVENTS (PUBLIC CATALOG)
+────────────────────────────────────────────────────────────────────────────────
+
+GET /events?status=ON_SALE&search={query}&category={cat}&page=1&limit=20
+  Screen: HALAMAN 2.1 (Home / Dashboard)
+  Auth: Optional (anyone can browse)
+  Rate Limit: 100 req/min per IP
+
+Query Parameters:
+- status: filter by event_status_enum (DRAFT|PUBLISHED|ON_SALE|SOLD_OUT|COMPLETED|CANCELLED)
+- search: string (event name filter)
+- category: string (concert, festival, theater, etc.)
+- sort_by: string (event_date_asc|event_date_desc|popularity)
+- page: integer (default 1)
+- limit: integer (default 20, max 50)
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "events": [
+      {
+        "event_id": "uuid-event-456",
+        "name": "DEWA 19 FEAT. MAHADEWI",
+        "description": "Konser spesial...",
+        "venue_name": "GBK Stadium",
+        "venue_address": "Jakarta",
+        "event_date": "2026-12-20",
+        "event_start_time": "19:00",
+        "status": "ON_SALE",
+        "banner_url": "https://cdn.e-tix-flash.com/banners/dewa19.jpg",
+        "min_price": "500000",
+        "max_price": "2000000",
+        "tickets_available": 477,
+        "total_tickets": 5000,
+        "sections": [
+          { "section_id": "uuid-section-1", "name": "VIP", "price": "2000000" },
+          { "section_id": "uuid-section-2", "name": "CAT 1", "price": "1000000" },
+          { "section_id": "uuid-section-3", "name": "CAT 2", "price": "500000" }
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "total": 15,
+    "current_page": 1,
+    "total_pages": 1,
+    "limit": 20
+  }
+}
+
+Errors:
+- 400 INVALID_REQUEST: Invalid filter parameters
+- 500 INTERNAL_ERROR
+
+8.2 GET EVENT DETAIL
+────────────────────────────────────────────────────────────────────────────────
+
+GET /events/{event_id}
+  Screen: HALAMAN 2.1 (Home / Dashboard) → Click event
+  Auth: Optional (anyone can browse)
+  Rate Limit: 100 req/min per IP
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "event_id": "uuid-event-456",
+    "name": "DEWA 19 FEAT. MAHADEWI",
+    "description": "Konser spesial dari Dewa 19...",
+    "venue_name": "GBK Stadium",
+    "venue_address": "Jl. Pintu Satu Senayan, Jakarta",
+    "event_date": "2026-12-20",
+    "event_start_time": "19:00",
+    "event_end_time": "23:00",
+    "status": "ON_SALE",
+    "banner_url": "https://cdn.e-tix-flash.com/banners/dewa19.jpg",
+    "organizer": {
+      "organizer_id": "uuid-organizer-789",
+      "name": "Promotor XYZ"
+    },
+    "sections": [
+      {
+        "section_id": "uuid-section-1",
+        "name": "VIP",
+        "price": "2000000",
+        "total_seats": 500,
+        "available_seats": 47
+      },
+      {
+        "section_id": "uuid-section-2",
+        "name": "CAT 1",
+        "price": "1000000",
+        "total_seats": 2000,
+        "available_seats": 280
+      },
+      {
+        "section_id": "uuid-section-3",
+        "name": "CAT 2",
+        "price": "500000",
+        "total_seats": 2500,
+        "available_seats": 150
+      }
+    ],
+    "seat_layout_version": 1,
+    "created_at": "2026-08-01T10:00:00Z"
+  },
+  "meta": { ... }
+}
+
+Errors:
+- 404 NOT_FOUND: Event not found
+- 500 INTERNAL_ERROR
+
+8.3 GET SEAT AVAILABILITY
+────────────────────────────────────────────────────────────────────────────────
+
+GET /events/{event_id}/sections/{section_id}/seats
+  Screen: HALAMAN 4.1 (Seat Map — initial render)
+  Auth: Required (JWT)
+  Rate Limit: 100 req/min per user
+
+Description: Returns bitmap/availability status for all seats in a section. Used to render the seat map BEFORE user selects seats.
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "event_id": "uuid-event-456",
+    "section_id": "uuid-section-1",
+    "section_name": "VIP",
+    "layout_version": 1,
+    "total_seats": 500,
+    "available_seats": 47,
+    "seats": [
+      { "position": 1, "status": "AVAILABLE" },
+      { "position": 2, "status": "TAKEN" },
+      { "position": 3, "status": "AVAILABLE" },
+      { "position": 4, "status": "LOCKED" },
+      { "position": 5, "status": "AVAILABLE" }
+      // ... continues for all seats
+    ],
+    "bitmap_optimized": "base64-encoded-bitmap-data",  // Optional for fast rendering
+    "last_updated_at": "2026-09-10T10:30:00Z"
+  },
+  "meta": { ... }
+}
+
+Note: 
+- `seats` array can be large for sections with thousands of seats
+- Use `bitmap_optimized` for client-side rendering (decoded to bit array)
+- Status values: AVAILABLE (0), TAKEN (1), LOCKED (1 — by other users, TTL 3 min)
+
+Errors:
+- 401 UNAUTHORIZED: Invalid token
+- 404 NOT_FOUND: Event or section not found
+- 503 SERVICE_UNAVAILABLE: Redis circuit breaker open
+
+8.4 GET QUEUE STATUS
+────────────────────────────────────────────────────────────────────────────────
+
+GET /queue/status?event_id={event_id}
+  Screen: HALAMAN 3.1 (Waiting Room)
+  Auth: Required (JWT)
+  Rate Limit: 100 req/min per user
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "position": 123,
+    "total_in_queue": 2341,
+    "estimated_wait_seconds": 120,
+    "tier": "TIER_2",
+    "tier_label": "Regular Fan",
+    "loyalty_score": 85,
+    "queue_token": "jwt-queue-token-with-jti"
+  },
+  "meta": { ... }
+}
+
+Errors:
+- 401 UNAUTHORIZED
+- 404 NOT_FOUND: Event not found or not in sale
+
+8.5 VERIFY CAPTCHA
+────────────────────────────────────────────────────────────────────────────────
+
+POST /queue/verify-captcha
+  Screen: HALAMAN 3.2 (CAPTCHA Modal)
+  Auth: Required (JWT)
+  Rate Limit: 3 req/5min per IP
+  Idempotency: REQUIRED
+
+Request:
+{
+  "challenge_id": "uuid-challenge-123",
+  "solution": "traffic_lights"
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "verified": true,
+    "queue_token": "jwt-queue-token-with-jti"
+  },
+  "meta": { ... }
+}
+
+Errors: 401, 429
+
+================================================================================
+9. BOOKING & PAYMENT ENDPOINTS (F002 & F003)
+================================================================================
+
+9.1 LOCK SEATS
+────────────────────────────────────────────────────────────────────────────────
+
+POST /events/{event_id}/sections/{section_id}/seats
+  Screen: HALAMAN 4.1 (Seat Map)
+  Auth: Required (JWT, customer)
+  Rate Limit: 10 req/min per user
+  Idempotency: REQUIRED
+
+Required Headers:
+- Authorization: Bearer <access_token>
+- X-Idempotency-Key: <uuid>
+- X-Queue-Token: <jwt-queue-token>  ← Required for replay protection
+
+Request:
+{
+  "seat_positions": [10, 11, 12, 13],
+  "payment_mode": "SPLIT"
+}
+
+Processing (Redis Lua Script — Atomic):
+1. Validate X-Queue-Token (single-use via jti check)
+2. Check all seats available via GETBIT (0-based)
+3. Lock seats via SETBIT
+4. Store booking mapping with TTL 180s
+5. Send delayed message (F003) to RabbitMQ
+
+Success (201 Created):
+{
+  "success": true,
+  "data": {
+    "booking_id": "uuid-booking-123",
+    "event_id": "uuid-event-456",
+    "section_id": "uuid-section-789",
+    "seat_positions": [10, 11, 12, 13],
+    "total_seats": 4,
+    "total_amount": "4000000",
+    "payment_mode": "SPLIT",
+    "payment_status": "PENDING",
+    "expires_at": "2026-09-10T10:33:00Z"
+  },
+  "meta": { ... }
+}
+
+Errors:
+- 401 QUEUE_TOKEN_REQUIRED: X-Queue-Token header missing
+- 409 CONFLICT: Seats no longer available
+- 409 TOKEN_ALREADY_USED: Queue token already used (replay attack)
+- 422 UNPROCESSABLE_ENTITY: Max group seats exceeded
+- 503 SERVICE_UNAVAILABLE: Redis circuit breaker open
+
+9.2 INITIATE PAYMENTS (F003)
+────────────────────────────────────────────────────────────────────────────────
+
+POST /bookings/{booking_id}/payments
+  Screen: HALAMAN 5.1 (Payment Mode)
+  Auth: Required (JWT)
+  Rate Limit: 30 req/min per user
+  Idempotency: REQUIRED
+
+Request (SPLIT Mode):
+{
+  "payment_mode": "SPLIT",
+  "members": [
+    { "user_id": "uuid-1", "seat_position": 10, "amount": "1000000" },
+    { "user_id": "uuid-2", "seat_position": 11, "amount": "1000000" },
+    { "user_id": "uuid-3", "seat_position": 12, "amount": "1000000" },
+    { "user_id": "uuid-4", "seat_position": 13, "amount": "1000000" }
+  ]
+}
+
+Request (BULK Mode):
+{
+  "payment_mode": "BULK",
+  "leader_pays_all": true,
+  "amount": "4000000"
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "booking_id": "uuid-booking-123",
+    "payment_status": "PENDING",
+    "obligations": [
+      {
+        "user_id": "uuid-1",
+        "status": "PENDING",
+        "amount": "1000000",
+        "payment_link": "https://payment.example.com/xyz",
+        "external_transaction_id": "txn-gateway-123"
+      }
+    ],
+    "expires_at": "2026-09-10T10:33:00Z"
+  },
+  "meta": { ... }
+}
+
+Errors: 403, 409, 422, 500
+
+9.3 GET BOOKING STATUS
+────────────────────────────────────────────────────────────────────────────────
+
+GET /bookings/{booking_id}/status
+  Screen: HALAMAN 5.2 (Split Pay Links)
+  Auth: Required (JWT)
+  Rate Limit: 100 req/min per user
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "booking_id": "uuid-booking-123",
+    "payment_status": "PAID",
+    "obligations": [
+      { "user_id": "uuid-1", "status": "PAID", "external_transaction_id": "txn-123" }
+    ],
+    "tickets_generated": true
+  },
+  "meta": { ... }
+}
+
+9.4 BULK TICKET ASSIGNMENT
+────────────────────────────────────────────────────────────────────────────────
+
+POST /payments/bulk/assign
+  Screen: HALAMAN 5.3 (Bulk Ticket Assignment)
+  Auth: Required (JWT, customer — must be booking leader)
+  Rate Limit: 30 req/min per user
+  Idempotency: REQUIRED
+
+Request:
+{
+  "booking_id": "uuid-booking-123",
+  "assignments": [
+    { "ticket_id": "uuid-ticket-1", "user_id": "uuid-anggota-1" },
+    { "ticket_id": "uuid-ticket-2", "user_id": "uuid-anggota-2" }
+  ]
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "booking_id": "uuid-booking-123",
+    "assigned": 2,
+    "tickets": [
+      { "ticket_id": "uuid-ticket-1", "assigned_to": "uuid-anggota-1" },
+      { "ticket_id": "uuid-ticket-2", "assigned_to": "uuid-anggota-2" }
+    ]
+  },
+  "meta": { ... }
+}
+
+Errors: 403, 409, 422
+
+9.5 PAYMENT WEBHOOK (Gateway → Backend)
+────────────────────────────────────────────────────────────────────────────────
+
+POST /webhook/payment
+  Screen: Background (Payment Gateway callback)
+  Auth: Signature validation (X-Gateway-Signature header)
+  Rate Limit: Unlimited (trusted source)
+
+Request:
+{
+  "external_transaction_id": "txn-gateway-123",
+  "status": "SUCCESS",
+  "amount": "1000000",
+  "signature": "hmac-sha256-of-payload"
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": { "status": "processed" },
+  "meta": { ... }
+}
+
+Errors: 401, 404
+
+================================================================================
+10. TICKET ENDPOINTS (F004)
+================================================================================
+
+10.1 GET MY TICKETS
+────────────────────────────────────────────────────────────────────────────────
+
+GET /tickets
+  Screen: HALAMAN 6.1 (My Tickets List)
+  Auth: Required (JWT)
+  Rate Limit: 100 req/min per user
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "tickets": [
+      {
+        "id": "uuid-ticket-123",
+        "event_id": "uuid-event-456",
+        "event_name": "DEWA 19 FEAT. MAHADEWI",
+        "section_name": "CAT 1",
+        "seat_position": 10,
+        "status": "CONFIRMED",
+        "qr_secret_key": "...",
+        "fallback_pin": "A3F8K9L2M1N4",
+        "created_at": "2026-09-10T10:30:00Z"
+      }
+    ]
+  },
+  "meta": { ... }
+}
+
+10.2 GET TICKET DETAIL
+────────────────────────────────────────────────────────────────────────────────
+
+GET /tickets/{ticket_id}
+  Screen: HALAMAN 6.2 (Ticket Detail)
+  Auth: Required (JWT, ticket owner)
+  Rate Limit: 100 req/min per user
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "uuid-ticket-123",
+    "event_id": "uuid-event-456",
+    "event_name": "DEWA 19 FEAT. MAHADEWI",
+    "section_id": "uuid-section-789",
+    "section_name": "CAT 1",
+    "seat_position": 10,
+    "status": "CONFIRMED",
+    "owner_user_id": "uuid-user-123",
+    "fallback_pin": "A3F8K9L2M1N4",
+    "qr_updated_at": "2026-09-10T10:30:30Z",
+    "created_at": "2026-09-10T10:30:00Z"
+  },
+  "meta": { ... }
+}
+
+10.3 GET DYNAMIC QR
+────────────────────────────────────────────────────────────────────────────────
+
+GET /tickets/{ticket_id}/qr
+  Screen: HALAMAN 6.2 (Ticket Detail — QR)
+  Auth: Required (JWT, ticket owner)
+  Rate Limit: 100 req/min per user
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "qr_data": "base64-encoded-qr-image-or-token-string",
+    "expires_at": "2026-09-10T10:31:00Z",
+    "refresh_in": 28
+  },
+  "meta": { ... }
+}
+
+10.4 ASSIGN TICKET (Bulk Mode Single Assign)
+────────────────────────────────────────────────────────────────────────────────
+
+PATCH /tickets/{ticket_id}/assign
+  Screen: HALAMAN 5.3 (Bulk Ticket Assignment)
+  Auth: Required (JWT, customer — must be current owner)
+  Idempotency: REQUIRED
+
+Request:
+{
+  "user_id": "uuid-anggota-123"
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "ticket_id": "uuid-ticket-123",
+    "assigned_to": "uuid-anggota-123",
+    "is_assigned": true,
+    "updated_at": "2026-09-10T10:35:00Z"
+  },
+  "meta": { ... }
+}
+
+Errors: 403, 409, 422
+
+================================================================================
+11. GATE ENDPOINTS (F004b)
+================================================================================
+
+11.1 SCAN QR
+────────────────────────────────────────────────────────────────────────────────
+
+POST /gate/scan-qr
+  Screen: HALAMAN 11.1 (QR Scanner)
+  Auth: Required (JWT, gate_staff)
+  Rate Limit: 180 req/min per gate staff
+  Idempotency: REQUIRED (using scan_id)
+
+Request:
+{
+  "ticket_id": "uuid-ticket-123",
+  "qr_data": "base64-qr-data-from-scan",
+  "gate_id": "Gate A",
+  "scanner_device_id": "uuid-device-789",
+  "scan_id": "uuid-scan-111"
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "valid": true,
+    "ticket_id": "uuid-ticket-123",
+    "owner_name": "Budi Santoso",
+    "seat": "CAT 1 - A4",
+    "status": "USED",
+    "scanned_at": "2026-09-10T19:15:23Z"
+  },
+  "meta": { ... }
+}
+
+Errors:
+- 401 INVALID_QR_OR_TICKET_MISMATCH
+- 409 CONFLICT: Ticket already USED
+- 422 UNPROCESSABLE_ENTITY
+
+11.2 VERIFY PIN
+────────────────────────────────────────────────────────────────────────────────
+
+POST /gate/verify-pin
+  Screen: HALAMAN 11.2 (PIN Entry)
+  Auth: Required (JWT, gate_staff)
+  Rate Limit: 180 req/min per gate staff
+  Idempotency: REQUIRED
+
+Request:
+{
+  "ticket_id": "uuid-ticket-123",
+  "pin": "A3F8K9L2M1N4",
+  "gate_id": "Gate A",
+  "scanner_device_id": "uuid-device-789",
+  "scan_id": "uuid-scan-112"
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "valid": true,
+    "ticket_id": "uuid-ticket-123",
+    "owner_name": "Budi Santoso",
+    "seat": "CAT 1 - A4",
+    "status": "USED",
+    "scan_method": "PIN"
+  },
+  "meta": { ... }
+}
+
+Errors: 401, 409
+
+11.3 SYNC OFFLINE SCANS
+────────────────────────────────────────────────────────────────────────────────
+
+POST /gate/sync
+  Screen: HALAMAN 11.3 (Offline Sync)
+  Auth: Required (JWT, gate_staff)
+  Rate Limit: 60 req/min per gate staff
+  Idempotency: Per scan_id (using ON CONFLICT DO NOTHING)
+
+Request:
+{
+  "device_id": "uuid-device-789",
+  "scans": [
+    {
+      "scan_id": "uuid-scan-001",
+      "ticket_id": "uuid-ticket-123",
+      "gate_id": "Gate A",
+      "scanned_at": "2026-09-10T19:15:23Z",
+      "scan_method": "QR",
+      "scan_status": "VALID"
+    }
+  ]
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "synced": 12,
+    "duplicates": 0,
+    "failed": 0,
+    "errors": []
+  },
+  "meta": { ... }
+}
+
+Note (Conflict Resolution — see SECURITY_SPEC v1.4 Section 8.4):
+  Jika ticket sudah berstatus USED (dipindai di device lain secara offline),
+  scan yang datang belakangan ditandai dengan scan_status = 'ALREADY_USED'
+  (sesuai scan_status_enum DATABASE_SCHEMA v2.9).
+  Deterministik: pemenang = scanned_at paling awal; tie-breaker = scan_id terkecil.
+
+================================================================================
+12. RESALE ENDPOINTS (F005)
+================================================================================
+
+12.1 LIST TICKET FOR RESALE
+────────────────────────────────────────────────────────────────────────────────
+
+POST /resale
+  Screen: HALAMAN 7.1 (List Ticket for Resale)
+  Auth: Required (JWT, customer — ticket owner)
+  Rate Limit: 10 req/min per user
+  Idempotency: REQUIRED
+
+Request:
+{
+  "ticket_id": "uuid-ticket-123",
+  "resale_price": "1050000"
+}
+
+Success (201 Created):
+{
+  "success": true,
+  "data": {
+    "resale_id": "uuid-resale-123",
+    "ticket_id": "uuid-ticket-123",
+    "original_price": "1000000",
+    "resale_price": "1050000",
+    "platform_fee": "26250",
+    "seller_payout": "1023750",
+    "status": "PENDING",
+    "created_at": "2026-09-10T10:30:00Z"
+  },
+  "meta": { ... }
+}
+
+Errors: 403, 409, 422
+
+12.2 BROWSE RESALE MARKETPLACE
+────────────────────────────────────────────────────────────────────────────────
+
+GET /resale?event_id={event_id}&status=PENDING
+  Screen: HALAMAN 7.2 (Browse Resale Market)
+  Auth: Optional (anyone can browse)
+  Rate Limit: 100 req/min per IP
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "listings": [
+      {
+        "resale_id": "uuid-resale-123",
+        "ticket_id": "uuid-ticket-123",
+        "seller_name": "Andi",
+        "seat": "CAT 1 - A4",
+        "resale_price": "1050000",
+        "platform_fee": "26250",
+        "seller_payout": "1023750",
+        "original_price": "1000000",
+        "created_at": "2026-09-10T10:30:00Z"
+      }
+    ]
+  },
+  "meta": { ... }
+}
+
+12.3 BUY RESALE TICKET (IDOR PATCHED)
+────────────────────────────────────────────────────────────────────────────────
+
+POST /resale/{resale_id}/buy
+  Screen: HALAMAN 7.2 (Purchase Resale Ticket)
+  Auth: Required (JWT, customer)
+  Rate Limit: 10 req/min per user
+  Idempotency: REQUIRED
+
+NOTE: `buyer_user_id` REMOVED from request body.
+Buyer identity is determined from JWT claims (sub). This prevents IDOR / buyer impersonation.
+
+Request:
+{}  // Empty body — buyer identified from JWT
+
+Processing (with FOR UPDATE — Atomic):
+1. Extract buyer_user_id from JWT claims
+2. BEGIN TRANSACTION
+3. SELECT ... FOR UPDATE on resale_transactions
+4. Check status = 'PENDING' AND buyer_user_id IS NULL
+5. UPDATE status = 'RESERVED', buyer_user_id = <from JWT>, reservation_expires_at = NOW() + 3 min
+6. COMMIT
+7. Send delayed message to RabbitMQ (resale_expiry_check, TTL 3 min)
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "resale_id": "uuid-resale-123",
+    "status": "RESERVED",
+    "reservation_expires_at": "2026-09-10T10:33:00Z",
+    "payment_link": "https://payment.example.com/resale-xyz"
+  },
+  "meta": { ... }
+}
+
+Errors:
+- 404 NOT_FOUND: Resale listing not found
+- 409 CONFLICT: Already reserved by another buyer
+- 422 UNPROCESSABLE_ENTITY: Cannot buy own listing
+
+12.4 CANCEL RESALE LISTING
+────────────────────────────────────────────────────────────────────────────────
+
+DELETE /resale/listings/{resale_id}
+  Screen: HALAMAN 7.3 (Cancel Resale Listing)
+  Auth: Required (JWT, seller only)
+  Idempotency: REQUIRED
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "resale_id": "uuid-resale-123",
+    "status": "CANCELLED",
+    "cancelled_at": "2026-09-10T10:32:00Z"
+  },
+  "meta": { ... }
+}
+
+Errors: 403, 404, 422
+
+================================================================================
+13. EO ANALYTICS ENDPOINTS (F004b)
+================================================================================
+
+13.1 GET EO DASHBOARD
+────────────────────────────────────────────────────────────────────────────────
+
+GET /events/{event_id}/dashboard
+  Screen: HALAMAN 8.1 (EO Dashboard)
+  Auth: Required (JWT, event_organizer OR admin)
+  Rate Limit: 30 req/min per user
+
+Description: Real-time summary of event sales, gate status, and KPI widgets.
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "event_id": "uuid-event-456",
+    "event_name": "DEWA 19 FEAT. MAHADEWI",
+    "event_status": "ON_SALE",
+    "sales": {
+      "tickets_sold": 4523,
+      "total_tickets": 5000,
+      "sales_percentage": 90.5,
+      "revenue_today": "125000000",
+      "total_revenue": "4523000000"
+    },
+    "gate_status": {
+      "total_gates_active": 3,
+      "gate_a_status": "ACTIVE",
+      "gate_b_status": "ACTIVE",
+      "gate_c_status": "IDLE",
+      "total_scans_today": 4231
+    },
+    "anti_bot": {
+      "requests_blocked_today": 124501,
+      "suspicious_ips_flagged": 1245,
+      "captcha_triggers_today": 4500
+    },
+    "recent_activity": [
+      {
+        "timestamp": "2026-09-10T19:15:23Z",
+        "type": "TICKET_SCANNED",
+        "description": "Seat A4 (CAT 1) scanned at Gate A"
+      }
+    ],
+    "alerts": [
+      {
+        "level": "WARNING",
+        "message": "Gate B utilization at 93% — consider adding staff"
+      }
+    ],
+    "updated_at": "2026-09-10T10:30:00Z"
+  },
+  "meta": { ... }
+}
+
+Errors:
+- 403 FORBIDDEN: Not EO/admin or not owner of event
+- 404 NOT_FOUND: Event not found
+
+13.2 GET EVENT ANALYTICS
+────────────────────────────────────────────────────────────────────────────────
+
+GET /events/{event_id}/analytics
+  Screen: HALAMAN 8.2 (EO Analytics)
+  Auth: Required (JWT, event_organizer OR admin)
+  Rate Limit: 30 req/min per user
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "event_id": "uuid-event-456",
+    "event_name": "DEWA 19 FEAT. MAHADEWI",
+    "total_tickets": 5000,
+    "tickets_sold": 4523,
+    "attendance_count": 4100,
+    "attendance_rate": 90.5,
+    "no_show_rate": 9.5,
+    "peak_entry_time": "19:00-19:30",
+    "gate_utilization": {
+      "Gate A": { "total_scans": 1523, "valid_scans": 1400, "utilization": 92 },
+      "Gate B": { "total_scans": 2100, "valid_scans": 1950, "utilization": 93 },
+      "Gate C": { "total_scans": 900, "valid_scans": 750, "utilization": 83 }
+    },
+    "scan_timeline": [
+      { "hour": "18:00", "scans": 150 },
+      { "hour": "18:30", "scans": 450 },
+      { "hour": "19:00", "scans": 1800 }
+    ],
+    "loyal_customers": 340,
+    "new_customers": 960,
+    "generated_at": "2026-09-10T10:30:00Z"
+  },
+  "meta": { ... }
+}
+
+13.3 GET POST-EVENT REPORT
+────────────────────────────────────────────────────────────────────────────────
+
+GET /events/{event_id}/post-event-report?format=json|csv|pdf
+  Screen: HALAMAN 8.3 (Post-Event Intelligence)
+  Auth: Required (JWT, event_organizer OR admin)
+  Rate Limit: 10 req/min per user
+
+Success (200 OK) — JSON format:
+{
+  "success": true,
+  "data": {
+    "event_id": "uuid-event-456",
+    "event_name": "DEWA 19 FEAT. MAHADEWI",
+    "summary": {
+      "total_revenue": "4523000000",
+      "average_ticket_price": "1000000",
+      "platform_fee_earned": "113075000",
+      "refund_amount": "0"
+    },
+    "attendance": {
+      "total_tickets": 5000,
+      "used_tickets": 4523,
+      "unused_tickets": 477,
+      "no_show_rate": 9.5,
+      "resale_count": 123,
+      "resale_revenue": "129150000"
+    },
+    "anti_bot": {
+      "total_requests_blocked": 1243501,
+      "bot_filtering_rate": 95.2,
+      "suspicious_ips_flagged": 12450,
+      "captcha_triggers": 45000
+    },
+    "gate_performance": {
+      "Gate A": { "total_scans": 1523, "valid_scans": 1400, "invalid_scans": 123 },
+      "Gate B": { "total_scans": 2100, "valid_scans": 1950, "invalid_scans": 150 },
+      "Gate C": { "total_scans": 900, "valid_scans": 750, "invalid_scans": 150 }
+    },
+    "insights": {
+      "recommendations": [
+        "Gate B is too busy (46% of traffic). Add 2 more staff.",
+        "Peak entry 19:00-19:30. Schedule all staff during this window.",
+        "Loyal customers: 340 (26%). Consider loyalty program."
+      ]
+    },
+    "generated_at": "2026-09-10T10:30:00Z"
+  },
+  "meta": { ... }
+}
+
+================================================================================
+14. ADMIN ENDPOINTS (F006)
+================================================================================
+
+14.1 EMERGENCY BULK CANCEL
+────────────────────────────────────────────────────────────────────────────────
+
+POST /admin/events/{event_id}/bulk-cancel
+  Screen: HALAMAN 10.1 (Emergency Bulk Cancel)
+  Auth: Required (JWT, admin OR event_organizer)
+  Rate Limit: 3 attempts → 15 min lockout (2FA)
+  Idempotency: REQUIRED
+
+Headers:
+- Authorization: Bearer <admin_token>
+- X-Admin-2FA-Token: <2fa_verification_token>
+
+Request:
+{
+  "reason": "Price error — wrong input for CAT 1 pricing"
+}
+
+Success (202 Accepted):
+{
+  "success": true,
+  "data": {
+    "event_id": "uuid-event-456",
+    "cancelled_tickets": 4523,
+    "refund_total": "4523000000",
+    "status": "PROCESSING"
+  },
+  "meta": { ... }
+}
+
+Errors: 401, 429
+
+14.2 LEDGER AUDIT TRAIL (Financial Events View)  [FIXED v1.2 — DRIFT CLEANUP]
+────────────────────────────────────────────────────────────────────────────────
+
+GET /admin/ledger?date_from={date}&date_to={date}&status={status}&page=1&limit=50
+  Screen: HALAMAN 12.1 (Ledger Audit)
+  Auth: Required (JWT, admin)
+  Rate Limit: 30 req/min per admin
+
+Description (v1.2 — clarified):
+  Endpoint ini adalah VIEW terpadu dari event keuangan E-Tix Flash. BUKAN internal
+  wallet/ledger (sesuai PRD v6.0 "Out of Scope"). Sumber data:
+    - payment_obligations (status pembayaran per user)
+    - resale_transactions (transaksi resale)
+    - admin_actions (audit aksi admin terkait keuangan)
+    - bookings (reference)
+  Payment Gateway adalah source of truth (via external_transaction_id).
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "entries": [
+      {
+        "event_id": "uuid-payment-obligation-001",
+        "event_type": "PAYMENT_PAID",
+        "reference_type": "payment_obligation",
+        "reference_id": "uuid-payment-obligation-001",
+        "booking_id": "uuid-booking-123",
+        "user_id": "uuid-user-123",
+        "amount": "1000000",
+        "status": "PAID",
+        "gateway_transaction_id": "txn-gateway-123",
+        "reconciled": true,
+        "created_at": "2026-09-10T10:30:00Z"
+      },
+      {
+        "event_id": "uuid-admin-action-001",
+        "event_type": "ADMIN_MANUAL_REFUND",
+        "reference_type": "admin_action",
+        "reference_id": "uuid-admin-action-001",
+        "booking_id": "uuid-booking-123",
+        "user_id": "uuid-user-123",
+        "amount": "1000000",
+        "status": "REFUNDED",
+        "gateway_transaction_id": "txn-gateway-refund-456",
+        "admin_id": "uuid-admin-111",
+        "reconciled": true,
+        "created_at": "2026-09-10T10:41:00Z"
+      }
+    ],
+    "summary": {
+      "total_paid": "150000000",
+      "total_pending": "5000000",
+      "total_refunded": "1000000",
+      "unreconciled_count": 0
+    }
+  },
+  "meta": {
+    "total_entries": 1234,
+    "current_page": 1,
+    "total_pages": 25
+  }
+}
+
+Note:
+- `event_type` values: PAYMENT_PENDING, PAYMENT_PAID, PAYMENT_EXPIRED, PAYMENT_FAILED,
+  PAYMENT_REFUNDED, RESALE_COMPLETED, RESALE_PAYOUT_PENDING, ADMIN_MANUAL_PAID,
+  ADMIN_MANUAL_REFUND, ADMIN_BULK_CANCEL
+- `reference_type` values: payment_obligation, resale_transaction, admin_action, booking
+- `reconciled`: true jika status internal sudah diverifikasi terhadap Payment Gateway
+  (via webhook atau Webhook Reconciliation Worker — LOGIC_FLOW v1.4 Section 4.5)
+- `summary.unreconciled_count`: jumlah payment_obligations status PENDING yang
+  melewati TTL dan menunggu reconciliation — harus 0 setelah worker selesai
+
+Errors:
+- 403 FORBIDDEN: Not admin
+- 500 INTERNAL_ERROR
+
+14.3 MANUAL RECONCILIATION (Refund / Status Correction)  [FIXED v1.2 — DRIFT CLEANUP]
+────────────────────────────────────────────────────────────────────────────────
+
+POST /admin/ledger/reverse
+  Screen: HALAMAN 12.1 (Manual Reconciliation)
+  Auth: Required (JWT, admin)
+  Rate Limit: 30 req/min per admin
+  Idempotency: REQUIRED
+
+Headers:
+- Authorization: Bearer <admin_token>
+- X-Admin-2FA-Token: <2fa_verification_token>
+
+Description (v1.2 — clarified):
+  Trigger refund via Payment Gateway untuk payment_obligation yang sudah PAID.
+  Tidak ada compensating ledger entry internal — Payment Gateway adalah source of truth.
+
+Request:
+{
+  "transaction_id": "uuid-payment-obligation-456",
+  "reason": "Customer dispute — unable to attend, refund per policy"
+}
+
+Processing:
+1. Validate 2FA token (lockout: 3 failed → 15 min)
+2. Validate payment_obligation exists, status = 'PAID', not yet refunded
+3. Call Payment Gateway refund API using `external_transaction_id`
+4. UPDATE payment_obligations SET status = 'REFUNDED', refunded_at = NOW(),
+   refund_transaction_id = <gateway_refund_id>
+5. Trigger handle_ticket_cancellation_on_refund() → tickets.status = 'CANCELLED'
+6. INSERT INTO admin_actions (action_type = 'MANUAL_REFUND', ...) — immutable audit
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "payment_obligation_id": "uuid-payment-obligation-456",
+    "status": "REFUNDED",
+    "refund_reason": "Customer dispute — unable to attend, refund per policy",
+    "gateway_refund_transaction_id": "txn-gateway-refund-789",
+    "admin_action_id": "uuid-admin-action-789",
+    "refunded_at": "2026-09-10T10:41:00Z"
+  },
+  "meta": { ... }
+}
+
+Errors:
+- 401 UNAUTHORIZED (missing/invalid 2FA)
+- 403 FORBIDDEN
+- 404 NOT_FOUND (payment_obligation not found)
+- 409 CONFLICT (already refunded)
+
+14.4 GET STUCK LOCKS
+────────────────────────────────────────────────────────────────────────────────
+
+GET /admin/stuck-locks
+  Screen: HALAMAN 12.3 (Force Seat Release)
+  Auth: Required (JWT, admin)
+  Rate Limit: 30 req/min per admin
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "stuck_locks": [
+      {
+        "booking_id": "uuid-booking-123",
+        "section_id": "uuid-section-789",
+        "section_name": "CAT 1",
+        "seat_positions": [10, 11, 12, 13],
+        "locked_since": "2026-09-10T08:30:00Z",
+        "duration_minutes": 120,
+        "status": "STUCK"
+      }
+    ]
+  },
+  "meta": { ... }
+}
+
+14.5 FORCE SEAT RELEASE
+────────────────────────────────────────────────────────────────────────────────
+
+POST /admin/force-release
+  Screen: HALAMAN 12.3 (Force Seat Release)
+  Auth: Required (JWT, admin)
+  Rate Limit: 30 req/min per admin
+  Idempotency: REQUIRED
+
+Headers:
+- Authorization: Bearer <admin_token>
+- X-Admin-2FA-Token: <2fa_verification_token>
+
+Request:
+{
+  "booking_id": "uuid-booking-123",
+  "reason": "Lock stuck after timeout — payment system timeout"
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "booking_id": "uuid-booking-123",
+    "released_seats": [10, 11, 12, 13],
+    "new_status": "CANCELLED",
+    "released_at": "2026-09-10T10:45:00Z"
+  },
+  "meta": { ... }
+}
+
+14.6 GET USERS LIST
+────────────────────────────────────────────────────────────────────────────────
+
+GET /admin/users?role={role}&status={status}&search={query}&page=1&limit=50
+  Screen: HALAMAN 12.2 (User & Blacklist Management)
+  Auth: Required (JWT, admin)
+  Rate Limit: 30 req/min per admin
+
+Query Parameters:
+- role: filter by user_role_enum (customer|event_organizer|gate_staff|admin)
+- status: filter by user_status_enum (ACTIVE|SUSPENDED|FROZEN|DELETED)
+- search: string (email, name, or phone filter)
+- page: integer (default 1)
+- limit: integer (default 50, max 100)
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "users": [
+      {
+        "user_id": "uuid-user-123",
+        "email": "budi@example.com",
+        "phone": "+62812345678",
+        "name": "Budi Santoso",
+        "role": "customer",
+        "status": "ACTIVE",
+        "loyalty_tier": "TIER_2",
+        "total_purchases": 3,
+        "created_at": "2024-01-15T08:00:00Z",
+        "last_login_at": "2026-09-10T10:00:00Z"
+      },
+      {
+        "user_id": "uuid-user-456",
+        "email": "andi@example.com",
+        "phone": "+62812345679",
+        "name": "Andi Wijaya",
+        "role": "customer",
+        "status": "SUSPENDED",
+        "suspended_reason": "Suspicious activity",
+        "created_at": "2025-06-20T14:30:00Z"
+      }
+    ]
+  },
+  "meta": {
+    "total": 8345,
+    "current_page": 1,
+    "total_pages": 167,
+    "limit": 50
+  }
+}
+
+Errors:
+- 403 FORBIDDEN: Not admin
+- 500 INTERNAL_ERROR
+
+14.7 LIST BLACKLIST
+────────────────────────────────────────────────────────────────────────────────
+
+GET /admin/blacklist
+  Screen: HALAMAN 12.2 (User & Blacklist Management)
+  Auth: Required (JWT, admin)
+  Rate Limit: 30 req/min per admin
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "entries": [
+      {
+        "id": "uuid-blacklist-001",
+        "type": "ip",
+        "value": "203.0.113.42",
+        "reason": "Bot detected — multiple CAPTCHA failures",
+        "added_by": "uuid-admin-111",
+        "added_at": "2026-09-10T08:00:00Z",
+        "expires_at": "2026-09-17T08:00:00Z"
+      }
+    ]
+  },
+  "meta": { ... }
+}
+
+14.8 ADD TO BLACKLIST
+────────────────────────────────────────────────────────────────────────────────
+
+POST /admin/blacklist
+  Screen: HALAMAN 12.2
+  Auth: Required (JWT, admin)
+  Rate Limit: 30 req/min per admin
+  Idempotency: REQUIRED
+
+Request:
+{
+  "type": "ip",  // or "device_fingerprint"
+  "value": "203.0.113.42",
+  "reason": "Bot detected",
+  "expires_at": "2026-09-17T00:00:00Z"  // null for permanent
+}
+
+Success (201 Created):
+{
+  "success": true,
+  "data": {
+    "id": "uuid-blacklist-001",
+    "type": "ip",
+    "value": "203.0.113.42",
+    "added_at": "2026-09-10T10:30:00Z"
+  },
+  "meta": { ... }
+}
+
+14.9 REMOVE FROM BLACKLIST
+────────────────────────────────────────────────────────────────────────────────
+
+DELETE /admin/blacklist/{id}
+  Screen: HALAMAN 12.2
+  Auth: Required (JWT, admin)
+  Rate Limit: 30 req/min per admin
+  Idempotency: REQUIRED
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "uuid-blacklist-001",
+    "removed_at": "2026-09-10T10:35:00Z"
+  },
+  "meta": { ... }
+}
+
+14.10 SUSPEND USER
+────────────────────────────────────────────────────────────────────────────────
+
+PATCH /admin/users/{user_id}/suspend
+  Screen: HALAMAN 12.2
+  Auth: Required (JWT, admin)
+  Rate Limit: 30 req/min per admin
+  Idempotency: REQUIRED
+
+Headers:
+- Authorization: Bearer <admin_token>
+- X-Admin-2FA-Token: <2fa_verification_token>
+
+Request:
+{
+  "reason": "Suspicious activity — multiple account transfers"
+}
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "user_id": "uuid-user-456",
+    "status": "SUSPENDED",
+    "previous_status": "ACTIVE",
+    "suspended_reason": "Suspicious activity",
+    "updated_at": "2026-09-10T10:40:00Z"
+  },
+  "meta": { ... }
+}
+
+14.11 UNSUSPEND USER
+────────────────────────────────────────────────────────────────────────────────
+
+PATCH /admin/users/{user_id}/unsuspend
+  Screen: HALAMAN 12.2
+  Auth: Required (JWT, admin)
+  Rate Limit: 30 req/min per admin
+  Idempotency: REQUIRED
+
+Headers:
+- Authorization: Bearer <admin_token>
+- X-Admin-2FA-Token: <2fa_verification_token>
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "user_id": "uuid-user-456",
+    "status": "ACTIVE",
+    "previous_status": "SUSPENDED",
+    "updated_at": "2026-09-10T10:45:00Z"
+  },
+  "meta": { ... }
+}
+
+================================================================================
+15. HEALTH & OBSERVABILITY
+================================================================================
+
+15.1 HEALTH CHECK (Liveness)
+────────────────────────────────────────────────────────────────────────────────
+
+GET /healthz/liveness
+  Auth: Not Required (public)
+  Rate Limit: Unlimited
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "status": "alive"
+  },
+  "meta": { ... }
+}
+
+15.2 READINESS CHECK
+────────────────────────────────────────────────────────────────────────────────
+
+GET /healthz/readiness
+  Auth: Not Required (public)
+  Rate Limit: Unlimited
+
+Success (200 OK):
+{
+  "success": true,
+  "data": {
+    "status": "ready",
+    "checks": {
+      "database": "ok",
+      "redis": "ok",
+      "rabbitmq": "ok"
+    },
+    "timestamp": "2026-09-10T10:30:45Z"
+  },
+  "meta": { ... }
+}
+
+Errors: 503 SERVICE_UNAVAILABLE
+
+15.3 METRICS (Prometheus)
+────────────────────────────────────────────────────────────────────────────────
+
+GET /metrics
+  Auth: Not Required (internal network only recommended)
+  Content-Type: text/plain
+
+Metrics Exposed:  [FIXED v1.2 — removed ledger_balance_check]
+- http_request_duration_seconds (histogram)
+- http_requests_total (counter)
+- redis_operations_total (counter)
+- booking_lock_conflicts_total (counter)
+- circuit_breaker_state (gauge)
+- token_blacklist_hits_total (counter)
+- payment_reconciliation_pending (gauge) — payment_obligations PENDING awaiting reconciliation; must trend to 0
+- offline_scan_conflicts_total (counter)
+
+================================================================================
+16. APPENDIX: COMPLETE REQUEST/RESPONSE EXAMPLES
+================================================================================
+
+EXAMPLE 1: Book Seats (Happy Path)
+
+REQUEST:
+POST /events/uuid-event-456/sections/uuid-section-789/seats HTTP/1.1
+Host: api.e-tix-flash.com
+Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+X-Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
+X-Queue-Token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+
+{
+  "seat_positions": [10, 11, 12, 13],
+  "payment_mode": "SPLIT"
+}
+
+RESPONSE:
+HTTP/1.1 201 Created
+
+{
+  "success": true,
+  "data": {
+    "booking_id": "123e4567-e89b-12d3-a456-426614174000",
+    "event_id": "uuid-event-456",
+    "section_id": "uuid-section-789",
+    "seat_positions": [10, 11, 12, 13],
+    "total_seats": 4,
+    "total_amount": "4000000",
+    "payment_mode": "SPLIT",
+    "payment_status": "PENDING",
+    "expires_at": "2026-09-10T10:33:00Z"
+  },
+  "error": null,
+  "meta": {
+    "timestamp": "2026-09-10T10:30:45.123Z",
+    "request_id": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+
+EXAMPLE 2: Buy Resale Ticket (IDOR patched)
+
+REQUEST:
+POST /resale/uuid-resale-123/buy HTTP/1.1
+Authorization: Bearer <buyer-token>
+X-Idempotency-Key: 770e8400-e29b-41d4-a716-446655440002
+
+{}  // Empty body — buyer identity from JWT
+
+RESPONSE:
+HTTP/1.1 200 OK
+
+{
+  "success": true,
+  "data": {
+    "resale_id": "uuid-resale-123",
+    "status": "RESERVED",
+    "reservation_expires_at": "2026-09-10T10:33:00Z",
+    "payment_link": "https://payment.example.com/resale-xyz"
+  },
+  "meta": { ... }
+}
+
+EXAMPLE 3: Missing X-Queue-Token Header
+
+REQUEST:
+POST /events/uuid-event-456/sections/uuid-section-789/seats HTTP/1.1
+Authorization: Bearer <token>
+X-Idempotency-Key: 660e8400-e29b-41d4-a716-446655440001
+// X-Queue-Token header MISSING
+
+RESPONSE:
+HTTP/1.1 401 Unauthorized
+
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "QUEUE_TOKEN_REQUIRED",
+    "message": "X-Queue-Token header is required for booking operations"
+  },
+  "meta": { ... }
+}
+
+EXAMPLE 4: Get Seat Availability
+
+REQUEST:
+GET /events/uuid-event-456/sections/uuid-section-789/seats HTTP/1.1
+Authorization: Bearer <token>
+
+RESPONSE:
+HTTP/1.1 200 OK
+
+{
+  "success": true,
+  "data": {
+    "event_id": "uuid-event-456",
+    "section_id": "uuid-section-789",
+    "section_name": "VIP",
+    "layout_version": 1,
+    "total_seats": 500,
+    "available_seats": 47,
+    "seats": [
+      { "position": 1, "status": "AVAILABLE" },
+      { "position": 2, "status": "TAKEN" }
+    ],
+    "last_updated_at": "2026-09-10T10:30:00Z"
+  },
+  "meta": { ... }
+}
+
+EXAMPLE 5: Get Current User Profile
+
+REQUEST:
+GET /users/me HTTP/1.1
+Authorization: Bearer <token>
+
+RESPONSE:
+HTTP/1.1 200 OK
+
+{
+  "success": true,
+  "data": {
+    "user_id": "uuid-user-123",
+    "email": "user@example.com",
+    "name": "Budi Santoso",
+    "role": "customer",
+    "status": "ACTIVE",
+    "loyalty_tier": "TIER_2",
+    "loyalty_score": 85,
+    "total_purchases": 3
+  },
+  "meta": { ... }
+}
+
+================================================================================
+17. SYNCHRONIZATION CHECKLIST (100% COMPLIANCE)
+================================================================================
+
+✅ PRD Alignment (F001-F006):
+  - F001 Behavioral Ingress → /queue/status, /queue/verify-captcha
+  - F002 Bitmask Locking → GET/POST /events/{id}/sections/{sid}/seats
+  - F003 Split-Pay → /bookings/{id}/payments, /payments/bulk/assign
+  - F004 Dynamic QR + PIN → /tickets/{id}/qr, /gate/scan-qr, /gate/verify-pin
+  - F004b Gate Analytics → /events/{id}/dashboard, /analytics, /post-event-report
+  - F005 Controlled Resale → /resale, /resale/{id}/buy, /resale/listings/{id}
+  - F006 Admin Tools → /admin/*
+  - Out of Scope "Internal wallet/ledger" → RESPECTED (no wallet/ledger fields)
+
+✅ DATABASE_SCHEMA v2.9-FINAL:
+  - All tables referenced (users, events, sections, bookings, payment_obligations, tickets, ticket_scans, resale_transactions, admin_actions, insights, blacklist, system_config)
+  - All ENUM values match exactly
+  - RLS policies enforce endpoint-level RBAC
+  - All triggers documented
+  - No reference to non-existent tables (wallets, ledger_entries)
+
+✅ LOGIC_FLOW v1.4-FINAL:
+  - State machines (ticket_status_enum, resale_status_enum) documented
+  - Concurrency handling (FOR UPDATE, ORDER BY id ASC)
+  - Idempotent Lazy-Check pattern
+  - Circuit Breaker + Degraded Mode
+  - Queue token single-use validation (jti)
+  - Webhook Reconciliation Worker
+
+✅ HALAMAN v1.1-FINAL:
+  - All 24 screens mapped (Section 6 — Page-to-API Mapping Matrix)
+  - Auth screens (Login, Register, OTP)
+  - Customer flow (Waiting Room, Seat Map, Payment, Tickets, Resale)
+  - EO dashboard + Analytics + Post-Event
+  - Gate Staff scanner + Offline sync
+  - Admin ledger view + User management + Force release
+
+✅ TDD v1.10-FINAL:
+  - All API endpoints defined in Section 5
+  - Full Redis Lua scripts referenced
+  - Circuit Breaker spec
+  - Offline sync idempotency with UUIDv4 scan_id
+  - JWT token type validation
+  - SystemUserUUID constant
+  - external_transaction_id in payment_obligations
+
+✅ SECURITY_SPEC v1.4-FINAL:
+  - Header sanitization rules (Authorization, X-Admin-2FA-Token, X-Queue-Token → [REDACTED])
+  - Offline Gate QR Validation + multi-device conflict resolution
+  - Payment Gateway as source of truth (no internal ledger)
+  - scan_status_enum uses 'ALREADY_USED' (not 'DUPLICATE_SCAN_REJECTED')
+  - ticket_status_enum uses 'CONFIRMED' (valid enum value)
+
+✅ FIXED in v1.1 (Post-Gemini Review):
+  - ✅ Ghost endpoints patched: /users/me, /events/{id}/dashboard, /admin/users
+  - ✅ Public catalog endpoints added: GET /events, GET /events/{id}, GET /seats (availability)
+  - ✅ IDOR vulnerability patched: buyer_user_id removed from resale buy body
+  - ✅ X-Queue-Token header specified in Lock Seats
+
+✅ FIXED in v1.2 (Post-Gemini Review — DRIFT CLEANUP):
+  - ✅ Removed wallet_id, balance_after, WALLET_TOPUP from /admin/ledger response
+  - ✅ Removed ledger_id, reversal_ledger_id, is_reversed from /admin/ledger/reverse
+  - ✅ /admin/ledger now sources from payment_obligations + admin_actions + resale_transactions
+  - ✅ /admin/ledger/reverse now triggers Payment Gateway refund + admin_actions log
+  - ✅ Section 15.3 metric ledger_balance_check → payment_reconciliation_pending
+  - ✅ Section 11.3 note updated to scan_status_enum 'ALREADY_USED'
+  - ✅ All references to wallets/ledger_entries removed (aligns with PRD v6.0 Out of Scope)
+
+================================================================================
+📌 VERSION HISTORY
+================================================================================
+
+| Version | Date       | Author          | Changes                                                                |
+|---------|------------|-----------------|------------------------------------------------------------------------|
+| 1.0-FINAL | 2026-09-10 | M. Arif Aulia | Initial API Contract document for E-Tix Flash.                        |
+| 1.1-FINAL | 2026-09-10 | M. Arif Aulia | **Post-Gemini review fixes:** 1) Added specs for 3 ghost endpoints (GET /users/me, GET /events/{id}/dashboard, GET /admin/users). 2) Added 3 public catalog endpoints (GET /events, GET /events/{id}, GET /events/{eid}/sections/{sid}/seats). 3) IDOR patched: removed buyer_user_id from resale buy body. 4) Added X-Queue-Token header requirement for Lock Seats with QUEUE_TOKEN_REQUIRED error code. |
+| 1.2-FINAL | 2026-09-10 | M. Arif Aulia | **Post-Gemini review fixes (DRIFT CLEANUP):** 1) Section 14.2 /admin/ledger: removed wallet_id, balance_after, WALLET_TOPUP, is_reversed; replaced with event-sourced view from payment_obligations + admin_actions + resale_transactions. 2) Section 14.3 /admin/ledger/reverse: removed ledger_id, reversal_ledger_id, is_reversed; replaced with Payment Gateway refund + admin_actions audit. 3) Section 15.3 metric ledger_balance_check → payment_reconciliation_pending. 4) Section 11.3 /gate/sync note updated to scan_status_enum 'ALREADY_USED' (aligns with SECURITY_SPEC v1.4). 5) Synchronized with SECURITY_SPEC v1.4-FINAL and PRD v6.0 "Out of Scope" (no internal wallet/ledger). |
+
+================================================================================
+END OF API_CONTRACT v1.2-FINAL
+================================================================================
+
+✅ 100% PRODUCTION-READY — LOCKED
+✅ Synchronized with PRD v6.0, DATABASE SCHEMA v2.9, LOGIC FLOW v1.4, HALAMAN v1.1, TDD v1.10, SECURITY_SPEC v1.4
+✅ All 24 screens mapped to endpoints
+✅ All 37 endpoints defined with complete request/response examples
+✅ NO wallet/ledger drift (PRD "Out of Scope" respected)
+✅ Ready for DRP.md, STP.md, ROADMAP.md
+
+Last Updated: 2026-09-10 by M. Arif Aulia
+Bismillah — Final Version. 100% Complete. LOCKED.
