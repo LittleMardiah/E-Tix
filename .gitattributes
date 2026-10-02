@@ -1,0 +1,45 @@
+# .gitattributes
+# Aturan ini mengunci line ending agar tidak ada noise diff antar mesin.
+
+# Aturan umum: semua file teks pakai line ending LF.
+# text=auto membuat git mendeteksi file teks sendiri supaya file biner tidak dirusak.
+# eol=lf berarti di working tree juga selalu LF, bukan CRLF.
+* text=auto eol=lf
+
+# Kode sumber dan file teks yang sering diedit. LF eksplisit.
+*.go    text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.sql   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+
+# Script shell. Di Linux dan container LF, CRLF bikin error unknown option.
+*.sh    text eol=lf
+
+# Script Windows. CMD dan PowerShell butuh CRLF supaya jalan benar.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# File biner. Git tidak boleh mengubah isi dan tidak boleh menandai sebagai teks.
+# Kata binary membuat git memperlakukan file sebagai biner sepenuhnya.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.ico   binary

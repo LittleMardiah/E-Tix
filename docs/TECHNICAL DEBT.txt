@@ -1,355 +1,84 @@
 # TECHNICAL DEBT - E-Tix Flash
-**For Solo Developer - Production Grade**
 
----
-
-## 📌 HEADER & METADATA
-
-| Field | Value |
-|-------|-------|
-| **Project Name** | E-Tix Flash (Smart, Fair & Scalp-Proof Ticketing Platform) |
-| **Document Version** | v1.0 |
-| **Created Date** | 2026-09-07 |
-| **Last Updated** | 2026-09-07 |
-| **Author** | M. Arif Aulia |
-| **Status** | Active - Ide Tracking |
-
----
-
-## 📋 OVERVIEW
-
-Dokumen ini mencatat **ide-ide tambahan** yang masih dalam ruang lingkup PRD (V1.0) namun belum masuk ke dalam dokumen PRD utama karena keterbatasan format atau prioritas. Ide-ide ini bertujuan untuk meningkatkan **nilai jual portofolio** di mata recruiter.
-
-Tujuan dokumen ini:
-1. **Menghindari lupa** akan ide-ide penting yang muncul saat diskusi.
-2. **Memberikan nilai tambah** pada proyek portofolio dengan menunjukkan bahwa kita memikirkan hal-hal di luar kode murni.
-3. **Menjadi referensi** untuk pengembangan V1.1+ jika ada kesempatan.
-
----
-
-## 💡 IDE TAMBAHAN (V1.0 - Opsional, Nilai Tambah Besar)
-
-Ini adalah ide-ide yang **belum masuk ke PRD** karena tidak sesuai dengan format/template dokumen PRD, namun sangat direkomendasikan untuk meningkatkan nilai portofolio.
-
----
-
-### Ide #1: README.md dengan Storytelling
-
-**Deskripsi:**
-README.md di repo GitHub tidak boleh hanya berisi daftar fitur teknis. Harus ada **cerita** yang membuat recruiter/developer tertarik.
-
-**Isi yang Disarankan:**
-
-```markdown
-# E-Tix Flash - Smart Ticketing Platform
-
-## The Story Behind This Project
-
-> "I was at a concert with 3 friends. We booked tickets together, but at checkout, 1 seat was gone. We ended up sitting separately. It ruined the experience."
-
-This project was born from that frustration.
-
-## Why I Built This
-
-I wanted to solve 3 real problems:
-1. **Server crashes** during flash sales → 20.000 RPS design.
-2. **Scalpers/bots** stealing tickets → 95% bot blocking.
-3. **Groups can't sit together** → Atomic group locking.
-
-## What Makes This Different
-
-- **Anti-Bot Ingress:** 2-stage pipeline (synchronous + asynchronous).
-- **Bitmask Locking:** Redis Lua script for atomic group locking.
-- **Split-Pay + Bulk:** Flexible payment for groups.
-- **Dynamic QR + Fallback PIN:** Security + user convenience.
-- **Controlled Resale:** Price cap +10%.
-- **Admin Emergency Tools:** Bulk cancellation & refund.
-
-## Tech Stack
-
-- **Backend:** Golang 1.22+ (Gin, pgx, Redis)
-- **Database:** PostgreSQL 15+ (Supabase)
-- **Cache:** Redis Cluster (Bitmask Locking, Rate Limiting)
-- **Message Broker:** RabbitMQ (Delayed Queue, Fan Score)
-- **Deployment:** Render.com + Docker
-
-## Live Demo
-
-[Link to demo](https://e-tix-flash-demo.vercel.app)
-
-**Try it yourself:**
-- Login: `customer@demo.com` / `password123`
-- Select 4 seats, experience the 3-minute timer!
-
-## What I Learned
-
-1. **Concurrency is hard:** Pessimistic locking, atomic operations, race conditions.
-2. **Users are unpredictable:** That's why I added Static Fallback PIN and Bulk Payment.
-3. **Production is different:** Monitoring, alerting, disaster recovery matter.
-
-## Project Structure
-e-tix-flash/
-├── backend/
-│ ├── cmd/api/ # Entry point
-│ ├── internal/ # Core logic (wallet, ride, food, send)
-│ ├── pkg/ # Shared utilities
-│ └── migrations/ # Database schema
-├── frontend/
-│ ├── customer-app/ # Flutter (mobile)
-│ └── admin-web/ # Next.js (admin dashboard)
-├── docs/
-│ ├── PRD.md # Product Requirement Document
-│ ├── LOGIC_FLOW.md # Business logic flows
-│ ├── API_CONTRACT.md # API specifications
-│ └── ...
-└── docker-compose.yml
-
-text
-
-## Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](./CONTRIBUTING.md).
-
-## License
-
-MIT © M. Arif Aulia
-Alasan Penting:
-
-Membedakan dari portofolio lain: 90% portofolio cuma daftar fitur. Storytelling bikin recruiter ingat.
-
-Menunjukkan soft skill: Kemampuan menjelaskan kompleksitas dengan bahasa sederhana adalah skill yang dicari.
-
-Membangun personal brand: Recruiter bisa lihat "oh, ini orang yang passionate."
-
-Kapan Dikerjakan: V1.0 (Sebelum Demo) - Wajib.
-
-Ide #2: Landing Page Marketing
-Deskripsi:
-Landing page adalah senjata marketing untuk menunjukkan produk ke calon klien (EO) dan recruiter. Bukan sekadar "dokumen teknis", tapi "produk jadi".
-
-Isi yang Disarankan:
-
-html
-<!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>E-Tix Flash - Jual Tiket Tanpa Calo, Tanpa Crash</title>
-  <style>
-    /* Styling modern, clean, mobile-friendly */
-  </style>
-</head>
-<body>
-  <!-- HERO SECTION -->
-  <section class="hero">
-    <h1>Jual Tiket Tanpa Calo, <br />Tanpa Crash, Tanpa Ribet.</h1>
-    <p>Platform tiket yang melindungi fans dari calo dan server crash.</p>
-    <a href="#register" class="cta-button">Coba Gratis 14 Hari</a>
-  </section>
-
-  <!-- 3 MASALAH YANG KAMI PECAHKAN -->
-  <section class="problems">
-    <h2>3 Masalah Besar yang Kami Pecahkan</h2>
-    <div class="problem-grid">
-      <div class="problem-card">
-        <h3>❌ Server Crash saat Flash Sale</h3>
-        <p>Sistem tahan 20.000 RPS dengan Redis Bitmask Locking.</p>
-      </div>
-      <div class="problem-card">
-        <h3>❌ Calo Borong Tiket</h3>
-        <p>Anti-Bot Ingress memblokir 95% bot di pintu masuk.</p>
-      </div>
-      <div class="problem-card">
-        <h3>❌ Grup Susah Duduk Bareng</h3>
-        <p>Atomic Group Locking menjamin kursi berdampingan.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- DEMO INTERAKTIF -->
-  <section class="demo">
-    <h2>Lihat Cara Kerjanya</h2>
-    <div class="demo-container">
-      <p>Pilih 4 kursi → Timer 3 menit → Bayar sendiri-sendiri (Split-Pay) atau satu orang (Bulk).</p>
-      <a href="#" class="demo-button">Coba Demo Sekarang</a>
-    </div>
-  </section>
-
-  <!-- FITUR UNGGULAN -->
-  <section class="features">
-    <h2>Fitur Unggulan</h2>
-    <ul>
-      <li>✅ Atomic Group Locking (Jamin kursi grup)</li>
-      <li>✅ Split-Pay + Bulk Payment (Fleksibel bayar)</li>
-      <li>✅ Dynamic QR + Static Fallback PIN (Aman & Nyaman)</li>
-      <li>✅ Controlled Resale Market (Harga max +10%)</li>
-      <li>✅ Admin Emergency Tools (Bulk cancel & refund)</li>
-    </ul>
-  </section>
-
-  <!-- HARGA -->
-  <section class="pricing">
-    <h2>Pilihan Harga</h2>
-    <div class="pricing-grid">
-      <div class="pricing-card">
-        <h3>Free</h3>
-        <p>0% fee</p>
-        <p>Untuk event < 500 tiket</p>
-        <a href="#" class="cta-small">Mulai</a>
-      </div>
-      <div class="pricing-card featured">
-        <h3>Pro</h3>
-        <p>2.5% fee</p>
-        <p>Full fitur, 20.000 RPS, priority support</p>
-        <a href="#" class="cta-small">Mulai</a>
-      </div>
-      <div class="pricing-card">
-        <h3>Enterprise</h3>
-        <p>Custom</p>
-        <p>Dedicated infra, white-label</p>
-        <a href="#" class="cta-small">Hubungi</a>
-      </div>
-    </div>
-  </section>
-
-  <!-- TESTIMONI -->
-  <section class="testimonials">
-    <h2>Apa Kata EO?</h2>
-    <blockquote>
-      "Dengan E-Tix Flash, konser kami laris dalam 2 menit tanpa crash!"
-      <cite>— EO Konser X</cite>
-    </blockquote>
-  </section>
-
-  <!-- FOOTER -->
-  <footer>
-    <p>© 2026 E-Tix Flash. Dibuat dengan ❤️ oleh M. Arif Aulia.</p>
-    <p>
-      <a href="https://github.com/arif/e-tix-flash">GitHub</a> |
-      <a href="mailto:arif@email.com">Email</a>
-    </p>
-  </footer>
-</body>
-</html>
-Alasan Penting:
-
-Menunjukkan "produk jadi" bukan sekadar "repo kode". Recruiter suka yang bisa presentasi.
-
-Membantu marketing jika suatu saat produk ini benar-benar diluncurkan.
-
-Membedakan portofolio: Hampir tidak ada portofolio yang punya landing page marketing.
-
-Kapan Dikerjakan: V1.0 (Sebelum Demo) - Wajib.
-
-Ide #3: Competitive Analysis (Analisis Pasar)
-Deskripsi:
-Tambahkan analisis kompetitor untuk menunjukkan bahwa kita paham pasar dan tahu positioning produk kita.
-
-Isi yang Disarankan:
-
-markdown
-## Competitive Analysis - E-Tix Flash vs Competitors
-
-| Feature | Loket | GoShow | Tiket.com | Eventbrite | E-Tix Flash |
-|---------|-------|--------|-----------|------------|-------------|
-| Anti-Bot Ingress | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Atomic Group Locking | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Split-Pay | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Bulk Payment (Leader Pays) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Dynamic QR (Anti-Screenshot) | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Static Fallback PIN | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Controlled Resale (+10% Cap) | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Admin Emergency Tools | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Price (Platform Fee) | 5-10% | 5-10% | 5-10% | 5-10% | **2.5%** |
-
-## Mengapa EO akan pindah ke E-Tix Flash?
-
-1. **Masalah #1: Server Crash** → E-Tix Flash handle 20.000 RPS dengan Redis Bitmask Lock.
-2. **Masalah #2: Calo Borong** → E-Tix Flash blokir 95% bot di pintu masuk.
-3. **Masalah #3: Fans Kecewa** → E-Tix Flash jamin kursi grup dan kasih fallback PIN.
-4. **Masalah #4: Calo Jual Mahal** → E-Tix Flash kendalikan harga resale max +10%.
-5. **Masalah #5: Admin Panik** → E-Tix Flash kasih Emergency Tools untuk bulk cancel & refund.
-
-## Target Pasar Awal
-
-- **Event Organizer Menengah-Besar** (5.000-50.000 penonton) yang sudah muak dengan calo dan server crash.
-- **Brand / Sponsor** yang peduli dengan citra dan keadilan.
-Alasan Penting:
-
-Menunjukkan market understanding: Recruiter suka kandidat yang paham konteks bisnis.
-
-Memperkuat value proposition: Dengan data kompetitor, klaim "kami lebih baik" jadi lebih kredibel.
-
-Rare skill: Hanya sedikit engineer yang punya analisis pasar di portofolio.
-
-Kapan Dikerjakan: V1.0 (Sebelum Demo) - Sangat Direkomendasikan.
-
-Ide #4: Business Model & Pricing Strategy
-Deskripsi:
-Tambahkan model bisnis dan strategi harga untuk menunjukkan bahwa produk ini bisa menghasilkan uang.
-
-Isi yang Disarankan:
-
-markdown
-## 💰 BUSINESS MODEL & PRICING STRATEGY
-
-### Revenue Streams (V1.0)
-
-| Revenue Stream | Deskripsi | Estimasi |
-|----------------|-----------|----------|
-| **Platform Fee (Primary)** | Fee per tiket terjual (2.5% dari harga tiket) | Jika 10.000 tiket × Rp 1.000.000 × 2.5% = Rp 250.000.000 per event |
-| **Resale Fee (Secondary)** | Fee 1% dari transaksi resale (untuk operasional) | Jika 10% tiket di-resale → tambahan Rp 25.000.000 per event |
-
-### Pricing Tier untuk EO
-
-| Tier | Harga | Fitur |
-|------|-------|-------|
-| **Free** | 0% fee | Untuk event < 500 tiket (limited features) |
-| **Pro** | 2.5% fee | Full features, 20.000 RPS, priority support |
-| **Enterprise** | Custom | Dedicated infra, white-label, custom integration |
-
-### Keunggulan Kompetitif Harga
-
-- Loket/GoShow/Tiket.com: 5-10% fee.
-- E-Tix Flash: 2.5% fee (lebih murah 50-75%).
-- Dengan harga lebih murah, EO bisa jual tiket lebih murah ke fans ATAU dapat profit lebih besar.
-
-### Break-Even Analysis (Estimasi)
-
-| Event Size | Fee Income | Infra Cost (Render + Supabase) | Profit |
-|------------|------------|--------------------------------|--------|
-| 1.000 tiket × Rp 500.000 × 2.5% | Rp 12.500.000 | Rp 500.000 | Rp 12.000.000 |
-| 10.000 tiket × Rp 1.000.000 × 2.5% | Rp 250.000.000 | Rp 1.000.000 | Rp 249.000.000 |
-Alasan Penting:
-
-Menunjukkan product thinking: Recruiter suka kandidat yang paham "software adalah bisnis".
-
-Membuktikan kelayakan produk: Produk hebat tapi gak menghasilkan uang = sia-sia.
-
-Rare skill: Hanya sedikit engineer yang punya analisis bisnis di portofolio.
-
-Kapan Dikerjakan: V1.0 (Sebelum Demo) - Sangat Direkomendasikan.
-
-🎯 PRIORITAS EKSEKUSI
-Prioritas	Ide	Alasan
-P0 (Wajib Sebelum Demo)	Ide #1 (README Storytelling)	Ini adalah halaman pertama recruiter lihat.
-P0 (Wajib Sebelum Demo)	Ide #2 (Landing Page Marketing)	Ini adalah produk yang recruiter bisa lihat.
-P1 (Sangat Direkomendasikan)	Ide #3 (Competitive Analysis)	Menunjukkan market understanding.
-P1 (Sangat Direkomendasikan)	Ide #4 (Business Model)	Menunjukkan product thinking.
-📊 STATUS TRACKING
-ID	Item	Status	Target Selesai	Catatan
-IDE-001	README.md with Storytelling	⏳ Belum	V1.0 (Sebelum Demo)	-
-IDE-002	Landing Page Marketing	⏳ Belum	V1.0 (Sebelum Demo)	-
-IDE-003	Competitive Analysis	⏳ Belum	V1.0 (Sebelum Demo)	-
-IDE-004	Business Model & Pricing	⏳ Belum	V1.0 (Sebelum Demo)	-
-📝 APPENDIX: GLOSSARY
-Term	Definition
-README.md	File utama di root repository GitHub yang menjelaskan proyek.
-Landing Page	Halaman web satu halaman untuk marketing produk.
-Competitive Analysis	Analisis perbandingan produk kita dengan kompetitor.
-Business Model	Cara produk menghasilkan uang (revenue streams, pricing).
-📌 VERSION HISTORY
-Version	Date	Author	Changes
-1.0	2026-09-07	M. Arif Aulia	Initial TECHNICAL DEBT document. Hanya berisi 4 ide tambahan (README storytelling, Landing Page, Competitive Analysis, Business Model).
-End of TECHNICAL DEBT v1.0
+## Tujuan
+
+Dokumen ini adalah register hutang teknis (technical debt) proyek E-Tix Flash.
+Setiap utang teknis yang ditemukan dan masih perlu dibereskan dicatat di sini
+sebagai entry dengan ID sendiri, supaya tidak hilang dan bisa dilacak sampai selesai.
+
+Dokumen ini berbeda dari docs/PORTFOLIO IDEAS.txt.
+PORTFOLIO IDEAS.txt berisi ide-ide tambahan untuk nilai jual portofolio.
+TECHNICAL DEBT.txt berisi masalah teknis nyata yang perlu diperbaiki.
+
+## Konvensi ID
+
+Format: TD-001, TD-002, TD-003, dan seterusnya.
+Nomor tiga digit, urut, tidak pernah dipakai ulang.
+Satu entry satu ID, tidak digabung.
+
+## Status Bucket
+
+Setiap entry hanya boleh punya satu status dari daftar berikut.
+
+- OPEN. Utang teknis ditemukan, belum ada yang mengerjakan.
+- IN PROGRESS. Sedang diperbaiki.
+- FIXED. Sudah diperbaiki, sudah diverifikasi, belum ditutup secara resmi.
+- CLOSED. Sudah selesai dan sudah dikonfirmasi selesai.
+- DEFERRED. Sengaja ditunda, alasannya dicatat di Deskripsi.
+
+## Template Entry
+
+Salin blok di bawah setiap kali menambah entry baru.
+Isi semua bagian. Jangan biarkan bagian kosong.
+
+```
+ID: TD-00X
+Tanggal: YYYY-MM-DD
+Status: OPEN | IN PROGRESS | FIXED | CLOSED | DEFERRED
+Prioritas: TINGGI | SEDANG | RENDAH
+Deskripsi: Gejala yang terlihat dan dampaknya ke pengguna atau sistem.
+Root Cause: Penyebab sebenarnya kenapa hal ini terjadi.
+Rencana Fix: Langkah kerja konkret untuk membereskannya, plus file yang akan disentuh.
+Referensi: File, baris, dokumen, atau issue tempat masalah ini ditemukan.
+```
+
+## Contoh Entry Terisi
+
+Contoh berikut hanya ilustrasi format, bukan utang teknis yang nyata.
+Jangan dihitung sebagai entry aktif.
+
+```
+ID: TD-000
+Tanggal: YYYY-MM-DD
+Status: OPEN
+Prioritas: TINGGI
+Deskripsi: Contoh isi deskripsi masalah.
+Root Cause: Contoh isi akar penyebab.
+Rencana Fix: Contoh langkah perbaikan.
+Referensi: docs/CONTOH.txt
+```
+
+## Entry Aktif
+
+```
+ID: TD-001
+Tanggal: 2026-10-02
+Status: OPEN
+Prioritas: RENDAH
+Deskripsi: Belum ada .editorconfig di root repo. .gitattributes sudah
+men kunci line ending lewat git, tapi editor di Windows tetap bisa
+menulis CRLF ke disk setelah file di checkout. Karena atribut text
+membuat git menormalkan CRLF jadi LF saat add, status git tetap
+bersih padahal isi file di disk sudah beda byte dari isi commit.
+Akibatnya diff yang terlihat di editor tidak selalu sama dengan
+apa yang benar-benar tersimpan di git.
+Root Cause: .gitattributes hanya berlaku saat git membaca atau
+menulis file, tidak berlaku saat editor menulis file. Tidak ada
+aturan sisi editor yang memaksa LF, jadi konfigurasi editor pada
+Windows bisa menimpa file dengan CRLF tanpa handler git menyadarinya.
+Rencana Fix: tambah .editorconfig di root repo dengan aturan
+end_of_line lf untuk semua file, plus insert_final_newline true
+dan trim_trailing_whitespace true. Bisa dikerjakan di FASE 0
+bersama setup konfigurasi editor atau di FASE 9 tahap polish.
+Referensi: Sesi 2c, kritik OpenCode.
+```

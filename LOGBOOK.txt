@@ -27,3 +27,65 @@ Format timestamp di prompt sebelumnya diganti ke real date command.
 Catatan: prompt menyebut prompt_fixa.txt sebagai fakta, tapi file itu
 tidak pernah ada di root pada run ini. Deviasi logged per TEAM
 CONTRACT v2.2 section 11.5.
+
+[2026-10-02 08:22] FASE 0 — Task E1-S1-T1 — CLEANUP DOCS
+Rename docs/TECHNICAL DEBT.txt jadi docs/PORTFOLIO IDEAS.txt karena
+isinya portfolio ideas (IDE-001..IDE-004), bukan debt ledger. Terbukti
+dengan grep: 0 kemunculan "TD-" dan 4 kemunculan "IDE-00".
+Buat docs/TECHNICAL DEBT.txt baru sebagai TD register: konvensi TD-001
+dst, 5 status bucket (OPEN, IN PROGRESS, FIXED, CLOSED, DEFERRED),
+template entry. Belum ada hutang teknis tercatat.
+Fix .gitignore baris 62, comment "AI prompt and session logs" jadi
+"AI prompt files". Pattern /prompt_*.txt tidak diubah.
+Buat docs/DESIGN.MD placeholder, diisi di FASE 9, target style guide
+komponen. File ini sudah tercatat di chain SUSUNAN DOKUMEN.txt baris 1
+dan 11 sejak awal, jadi tidak perlu disunting.
+Arsip docs/UI UX dan docs/PLAN ke docs/_archive. 12 file, ukuran byte
+identik sebelum dan sesudah dipindah.
+Temuan saat verifikasi isi arsip: keempat file UI UX berasal dari
+proyek DENTFLOW (klinik gigi, role Pasien dan Dokter), bukan E-Tix Flash
+(tiket konser). Root cause awal hanya menyebut DESIGN DOCTOR WEB.md
+sebagai file non-ticketing; faktanya seluruh folder UI UX dari proyek
+lain. Draft pertama DESIGN.MD sempat salah menggambarkan file ini
+sebagai desain E-Tix Flash, sudah dikoreksi sebelum final.
+Deviasi logged per TEAM CONTRACT v2.2 section 11.5.
+
+[2026-10-02 08:35] FASE 0 — Task E1-S1-T1 — GITATTRIBUTES
+Tambah .gitattributes untuk kunci line ending LF; renormalize
+3 file (PRD/STP/DRP) yang sebelumnya kena CRLF drift.
+
+Bukti root cause: sha256 setelah hapus CR identik antara HEAD dan
+working tree untuk ketiga file, jadi diff 4073 baris itu noise line
+ending, bukan perubahan isi. Repo belum punya .gitattributes dan
+core.autocrlf unset, jadi tiap sesi cek ulang dapat noise yang sama.
+
+Isi .gitattributes: aturan umum text=auto eol=lf, daftar ekstensi
+kode dan teks dipaksa LF eksplisit, .sh LF, .bat .cmd .ps1 CRLF,
+dan daftar ekstensi biner. Baris binary men-set text unset sehingga
+git tidak pernah mengubah isi file biner.
+
+Catatan eksekusi: prompt meminta git add --renormalize . tapi
+pathspec . akan ikut men-stage 12 file yang sudah dipindah ke
+docs/_archive dan file untracked lain yang di luar scope task ini.
+Dipakai pathspec eksplisit 3 file saja supaya index tidak ikut
+berubah di luar scope. .gitattributes ikut di-stage karena tanpa itu
+aturan line ending ikut hilang saat commit dan drift kembali muncul.
+Deviasi logged per TEAM CONTRACT v2.2 section 11.5.
+
+[2026-10-02 08:41] FASE 0 — Task E1-S1-T1 — TD-001
+Register TD-001 (.editorconfig belum ada) sebagai priority RENDAH.
+
+Diskusi: .gitattributes sudah mengunci line ending lewat git,
+jadi file teks di working tree di-checkout dengan LF dan git
+menormalkan CRLF ke LF saat add. Yang belum tertangani adalah sisi
+editor. Editor di Windows bisa menulis CRLF ke disk setelah checkout,
+dan karena git menormalkan saat add, status git tetap bersih walau isi
+file di disk sudah beda byte dari isi commit. Verifikasi bahwa
+.editorconfig memang belum ada di root repo (ls .editorconfig -> No
+such file or directory), jadi TD-001 bukan false positive.
+
+Deviasi dari prompt: prompt menulis "Prioritas: LOW" dan tidak
+menyertakan field Root Cause. Template entry di TECHNICAL DEBT.txt
+baris 38 hanya mengizinkan TINGGI | SEDANG | RENDAH dan baris 40
+ mewajibkan field Root Cause, jadi LOW diganti RENDAH dan field Root
+Cause diisi. Deviasi logged per TEAM CONTRACT v2.2 section 11.5.
