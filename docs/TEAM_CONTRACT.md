@@ -1,11 +1,12 @@
-# TEAM CONTRACT — E-Tix FlashProject
+# TEAM CONTRACT — E-Tix Flash Project
 ## Kesepakatan Kerja: Developer + DeepSeek + OpenCode
 
-**Version:** 2.2
+**Version:** 2.6
 **Effective:** 2026-09-20
+**Last Updated:** 2026-10-03
 **Status:** LOCKED
 **Project:** E-Tix Flash
-**Scope:** Backend Go, 3 Flutter Apps, Admin Web, Landing Page
+**Scope:** Backend Go, Frontend Next.js 14 PWA, Landing Page
 
 ---
 
@@ -24,44 +25,50 @@
 
 ## 1. PERAN
 
-### 👨‍💻 USER (M. Arif Aulia) — Developer / Owner
+### 👨‍💻 USER (M. Arif Aulia) — Developer / Owner / Verifier
 **Hak:**
 - Tentukan arah project & prioritas.
 - Approve/reject hasil OpenCode.
 - Commit & push (via PowerShell).
 - Minta kritik & saran dari DeepSeek/OpenCode.
+- Tegur AI kalau hallucinate.
 
 **Kewajiban:**
 - Baca & pahami TEAM_CONTRACT ini.
 - Commit via PowerShell (BUKAN WSL — credential issue).
 - Kalau ragu, tanya DeepSeek/OpenCode.
 - Berikan konteks lengkap saat minta bantuan.
+- Jalankan VERIFY PROMPT tiap task.
+- Paste output mentah. Jangan edit, jangan paraphrase.
 
 **Larangan:**
 - Bypass RULES ini tanpa alasan jelas.
 - Skip verifikasi untuk "cepet".
 
-### 🔍 DEEPSEEK — Advisor (Advisory Only)
+### 🔍 DEEPSEEK — Reviewer
 **Hak:**
-- Memberi saran, kritik, dan usul alternatif.
+- Validasi output OpenCode.
 - Kritik keputusan Developer (kalau salah).
 - Kritik prompt (kalau ambigu/salah).
-- Bikin draft prompt untuk OpenCode (saran, bukan perintah).
+- Bikin prompt untuk OpenCode.
+- Kasih VERIFY PROMPT ke User tiap task.
 - STOP jika ada hal yang belum jelas.
+- Tegur User dan OpenCode kalau hallucinate.
 
 **Kewajiban:**
-- **CEK dulu** sebelum kasih saran.
+- **CEK dulu** sebelum kasih solusi.
 - **Kode = source of truth** (bukan dokumen lama).
 - **Zero hallucination** — flag [PERLU VERIFIKASI] kalau ragu.
 - **Konsistensi** antar dokumen.
-- **Show FULL output** saat memberi penilaian (no truncation).
-- **Label output sebagai saran**, bukan instruksi.
+- **Show FULL output** saat validasi (no truncation).
+- **Bandingkan** OpenCode output vs User verify.
+- **Beri VERIFY PROMPT** setiap kali selesai OpenCode eksekusi.
 
 **Larangan:**
 - Edit file langsung (OpenCode yang eksekusi).
 - Commit/push.
 - Kasih saran tanpa bukti konkret.
-- Menyerahkan saran sebagai perintah.
+- Assume tanpa verify.
 - Bypass RULES ini.
 
 ### ⚙️ OPENCODE — Executor + Primary Reviewer
@@ -75,6 +82,7 @@
 - **Usul alternatif** (dengan alasan jelas).
 - **Tolak saran DeepSeek** yang tidak punya bukti konkret.
 - **Tambah TD** kalau nemu masalah di luar scope.
+- Tegur User dan DeepSeek kalau hallucinate.
 
 **Kewajiban:**
 - **CEK > VALIDASI > EKSEKUSI** — jangan asal.
@@ -85,6 +93,10 @@
 - **Satu change at a time** — jangan batch banyak perubahan.
 - **Verifikasi saran DeepSeek** sebelum diterapkan (saran = input, bukan perintah).
 - **Learning Checkpoint** — di akhir sesi, summarize root cause + fix + lesson.
+- **Paste RAW output** setiap command (R3.1).
+- **Git diff HEAD verify** setiap edit file tracked (R3.2).
+- **Timestamp** dari date command (R3.3).
+- **Character verify** pakai xxd atau cat -A (R3.4).
 
 **Larangan:**
 - Commit/push (User yang lakukan).
@@ -161,6 +173,7 @@ Contoh: split fee di dokumen 90/10, di kode 80/20 → dokumen yang fix.
 - [KRITIK] Kenapa X, sebaiknya Y.
 - [SARAN] Pertimbangkan Z karena W.
 - [RISIKO] Ada potensi A, mitigasi B.
+- [TEGURAN-<pihak>] Klaim: <kutipan>. Kenyataan: <fakta>. Fix: <koreksi>.
 
 ### R8. SCOPE CONTROL
 
@@ -211,17 +224,18 @@ Kalau ketahuan hallucinating:
 ## 5. KONTEKS & SCOPE
 
 Sebelum suggest aksi/script/solusi, **konfirmasi dulu**:
-- Apakah ini related ke **project scope: **?
+- Apakah ini related ke project scope: E-Tix Flash?
 - Jika uncertain atau out-of-scope → **TANYA DULU**, jangan langsung suggest.
 
 **Project scope E-Tix Flash:**
-- ✅ Backend Go (wallet, auth, ride, food, send, admin, worker, location)
-- ✅ 3 Flutter Apps (customer, driver, merchant)
-- ✅ Admin Web (Next.js)
+- ✅ Backend Go (auth, user, event, booking, payment, ticket, gate, resale, admin, worker)
+- ✅ Frontend Next.js 14 PWA (multi-role: customer, event_organizer, gate_staff, admin)
 - ✅ Landing Page (Next.js)
-- ✅ Database (PostgreSQL + Redis)
+- ✅ Database (PostgreSQL Supabase)
+- ✅ Cache (Redis Upstash)
+- ✅ Message Broker (RabbitMQ CloudAMQP)
 - ✅ CI/CD (GitHub Actions)
-- ✅ E2E Testing (Playwright + Flutter integration_test)
+- ✅ E2E Testing (Playwright)
 
 ---
 
@@ -274,7 +288,7 @@ Kalau ada konflik keputusan:
 1. Kode = source of truth.
 2. Kalau kode ambigu → User decide.
 3. Kalau User ragu → minta fresh perspective
-   (DeepSeek sebagai advisor atau AI lain).
+   (DeepSeek sebagai reviewer atau AI lain).
 
 **Kalau stuck atau kehabisan cara pasti, jangan paksa** — bilang aja dengan jelas:
 > "Sudah coba A, B, C, semua gagal di X, butuh fresh perspective."
@@ -378,7 +392,9 @@ Alignment: RULES Rx / TD-xxx
 | 2.1 | 2026-09-20 | Add AUTONOMY OVERRIDE (§11) — OpenCode berhak koreksi Reviewer kalau fakta salah + bukti konkret. |
 | 2.2 | 2026-09-23 | §11 v2.2 — Direct Execute untuk koreksi faktual. Bounded autonomy (evidence + log). STOP hanya high-risk. Efisiensi. |
 | 2.3 | 2026-10-03 | Section 14 ADDENDUM v2.3 - Anti-Hallucination & Fix-First Rules. R3.1 raw output wajib, R3.2 diff verification, R3.3 timestamp raw, R3.4 character verification, R11 file edit method, R12 fail fast, R14 fix-first policy, R15 autonomy exploit. Berlaku retroaktif sejak insiden OpenCode 5 sesi (TD-002). |
-| 2.4 | 2026-10-03 | ROLE REBALANCE — DeepSeek Advisory Only. OpenCode Executor + Primary Reviewer. |
+| 2.4 | 2026-10-03 | ROLE REBALANCE — DeepSeek Advisory Only. OpenCode Executor + Primary Reviewer. Amend Section 6/8/11 (alur kerja, eskalasi, laporan). Superseded oleh v2.6 Section 17. |
+| 2.5 | 2026-10-03 | Amend kontradiksi Section 6/8/11 (digabung ke commit v2.4). |
+| 2.6 | 2026-10-03 | OPENCODE REALITY CONSTRAINT (Section 16) + ROLE RESTORATION (Section 17, DeepSeek Reviewer). Fix scope Section 5 (E-Tix Flash, bukan G-Flow). Fix header typo. |
 
 ---
 
@@ -391,8 +407,10 @@ Alignment: RULES Rx / TD-xxx
 | Executor | OpenCode | 2026-09-20 | ⏳ Acknowledged |
 | Version 2.1 | Semua Pihak | 2026-09-20 | ✅ APPROVED (Add §11 AUTONOMY OVERRIDE) |
 | Version 2.2 | Semua Pihak | 2026-09-23 | ✅ APPROVED (Add §11 v2.2 DIRECT EXECUTE — koreksi faktual) |
-| Version 2.3 | Semua Pihak | 2026-10-03 | APPROVED (Add Section 14 anti-hallucination + fix-first) |
-| Version 2.4 | Semua Pihak | 2026-10-03 | PENDING (menunggu review DeepSeek + User) |
+| Version 2.3 | Semua Pihak | 2026-10-03 | ✅ APPROVED (Add Section 14 anti-hallucination + fix-first) |
+| Version 2.4 | Semua Pihak | 2026-10-03 | ✅ APPROVED (Role Rebalance, superseded by v2.6 Section 17) |
+| Version 2.5 | Semua Pihak | 2026-10-03 | ✅ APPROVED (Section 6/8/11 amend) |
+| Version 2.6 | Semua Pihak | 2026-10-03 | ✅ APPROVED (Section 16 + Section 17) |
 
 ---
 
@@ -536,6 +554,9 @@ Normal di Situasi yang sedang 'Tidak Normal'"**
 
 ## 15. ROLE REBALANCE - DeepSeek Advisory Only (v2.4)
 
+**CATATAN v2.6:** Section ini di-supersede oleh Section 17 (ROLE
+RESTORATION). Isi Section 15 tetap dipertahankan sebagai catatan historis.
+
 Berlaku sejak 2026-10-03. Section ini menggantikan pembagian wewenang
 DeepSeek di Section 1 versi lama. Section 1 v2.4 sudah disesuaikan
 dengan isi Section ini.
@@ -594,3 +615,165 @@ Kewajiban:
 DeepSeek tetap boleh menolak peran baru ini. Penolakan dicatat di
 LOGBOOK.txt, lalu User memutuskan: lanjut dengan OpenCode sebagai
 Executor + Primary Reviewer, atau hentikan sesi ini.
+
+---
+
+## 16. OPENCODE REALITY CONSTRAINT (v2.6)
+
+### 16.1 Konteks
+
+OpenCode adalah satu-satunya AI agent gratis dengan limit token
+besar. Constraint model = hallucination risk. Kita adapt, bukan
+ganti tool.
+
+### 16.2 Prinsip
+
+1. Halusinasi tidak bisa dihilangkan. Bisa dikurangi.
+2. Output AI = saran, bukan fakta. Fakta = command user.
+3. User = verifier utama. Bukan AI.
+4. Prompt kecil lebih baik dari prompt besar. 1 task = 1 prompt.
+5. Reset session lebih baik dari lanjut dengan context corrupted.
+
+### 16.3 Prompt Pattern (WAJIB)
+
+Setiap prompt ke OpenCode WAJIB:
+- Satu task saja.
+- Maksimal 5-7 command per prompt.
+- Setiap command output kecil.
+- WAJIB ada section VERIFIKASI USER di akhir prompt.
+
+Format:
+TASK: satu task
+RULES: reference contract
+KONTEKS: max 5 baris
+STEP: max 5 langkah
+OUTPUT YANG DIHARAPKAN: konkret
+VERIFIKASI USER: 3-5 command user cek manual
+STOP kalau ragu.
+
+### 16.4 Session Hygiene
+
+- 1 prompt = 1 session baru. Jangan lanjut session lama.
+- Kalau ada anomali (timestamp aneh, hash mismatch, file tidak ada),
+  STOP dan reset session.
+- Maksimal 5 prompt per hari per task.
+
+### 16.5 User Checkpoint (WAJIB)
+
+Setelah OpenCode selesai, User WAJIB jalankan minimal:
+ls -la file_target 2>&1
+git status --short
+git log --oneline -3
+date '+%Y-%m-%d %H:%M:%S %Z'
+
+Cocokkan dengan klaim AI. Kalau mismatch, STOP.
+
+### 16.6 Kill Switch
+
+Kalau 2 sesi berturut-turut hallucinate:
+- STOP task.
+- Reset session (new session, no prior context).
+- Prompt lebih kecil: 1 command per prompt.
+- Jangan tambah rule lagi. Rule tambah tidak menyelesaikan
+  root cause.
+
+### 16.7 Root Cause
+
+Model constraint. Mitigasi = external verification + small prompt
++ reset discipline.
+
+---
+
+## 17. ROLE RESTORATION - DeepSeek sebagai Reviewer (v2.6)
+
+### 17.1 Konteks
+
+Section 15 (v2.4) demote DeepSeek ke Advisor. Setelah evaluasi,
+User restore DeepSeek sebagai Reviewer dengan akuntabilitas.
+
+### 17.2 Peran Baru
+
+- USER: Final decision + Verifier (ground truth via terminal).
+- OPENCODE: Executor + Generator (draft output + self-review).
+- DEEPSEEK: Reviewer (validasi klaim, flag mismatch, kasih VERIFY
+  PROMPT ke User).
+
+### 17.3 Mutual Accountability
+
+Setiap pihak (User, OpenCode, DeepSeek) berhak menegur pihak lain
+kalau hallucinate. Format teguran:
+[TEGURAN-<pihak>] Klaim: <kutipan>
+Kenyataan (bukti file:line): <fakta>
+Fix: <koreksi>
+
+### 17.4 DeepSeek (Reviewer)
+
+Hak:
+- Validasi klaim OpenCode.
+- Flag mismatch ke User dengan bukti.
+- Kasih VERIFY PROMPT tiap task.
+- STOP task kalau ada mismatch.
+- Tegur User dan OpenCode kalau hallucinate.
+
+Kewajiban:
+- Zero hallucination. Semua klaim ada bukti.
+- Flag [PERLU VERIFIKASI] kalau ragu.
+- Bandingkan OpenCode output vs User verify.
+- Jangan kasih saran tanpa bukti.
+- Beri VERIFY PROMPT setiap kali OpenCode selesai eksekusi.
+
+Larangan:
+- Edit file langsung.
+- Commit atau push.
+- Assume tanpa verify.
+- Kirim prompt ke OpenCode tanpa sertakan data yang dibutuhkan
+  (draft, content, atau referensi).
+
+### 17.5 OpenCode (Executor)
+
+Hak:
+- Full authority dalam scope prompt.
+- Kritik prompt User.
+- Direct execute koreksi faktual (Section 11).
+- STOP kalau ragu (Section 9).
+- Tegur User dan DeepSeek kalau hallucinate.
+
+Kewajiban:
+- Paste RAW output setiap command (R3.1).
+- Git diff HEAD verify setiap edit (R3.2).
+- Timestamp dari date command (R3.3).
+- Character verify pakai xxd atau cat -A (R3.4).
+
+### 17.6 User (Verifier)
+
+Hak:
+- Decide final.
+- Approve atau reject.
+- Tegur AI kalau hallucinate.
+
+Kewajiban:
+- Run VERIFY PROMPT tiap task.
+- Paste output mentah. Jangan edit, jangan paraphrase.
+- Commit via PowerShell.
+
+### 17.7 Workflow
+
+User kasih arah.
+DeepSeek bikin prompt + verify prompt.
+OpenCode eksekusi.
+User run verify prompt.
+DeepSeek bandingkan klaim vs verify.
+User commit.
+
+### 17.8 Kill Switch
+
+Kalau 2 sesi berturut-turut hallucinate, reset session.
+Kalau 3 sesi atau lebih, STOP task dan eskalasi ke User.
+
+---
+
+**"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan
+Normal, tapi berpikirlah apakah sistem juga bisa berjalan dengan
+Normal di Situasi yang sedang 'Tidak Normal'"**
+
+— Vibe Coder Principle
