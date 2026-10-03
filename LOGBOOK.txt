@@ -132,3 +132,71 @@ external_directory deny "*" dengan allow hanya untuk /tmp/opencode/*
 serta tool-output. Semua file sementara FASE A dipindah ke dalam
 workspace dengan suffix .tmp yang sudah di-gitignore, supaya
 git status tetap bersih.
+
+[2026-10-03 11:16] FASE 0 - TEAM_CONTRACT v2.4 - Role Rebalance
+DeepSeek demoted to Advisory Only (3x hallucinate berturut).
+OpenCode jadi Executor + Primary Reviewer. Update Section 1, 12, 13,
+tambah Section 15. Saran DeepSeek = pertimbangan, bukan perintah.
+
+Deviasi dan catatan (logged per Section 11.5):
+- Draft Section 15 TIDAK disertakan verbatim di prompt User. Isi Section 15
+  disusun OpenCode dari 4 poin spesifikasi di prompt. Perlu review User
+  atas redaksi Section 15 sebelum commit.
+- Baris sign-off v2.4 ditulis "APPROVED (Section 15 ROLE REBALANCE)" sesuai
+  instruksi prompt, tapi DeepSeek belum membaca dokumen ini. Status sign-off
+  DeepSeek = belum terverifikasi. User yang memutuskan.
+- Assertion script sempat salah (cek pre-existing butuh 0, bukan 1). Script
+  ABORT di run pertama, file tidak berubah. Diperbaiki, run kedua lulus.
+- Folder /tmp/opencode/ boleh ditulis. Path /tmp/addendum_15.txt juga
+  berhasil ditulis, tapi /tmp/opencode/... preferred karena ada di allow
+  list permission.
+- fences di TEAM_CONTRACT.md = 0 sebelum dan sesudah (tidak ada code fence
+  di dokumen ini, hanya inline backtick di Section 1).
+- File TEAM_CONTRACT.md sebelumnya tidak punya newline di akhir. Sekarang
+  punya. Ini efek samping dari append Section 15, bukan perubahan isi.
+- TIMESTAMP ERROR (self-breach R3.3): entri di atas sempat ditulis dengan
+  jam 11:26 padahal output date nyata adalah 11:16. OpenCode salah
+  ketik angka tanpa paste raw output. Sudah dikoreksi ke 11:16 dan
+  diverifikasi grep. Pelanggaran logged, bukan disembunyikan.
+
+[2026-10-03 11:23] FASE 0 - TEAM_CONTRACT v2.5 - Amend kontradiksi
+Fix kontradiksi antara Section 6/8/11 dengan Section 15 (ROLE REBALANCE).
+Empat titik, scope hanya 4:
+- Section 6 ALUR KERJA: alur v2.3 (User → DeepSeek prompt → OpenCode → DeepSeek validasi → User approve)
+  diganti dua jalur. Jalur Cepat tanpa DeepSeek, Jalur Advisory dengan
+  DeepSeek sebagai saran opsional. Validasi sekarang di OpenCode
+  (self-review), sesuai Section 15.5.
+- Section 8 ESCALATION: OpenCode → DeepSeek → User diganti
+  OpenCode → User. DeepSeek tetap disebut sebagai advisor untuk
+  fresh perspective.
+- Section 11.3 item 4: DeepSeek+User review jadi OpenCode self-review,
+  lalu User review + commit.
+- Section 13 sign-off v2.4: APPROVED jadi PENDING (menunggu review
+  DeepSeek + User).
+
+Sumber saran: DeepSeek (Advisor), item K2-K6. Saran bukan perintah.
+OpenCode apply setelah verifikasi anchor uniqueness di file (count=1
+untuk keempat anchor, sebelum replace).
+
+Deviasi dan catatan (logged per Section 11.5):
+- BACKUP PATH: instruksi minta backup ke /tmp/opencode/tc_before_v25.md.
+  Permission opencode menolak tulis ke external directory (cp denied 2x).
+  Backup dipindah ke docs/TEAM_CONTRACT.md.bak_v25, md5 sama dengan
+  sumber sebelum edit, lalu dihapus setelah verifikasi. Diff akhir tetap
+  2 file tracked.
+- REDAKSI: draft prompt memakai panah ASCII. Diganti panah unicode
+  (U+2192) agar konsisten dengan Section 6/8/11 versi lama. Label
+  **Detail:** (bold) dipertahankan seperti v2.4. Baris panjang di-wrap
+  sesuai gaya dokumen. Tidak ada perubahan makna.
+- SELF-INFLICTED REGRESSION: ekstraksi blok S6 dan S8 ikut memangsa
+  satu blank line sebelum separator '---'. Terdeteksi di diff vs
+  backup, langsung difix (2 anchor, count=1) dan diverifikasi ulang.
+- K2 CATATAN: DeepSeek belum konfirmasi v2.4, jadi PENDING benar. Tapi
+  isi dokumen sekarang sudah v2.5, sedangkan Section 12 VERSION HISTORY
+  dan tabel sign-off belum punya baris v2.5. Tidak diubah karena di luar
+  scope 4 titik. Perlu keputusan User.
+- Section 1 v2.4 sudah konsisten dengan Section 15, tidak disentuh.
+- fences di TEAM_CONTRACT.md = 0 sebelum dan sesudah. Dokumen ini memang
+  tidak punya code fence; Section 8 pakai blockquote (>). Tidak ada fence
+  yang rusak.
+- Tidak commit, tidak push.

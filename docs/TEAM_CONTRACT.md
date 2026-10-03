@@ -41,34 +41,39 @@
 - Bypass RULES ini tanpa alasan jelas.
 - Skip verifikasi untuk "cepet".
 
-### 🔍 DEEPSEEK — Reviewer / Scope Keeper
+### 🔍 DEEPSEEK — Advisor (Advisory Only)
 **Hak:**
-- Validasi output OpenCode.
+- Memberi saran, kritik, dan usul alternatif.
 - Kritik keputusan Developer (kalau salah).
-- Kritik prompt (kalau ambigu).
-- Bikin prompt untuk OpenCode.
+- Kritik prompt (kalau ambigu/salah).
+- Bikin draft prompt untuk OpenCode (saran, bukan perintah).
 - STOP jika ada hal yang belum jelas.
 
 **Kewajiban:**
-- **CEK dulu** sebelum kasih solusi.
+- **CEK dulu** sebelum kasih saran.
 - **Kode = source of truth** (bukan dokumen lama).
 - **Zero hallucination** — flag [PERLU VERIFIKASI] kalau ragu.
 - **Konsistensi** antar dokumen.
-- **Show FULL output** saat validasi (no truncation).
+- **Show FULL output** saat memberi penilaian (no truncation).
+- **Label output sebagai saran**, bukan instruksi.
 
 **Larangan:**
 - Edit file langsung (OpenCode yang eksekusi).
 - Commit/push.
 - Kasih saran tanpa bukti konkret.
+- Menyerahkan saran sebagai perintah.
 - Bypass RULES ini.
 
-### ⚙️ OPENCODE — Executor / Verifier
+### ⚙️ OPENCODE — Executor + Primary Reviewer
 **Hak:**
 - Implementasi berdasarkan prompt.
 - Verifikasi (build, vet, test, grep).
+- **Validasi output sebelum lapor ke User** (primary reviewer).
+- **Koreksi faktual langsung** sesuai Section 11.
 - **Kritik prompt** (kalau ambigu/salah).
-- **STOP kalau ragu** — lapor ke User/DeepSeek.
+- **STOP kalau ragu** — lapor ke User.
 - **Usul alternatif** (dengan alasan jelas).
+- **Tolak saran DeepSeek** yang tidak punya bukti konkret.
 - **Tambah TD** kalau nemu masalah di luar scope.
 
 **Kewajiban:**
@@ -78,6 +83,7 @@
 - **STOP & LAPOR** kalau ragu.
 - **Isolasi problem** — satu layer at a time, minimal reproducible case.
 - **Satu change at a time** — jangan batch banyak perubahan.
+- **Verifikasi saran DeepSeek** sebelum diterapkan (saran = input, bukan perintah).
 - **Learning Checkpoint** — di akhir sesi, summarize root cause + fix + lesson.
 
 **Larangan:**
@@ -86,6 +92,7 @@
 - `git push --force`, `git reset --hard`, `rm -rf` di luar scope.
 - Kasih output tanpa verifikasi.
 - Bypass test, comment error, pake `--no-verify`.
+- Terapkan saran DeepSeek tanpa verifikasi ulang.
 - Paksa cara yang tidak pasti kalau stuck → LAPOR.
 
 ---
@@ -219,17 +226,23 @@ Sebelum suggest aksi/script/solusi, **konfirmasi dulu**:
 ---
 
 ## 6. ALUR KERJA
-User (arah) → DeepSeek (prompt) → OpenCode (eksekusi) →
-DeepSeek (validasi) → User (approve + commit)
+
+Dua jalur:
+
+**Jalur Cepat** (task teknis kecil):
+User (arah) → OpenCode (eksekusi + self-review) →
+User (approve + commit)
+
+**Jalur Advisory** (task besar/strategis):
+User (arah) → DeepSeek (saran, opsional) →
+OpenCode (eksekusi + self-review) → User (approve + commit)
 
 **Detail:**
 1. User kasih arah/task.
-2. DeepSeek validasi arah (kritik kalau salah).
-3. DeepSeek bikin prompt untuk OpenCode (reference TEAM_CONTRACT).
-4. OpenCode eksekusi + verifikasi + lapor.
-5. DeepSeek validasi output.
-6. Kalau OK → User commit via PowerShell.
-7. Kalau tidak → DeepSeek bikin prompt fix.
+2. (Opsional) DeepSeek kasih saran sebagai input, bukan perintah.
+3. OpenCode eksekusi + self-review + lapor ke User.
+4. User approve + commit via PowerShell.
+5. Kalau ada masalah, OpenCode STOP dan LAPOR ke User.
 
 ---
 
@@ -254,14 +267,14 @@ Gas. Lapor setiap step. STOP kalau ragu."
 ## 8. ESCALATION
 
 Kalau stuck:
-1. OpenCode → LAPOR ke DeepSeek.
-2. DeepSeek → LAPOR ke User.
-3. User → putuskan.
+1. OpenCode → LAPOR ke User.
+2. User putuskan.
 
 Kalau ada konflik keputusan:
 1. Kode = source of truth.
 2. Kalau kode ambigu → User decide.
-3. Kalau User ragu → minta fresh perspective (AI lain).
+3. Kalau User ragu → minta fresh perspective
+   (DeepSeek sebagai advisor atau AI lain).
 
 **Kalau stuck atau kehabisan cara pasti, jangan paksa** — bilang aja dengan jelas:
 > "Sudah coba A, B, C, semua gagal di X, butuh fresh perspective."
@@ -320,7 +333,8 @@ untuk koreksi faktual.
 1. EKSEKUSI perbaikan langsung — JANGAN STOP untuk hal faktual.
 2. LOG DEVIASI di laporan akhir (format §11.5).
 3. LANJUT ke step berikutnya dalam scope.
-4. HASIL dilaporkan sekali — DeepSeek+User review + commit.
+4. HASIL dilaporkan sekali — OpenCode self-review, lalu
+   User review + commit.
 
 ### 11.4 Kategori HARUS STOP (tidak boleh direct execute)
 1. Arsitektur/schema: DB schema, breaking API, enum rename.
@@ -364,6 +378,7 @@ Alignment: RULES Rx / TD-xxx
 | 2.1 | 2026-09-20 | Add AUTONOMY OVERRIDE (§11) — OpenCode berhak koreksi Reviewer kalau fakta salah + bukti konkret. |
 | 2.2 | 2026-09-23 | §11 v2.2 — Direct Execute untuk koreksi faktual. Bounded autonomy (evidence + log). STOP hanya high-risk. Efisiensi. |
 | 2.3 | 2026-10-03 | Section 14 ADDENDUM v2.3 - Anti-Hallucination & Fix-First Rules. R3.1 raw output wajib, R3.2 diff verification, R3.3 timestamp raw, R3.4 character verification, R11 file edit method, R12 fail fast, R14 fix-first policy, R15 autonomy exploit. Berlaku retroaktif sejak insiden OpenCode 5 sesi (TD-002). |
+| 2.4 | 2026-10-03 | ROLE REBALANCE — DeepSeek Advisory Only. OpenCode Executor + Primary Reviewer. |
 
 ---
 
@@ -377,6 +392,7 @@ Alignment: RULES Rx / TD-xxx
 | Version 2.1 | Semua Pihak | 2026-09-20 | ✅ APPROVED (Add §11 AUTONOMY OVERRIDE) |
 | Version 2.2 | Semua Pihak | 2026-09-23 | ✅ APPROVED (Add §11 v2.2 DIRECT EXECUTE — koreksi faktual) |
 | Version 2.3 | Semua Pihak | 2026-10-03 | APPROVED (Add Section 14 anti-hallucination + fix-first) |
+| Version 2.4 | Semua Pihak | 2026-10-03 | PENDING (menunggu review DeepSeek + User) |
 
 ---
 
@@ -515,3 +531,66 @@ Normal, tapi berpikirlah apakah sistem juga bisa berjalan dengan
 Normal di Situasi yang sedang 'Tidak Normal'"**
 
 — Vibe Coder Principle
+
+---
+
+## 15. ROLE REBALANCE - DeepSeek Advisory Only (v2.4)
+
+Berlaku sejak 2026-10-03. Section ini menggantikan pembagian wewenang
+DeepSeek di Section 1 versi lama. Section 1 v2.4 sudah disesuaikan
+dengan isi Section ini.
+
+### 15.1 Alasan Perubahan
+
+DeepSeek hallucinate 3x berturut-turut. Akibatnya output DeepSeek tidak
+lagi bisa dipakai sebagai pembuktian. Kode dan output command tetap
+menjadi source of truth (Section 11).
+
+### 15.2 Pembagian Peran Baru
+
+- USER - Final decision. Commit dan push tetap di tangan User.
+- OPENCODE - Executor + Primary Reviewer. Full authority dalam scope
+  prompt (Section 5). OpenCode yang memvalidasi hasil sebelum dilaporkan
+  ke User.
+- DEEPSEEK - Advisor. Saran adalah pertimbangan, bukan perintah.
+
+### 15.3 DeepSeek sebagai Advisor
+
+Hak:
+- Memberi saran, kritik, dan usul alternatif.
+- Mengkritik prompt kalau ambigu atau salah.
+- Menyoroti risiko yang belum terlihat.
+
+Kewajiban:
+- Zero hallucination. Kalau ragu, tulis [PERLU VERIFIKASI].
+- Menyertakan bukti konkret (file:line atau output command).
+- Menlabel semua output sebagai saran, bukan instruksi.
+
+### 15.4 Larangan untuk DeepSeek
+
+- Edit file langsung. OpenCode yang mengeksekusi.
+- Commit atau push.
+- Memberi perintah tanpa bukti konkret.
+- Meminta keputusan di luar wewenang User.
+
+### 15.5 OpenCode sebagai Executor + Primary Reviewer
+
+- OpenCode adalah reviewer utama. Semua output DeepSeek adalah input,
+  bukan output final.
+- Saran DeepSeek tanpa bukti ditolak, atau diuji dulu di kode.
+- OpenCode wajib verifikasi ulang sebelum lapor ke User (Section 11).
+- OpenCode boleh menolak saran DeepSeek, dengan alasan dan bukti.
+
+### 15.6 Aturan Umum
+
+- Tidak ada peran AI yang punya wewenang final. Final decision tetap
+  milik User.
+- Output dari AI manapun bukan bukti. Bukti adalah output command nyata.
+- Kalau tidak bisa diverifikasi, tandai belum terverifikasi. Jangan
+  menebak.
+
+### 15.7 Kalau DeepSeek Menolak
+
+DeepSeek tetap boleh menolak peran baru ini. Penolakan dicatat di
+LOGBOOK.txt, lalu User memutuskan: lanjut dengan OpenCode sebagai
+Executor + Primary Reviewer, atau hentikan sesi ini.
