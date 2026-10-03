@@ -363,6 +363,7 @@ Alignment: RULES Rx / TD-xxx
 | 2.0 | 2026-09-20 | Include Developer RULES (Terminal Safety, Hallucination Detection, Konteks & Scope, Escalation, Learning Checkpoint). Add Autonomy Boundaries. |
 | 2.1 | 2026-09-20 | Add AUTONOMY OVERRIDE (§11) — OpenCode berhak koreksi Reviewer kalau fakta salah + bukti konkret. |
 | 2.2 | 2026-09-23 | §11 v2.2 — Direct Execute untuk koreksi faktual. Bounded autonomy (evidence + log). STOP hanya high-risk. Efisiensi. |
+| 2.3 | 2026-10-03 | Section 14 ADDENDUM v2.3 - Anti-Hallucination & Fix-First Rules. R3.1 raw output wajib, R3.2 diff verification, R3.3 timestamp raw, R3.4 character verification, R11 file edit method, R12 fail fast, R14 fix-first policy, R15 autonomy exploit. Berlaku retroaktif sejak insiden OpenCode 5 sesi (TD-002). |
 
 ---
 
@@ -375,6 +376,137 @@ Alignment: RULES Rx / TD-xxx
 | Executor | OpenCode | 2026-09-20 | ⏳ Acknowledged |
 | Version 2.1 | Semua Pihak | 2026-09-20 | ✅ APPROVED (Add §11 AUTONOMY OVERRIDE) |
 | Version 2.2 | Semua Pihak | 2026-09-23 | ✅ APPROVED (Add §11 v2.2 DIRECT EXECUTE — koreksi faktual) |
+| Version 2.3 | Semua Pihak | 2026-10-03 | APPROVED (Add Section 14 anti-hallucination + fix-first) |
+
+---
+
+## 14. ADDENDUM v2.3 - Anti-Hallucination & Fix-First Rules (2026-10-03)
+
+Ditambahkan setelah insiden OpenCode 5 sesi (lihat TD-002). Insiden tersebut
+membuktikan bahwa aturan lama belum cukup untuk mencegah model menyusun
+payload di reasoning lalu menulisnya diam-diam ke file.
+
+---
+
+### 14.1 R3.1 RAW Output Wajib
+
+Setiap command execution WAJIB paste raw output mentah ke laporan.
+
+- DILARANG ringkasan tanpa raw output di atasnya.
+- Ringkasan boleh ditulis, tapi hanya SETELAH raw output dipaste.
+- Output yang dipotong atau diringkas dianggap sama dengan tidak paste.
+- Pelanggaran = R3 breach. STOP dan lapor.
+
+Alasan: output mentah adalah satu-satunya bukti yang bisa diperiksa User
+tanpa harus menjalankan ulang command.
+
+### 14.2 R3.2 Diff Verification
+
+Setiap edit file tracked WAJIB verify dengan git diff HEAD.
+
+- Diff harus dicek dan harus sesuai scope prompt.
+- File yang tidak disebut di prompt tapi muncul di diff = breach R8.
+- Perubahan yang tidak diminta = breach.
+- Diff unexpected = STOP dan LAPOR. Jangan rapikan sendiri.
+
+Alasan: diff adalah bukti paling murah untuk mendeteksi edit yang melebar
+ke luar scope.
+
+### 14.3 R3.3 Timestamp Raw
+
+Entry timestamp WAJIB diambil dari date command dengan format
+YYYY-MM-DD HH:MM.
+
+- DILARANG mengetik tanggal dan jam secara manual.
+- DILARANG memakai tanggal yang diperkirakan atau dihitung sendiri.
+- WAJIB paste raw output date command di laporan.
+
+Alasan: timestamp manual adalah sumber paling umum dari data palsu
+di LOGBOOK dan TD register.
+
+### 14.4 R3.4 Character Verification
+
+Klaim "ada karakter aneh di file" WAJIB verify dengan cat -A dan xxd.
+
+- DILARANG menyimpulkan hanya dari grep atau baca visual di terminal.
+- Bukti minimal: byte pertama file lewat xxd.
+- Kalau karakter penyebabnya tidak jelas, tulis [PERLU VERIFIKASI].
+
+Alasan: grep tidak bisa membedakan invisible character seperti zero-width
+space, BOM, atau trailing whitespace. Tanpa xxd, klaim jadi tidak terbukti.
+
+### 14.5 R11 File Edit Method
+
+Untuk edit file, DILARANG memakai write tool.
+
+WAJIB pakai salah satu dari:
+
+- sed
+- echo append
+- cat append
+- python3
+- awk
+
+Kalau content mengandung backtick, WAJIB pakai python3 saja. Metode
+tersebut quoting-nya konsisten, sedangkan heredoc dan sed bisa salah
+escape.
+
+Alasan: insiden TD-002 menunjukkan write via bash heredoc tetap bisa
+menghasilkan payload yang tidak diminta, jadi yang dikunci adalah cara edit
+yang deterministik dan bisa diulang, bukan tool tertentu.
+
+### 14.6 R12 Fail Fast
+
+Kalau OpenCode hallucinate payload:
+
+- 1 sesi hallucinate: investigasi root cause, catat di TD.
+- 2 sesi berturut-turut: STOP, ganti tool atau ubah config.
+- 3 sesi atau lebih: eskalasi ke User.
+
+Tidak boleh melanjut ke step berikutnya sebelum root cause selesai.
+
+### 14.7 R14 Fix-First Policy
+
+Kalau task menemukan masalah dan bisa diperbaiki kurang dari 30 menit
+serta masih dalam scope:
+
+- WAJIB fix langsung.
+- Jangan catat TD untuk masalah yang bisa langsung diperbaiki.
+
+TD hanya dibuat untuk:
+
+- Perubahan schema.
+- Perubahan arsitektur.
+- Masalah lintas modul.
+- Masalah yang butuh keputusan User.
+- Masalah dengan estimasi lebih dari 30 menit.
+
+Alasan: menumpuk TD untuk masalah kecil membuat register tidak berguna
+dan menambah beban review.
+
+### 14.8 R15 OpenCode Autonomy Exploit
+
+Reviewer WAJIB memberi OpenCode ruang untuk:
+
+- Mengkritik prompt kalau ada bagian yang ambigu atau salah.
+- Mengusul alternatif dengan alasan yang jelas.
+- Direct execute koreksi faktual sesuai section 11.
+- Extend scope kecil dalam scope prompt, dengan log deviasi.
+
+Yang tetap WAJIB dipertahankan: bukti konkret, diff verification, dan
+tidak ada commit atau push.
+
+Alasan: aturan yang hanya melarang tanpa memberi jalur yang benar akan
+mendorong model ke jalur tertutup.
+
+### 14.9 Catatan Implementasi
+
+- Berlaku retroaktif sejak 2026-10-03.
+- Semua prompt FASE 0 dan seterusnya WAJIB reference section ini.
+- Nomor R13 tidak dipakai pada addendum ini. R11, R12, R14, dan R15
+  mengikuti penomoran yang sudah disepakati di prompt addendum v2.3.
+- R3.1 sampai R3.4 adalah sub-aturan dari R3 ZERO HALLUCINATION yang
+  sudah ada di section 2, bukan aturan baru yang terpisah.
 
 ---
 

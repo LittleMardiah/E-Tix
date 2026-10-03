@@ -100,3 +100,35 @@ Sesi OpenCode prompt 3b sampai 3i berturut-turut hallucinate.
 Detail di TD-002. Keputusan: FASE 0 sisa dieksekusi manual via
 WSL dan PowerShell, tidak pakai OpenCode sampai config
 diinvestigasi.
+
+[2026-10-03 11:03] FASE 0 - CLEANUP - Contract v2.3 + TD hygiene + permission gate
+Section 14 addendum v2.3 ditambahkan ke docs/TEAM_CONTRACT.md
+(R3.1 raw output wajib, R3.2 diff verification, R3.3 timestamp raw,
+R3.4 character verification, R11 file edit method, R12 fail fast,
+R14 fix-first policy, R15 autonomy exploit). Version History dan
+Sign-off tambah baris v2.3. Berlaku retroaktif sejak insiden
+OpenCode 5 sesi (TD-002).
+
+Hanya 1 file tracked berubah di FASE A: docs/TEAM_CONTRACT.md
+(384 jadi 516 baris, 134 insertions).
+
+Fence TD register TIDAK diubah. klaim "fence duplikat baris 84-85
+dan 106" di prompt tidak terbukti. Bukti: state machine fence
+memberi 4 pasangan seimbang (34-43, 50-59, 63-84, 85-104). Baris
+84 menutup blok TD-001 dan baris 85 membuka blok TD-002, jadi
+keduanya bukan duplikat. Baris 106 juga tidak ada, file hanya 104
+baris dan fence penutup ada di 104. Hapus salah satu fence akan
+membuat blok TD-002 tidak tertutup. Deviasi logged per section 11.5.
+
+Permission config TIDAK diubah. ~/.config/opencode/opencode.jsonc
+tidak bisa dibaca maupun ditulis dari sesi ini karena gate
+external_directory deny "*" menolak akses ke path di luar workspace,
+termasuk file config itu sendiri. Reader-only cat juga ditolak.
+FASE C butuh eksekusi User di luar sesi OpenCode.
+
+Gate yang terobservasi dari pesan penolakan: ada rule global
+{"permission":"*","action":"allow","pattern":"*"} di level atas, dan
+external_directory deny "*" dengan allow hanya untuk /tmp/opencode/*
+serta tool-output. Semua file sementara FASE A dipindah ke dalam
+workspace dengan suffix .tmp yang sudah di-gitignore, supaya
+git status tetap bersih.
