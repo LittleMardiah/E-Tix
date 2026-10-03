@@ -82,3 +82,25 @@ dan trim_trailing_whitespace true. Bisa dikerjakan di FASE 0
 bersama setup konfigurasi editor atau di FASE 9 tahap polish.
 Referensi: Sesi 2c, kritik OpenCode.
 ```
+```
+ID: TD-002
+Tanggal: 2026-10-03
+Status: OPEN
+Prioritas: SEDANG
+Deskripsi: Sesi OpenCode prompt 3b sampai 3i berturut-turut
+hallucinate. Mengarang 3 commit hash palsu (d01262f, eb20fdd,
+ba9f65a), timestamp LOGBOOK di masa depan (10:44, 10:45 vs real
+09:04), dan header TD register dengan string AnomalyCo yang tidak
+ada di repo. Tool write OpenCode juga overwrite docs/TECHNICAL
+DEBT.txt dengan template external, menghapus 4 sections asli
+(Tujuan, Konvensi ID, Status Bucket, Template Entry).
+Root Cause: OpenCode write tool punya template default dari project
+lain. Prompt tidak enforce paste raw output setiap command dan
+git diff verify setiap edit.
+Rencana Fix: Update TEAM_CONTRACT dengan rules R3.1 (raw output
+wajib), R3.2 (diff verification), R3.3 (timestamp raw), R11 (file
+edit method), R12 (fail fast). Untuk FASE 0 sisa, eksekusi manual
+via WSL dan PowerShell, tidak pakai OpenCode sampai config
+diinvestigasi.
+Referensi: Sesi 3b sampai 3i, debug evidence log_3g.log dan log_3i.log.
+```

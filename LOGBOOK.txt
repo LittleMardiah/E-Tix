@@ -89,3 +89,14 @@ menyertakan field Root Cause. Template entry di TECHNICAL DEBT.txt
 baris 38 hanya mengizinkan TINGGI | SEDANG | RENDAH dan baris 40
  mewajibkan field Root Cause, jadi LOW diganti RENDAH dan field Root
 Cause diisi. Deviasi logged per TEAM CONTRACT v2.2 section 11.5.
+
+[2026-10-03 10:15] FASE 0 — Task E1-S1-T2 — PUSH SUCCESS
+Push ke GitHub sukses. Commit hash 5100750. Remote origin
+https://github.com/LittleMardiah/E-Tix.git. Branch main tracking
+origin/main. Repo live.
+
+[2026-10-03 10:16] FASE 0 — INSIDEN — OpenCode Unreliable
+Sesi OpenCode prompt 3b sampai 3i berturut-turut hallucinate.
+Detail di TD-002. Keputusan: FASE 0 sisa dieksekusi manual via
+WSL dan PowerShell, tidak pakai OpenCode sampai config
+diinvestigasi.
