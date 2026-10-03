@@ -1,7 +1,17 @@
 # Environment files
+# Cover env production, development, staging, test. Exception: .env.example (template, harus ter-commit).
 .env
 .env.local
 .env.*.local
+.env.*.production
+.env.*.development
+.env.*.staging
+.env.*.test
+.env.production
+.env.development
+.env.staging
+.env.test
+!.env.example
 
 # Keys and certificates
 *.pem
