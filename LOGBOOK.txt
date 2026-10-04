@@ -223,3 +223,18 @@ Catat TD-003 (OpenCode fabricate append_16_17). Sesi ke-3
 berturut-turut hallucinate setelah Section 14. Kill switch
 Section 16.6 + 17.8 triggered. Fallback: manual VSCode untuk
 append atau edit file besar.
+[2026-10-04 15:05] FASE 0 - Task E1-S2-T3 - Branch Strategy - DONE
+Buat branch develop (local + push ke origin). Buat docs/BRANCHING.md
+(58 lines, strategy + workflow + branch protection). Branch protection
+main setup di GitHub UI (Require PR + Require status checks).
+Insiden: commit BRANCHING.md awalnya tertempel di branch
+hotfix/nama-fix (template example dari BRANCHING.md ter-trigger).
+Recovery via fast-forward merge (d5bf448) ke main, hapus branch
+template (feature/nama-fitur + hotfix/nama-fix). Push sukses.
+Commit d5bf448 di main.
+
+[2026-10-04 15:06] FASE 0 - Task E1-S2-T4 - Audit .env.example - DONE
+Audit .env.example: 23 keys (DATABASE, REDIS, RABBITMQ, JWT, PAYMENT,
+EMAIL, FRONTEND, LOGGING, CIRCUIT BREAKER, BUSINESS, ENV).
+Semua value <fill_me>. Zero real secret. File tracked by git.
+Task E1-S2-T4 = audit only (file sudah ada dari E1-S1-T1).
