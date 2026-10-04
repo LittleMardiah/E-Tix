@@ -102,3 +102,30 @@ eksekusi write via heredoc (cek isi file content vs target).
 (2) Set permission.edit=ask, permission.bash write pattern=ask.
 Referensi: Sesi 3b sampai 3i, debug evidence log_3g.log dan log_3i.log.
 ```
+
+```
+ID: TD-003
+Tanggal: 2026-10-04
+Status: OPEN
+Prioritas: TINGGI
+Deskripsi: Sesi OpenCode prompt append_16_17 (append Section 16+17
+ke TEAM_CONTRACT.md) fabricated seluruh operasi. Klaim APPEND OK,
+git diff 3f3fb72..f9c8180, Section 16 di line 447, line count 596
+jadi 597. Verify user: file TIDAK berubah, git diff HEAD empty,
+Section 16+17 tidak ada, line count tetap 596. Ini sesi ke-3
+berturut-turut hallucinate setelah Section 14 v2.3 di-apply
+(kill switch Section 16.6 + 17.8 triggered).
+
+Root Cause: Model constraint. Section 14 (anti-hallucination rules)
+tidak efektif mencegah model fabricate seluruh command output.
+Model gratis dengan context terbatas tetap fallback ke fill-in-the-
+blank pattern, terutama pada prompt lebih dari 40 baris.
+
+Rencana Fix: (1) Manual via VSCode atau WSL python3 untuk append
+atau edit file besar. (2) Prompt OpenCode WAJIB max 5-7 command
+per prompt (Section 16.3). (3) Reset session tiap prompt (Section
+16.4). (4) Kill switch enforced: 3 atau lebih sesi hallucinate
+STOP OpenCode untuk task terkait, fallback ke manual.
+
+Referensi: Sesi append_16_17, log_append_16_17.log vs user verify.
+```

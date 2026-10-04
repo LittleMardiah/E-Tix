@@ -162,13 +162,12 @@ Deviasi dan catatan (logged per Section 11.5):
 [2026-10-03 11:23] FASE 0 - TEAM_CONTRACT v2.5 - Amend kontradiksi
 Fix kontradiksi antara Section 6/8/11 dengan Section 15 (ROLE REBALANCE).
 Empat titik, scope hanya 4:
-- Section 6 ALUR KERJA: alur v2.3 (User → DeepSeek prompt → OpenCode → DeepSeek validasi → User approve)
-  diganti dua jalur. Jalur Cepat tanpa DeepSeek, Jalur Advisory dengan
-  DeepSeek sebagai saran opsional. Validasi sekarang di OpenCode
-  (self-review), sesuai Section 15.5.
-- Section 8 ESCALATION: OpenCode → DeepSeek → User diganti
-  OpenCode → User. DeepSeek tetap disebut sebagai advisor untuk
-  fresh perspective.
+- Section 6 ALUR KERJA: alur v2.3 (User -> DeepSeek prompt -> OpenCode
+  -> DeepSeek validasi -> User approve) diganti dua jalur. Jalur Cepat
+  tanpa DeepSeek, Jalur Advisory dengan DeepSeek sebagai saran opsional.
+  Validasi sekarang di OpenCode (self-review), sesuai Section 15.5.
+- Section 8 ESCALATION: OpenCode -> DeepSeek -> User diganti OpenCode
+  -> User. DeepSeek tetap disebut sebagai advisor untuk fresh perspective.
 - Section 11.3 item 4: DeepSeek+User review jadi OpenCode self-review,
   lalu User review + commit.
 - Section 13 sign-off v2.4: APPROVED jadi PENDING (menunggu review
@@ -200,3 +199,27 @@ Deviasi dan catatan (logged per Section 11.5):
   tidak punya code fence; Section 8 pakai blockquote (>). Tidak ada fence
   yang rusak.
 - Tidak commit, tidak push.
+
+[2026-10-04 14:57] FASE 0 - TEAM_CONTRACT v2.6 - Manual VSCode
+Update TEAM_CONTRACT ke v2.6 setelah OpenCode hallucinate 3 sesi
+berturut-turut (append_16_17 + sebelumnya). Perubahan:
+- Header: v2.2 -> v2.6. Fix typo "E-Tix FlashProject" -> "E-Tix Flash
+  Project". Tambah "Last Updated: 2026-10-03".
+- Section 1: DeepSeek Advisor -> Reviewer (restore). Tambah hak tegur
+  User/OpenCode + VERIFY PROMPT.
+- Section 5: Fix scope. Hapus "wallet/ride/food/send", hapus "3 Flutter
+  Apps", ganti "Admin Web" -> "Next.js 14 PWA multi-role".
+- Section 12: Tambah baris v2.5 + v2.6.
+- Section 13: v2.4 APPROVED, tambah v2.5 + v2.6.
+- Section 15: Tambah catatan historis (superseded by Section 17).
+- Section 16: NEW. OpenCode Reality Constraint.
+- Section 17: NEW. Role Restoration (DeepSeek Reviewer).
+
+Apply via VSCode manual (bukan OpenCode). File 596 -> 778 baris,
+204 insertions, 21 deletions. Commit db6d2e7.
+
+[2026-10-04 14:58] FASE 0 - TD-003 - Recurring Hallucination
+Catat TD-003 (OpenCode fabricate append_16_17). Sesi ke-3
+berturut-turut hallucinate setelah Section 14. Kill switch
+Section 16.6 + 17.8 triggered. Fallback: manual VSCode untuk
+append atau edit file besar.
