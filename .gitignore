@@ -85,3 +85,7 @@ docs/*[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]*
 
 # Backup files (manual append safety)
 *.bak-*
+
+# JWT keys (sensitive)
+backend/keys/
+backend/.env.local

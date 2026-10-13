@@ -20,6 +20,9 @@ type Config struct {
 	JWTPrivateKey string
 	JWTPublicKey  string
 
+	JWTPrivateKeyPath string
+	JWTPublicKeyPath  string
+
 	PaymentGatewayURL    string
 	PaymentGatewayAPIKey string
 
@@ -56,6 +59,9 @@ func Load() (*Config, error) {
 
 		JWTPrivateKey: os.Getenv("JWT_PRIVATE_KEY"),
 		JWTPublicKey:  os.Getenv("JWT_PUBLIC_KEY"),
+
+		JWTPrivateKeyPath: os.Getenv("JWT_PRIVATE_KEY_PATH"),
+		JWTPublicKeyPath:  os.Getenv("JWT_PUBLIC_KEY_PATH"),
 
 		PaymentGatewayURL:    os.Getenv("PAYMENT_GATEWAY_URL"),
 		PaymentGatewayAPIKey: os.Getenv("PAYMENT_GATEWAY_API_KEY"),
