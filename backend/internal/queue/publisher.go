@@ -25,3 +25,27 @@ func (c *Connection) Health(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (c *Connection) DeclareQueue(name string, durable bool) error {
+	ch, err := c.Channel()
+	if err != nil {
+		return err
+	}
+	defer ch.Close()
+
+	_, err = ch.QueueDeclare(name, durable, false, false, false, nil)
+	return err
+}
+
+func (c *Connection) Publish(ctx context.Context, queueName string, body []byte) error {
+	ch, err := c.Channel()
+	if err != nil {
+		return err
+	}
+	defer ch.Close()
+
+	return ch.PublishWithContext(ctx, "", queueName, false, false, amqp.Publishing{
+		ContentType: "application/json",
+		Body:        body,
+	})
+}
