@@ -70,7 +70,7 @@ func main() {
 	router := gin.New()
 	router.Use(middleware.RecoveryMiddleware(logger))
 	router.Use(middleware.LoggerMiddleware(logger))
-	router.Use(middleware.CORSMiddleware(parseOrigins(cfg.CORSOrigins)))
+	router.Use(middleware.CORSMiddleware(parseOrigins(cfg.CORSOrigins), logger))
 
 	router.GET("/healthz/liveness", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})
