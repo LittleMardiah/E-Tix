@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/LittleMardiah/E-Tix/backend/internal/auth"
 	"github.com/LittleMardiah/E-Tix/backend/internal/config"
 	"github.com/LittleMardiah/E-Tix/backend/internal/db"
 	"github.com/LittleMardiah/E-Tix/backend/internal/middleware"
@@ -56,6 +57,16 @@ func main() {
 	}
 	defer func() { _ = rdb.Close() }()
 
+	userRepo := auth.NewPostgresUserRepository(pgPool)
+
+	jwtSvc, err := auth.NewJWTService(cfg.JWTPrivateKeyPath, cfg.JWTPublicKeyPath, "e-tix-flash")
+	if err != nil {
+		logger.Fatal("failed to init jwt service", zap.Error(err))
+	}
+
+	authSvc := auth.NewAuthService(userRepo, jwtSvc)
+	authHandler := auth.NewAuthHandler(authSvc, rdb)
+
 	mq, err := queue.NewConnection(cfg.RabbitMQURL)
 	if err != nil {
 		logger.Fatal("failed to init rabbitmq connection", zap.Error(err))
@@ -71,6 +82,8 @@ func main() {
 	router.Use(middleware.RecoveryMiddleware(logger))
 	router.Use(middleware.LoggerMiddleware(logger))
 	router.Use(middleware.CORSMiddleware(parseOrigins(cfg.CORSOrigins), logger))
+
+	router.POST("/auth/register", authHandler.Register)
 
 	router.GET("/healthz/liveness", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})

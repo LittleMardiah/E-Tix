@@ -57,8 +57,8 @@ func Load() (*Config, error) {
 
 		RabbitMQURL: os.Getenv("RABBITMQ_URL"),
 
-		JWTPrivateKey: os.Getenv("JWT_PRIVATE_KEY"),
-		JWTPublicKey:  os.Getenv("JWT_PUBLIC_KEY"),
+		JWTPrivateKey: os.Getenv("JWT_PRIVATE_KEY or JWT_PRIVATE_KEY_PATH"),
+		JWTPublicKey:  os.Getenv("JWT_PUBLIC_KEY or JWT_PUBLIC_KEY_PATH"),
 
 		JWTPrivateKeyPath: os.Getenv("JWT_PRIVATE_KEY_PATH"),
 		JWTPublicKeyPath:  os.Getenv("JWT_PUBLIC_KEY_PATH"),
@@ -92,10 +92,10 @@ func Load() (*Config, error) {
 	if cfg.DatabaseURL == "" {
 		missing = append(missing, "DATABASE_URL")
 	}
-	if cfg.JWTPrivateKey == "" {
+	if cfg.JWTPrivateKey == "" && cfg.JWTPrivateKeyPath == "" {
 		missing = append(missing, "JWT_PRIVATE_KEY")
 	}
-	if cfg.JWTPublicKey == "" {
+	if cfg.JWTPublicKey == "" && cfg.JWTPublicKeyPath == "" {
 		missing = append(missing, "JWT_PUBLIC_KEY")
 	}
 	if len(missing) > 0 {
