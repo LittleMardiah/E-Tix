@@ -1,0 +1,19 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Project allowlist: docs examples and placeholder credentials"
+paths = [
+  '''^docs/''',
+  '''^LOGBOOK\.txt$''',
+  '''^README\.md$''',
+  '''^backend/tests/fixtures/''',
+  '''^frontend/\.env\.local\.example$''',
+]
+regexes = [
+  '''dummy_hash_for_test_only''',
+  '''SYSTEM_USER_NO_LOGIN_ACCOUNT_DUMMY''',
+  '''<fill_me>''',
+  '''<YOUR-PASSWORD>''',
+  '''<password>''',
+]

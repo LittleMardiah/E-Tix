@@ -1,5 +1,7 @@
 # E-Tix Flash
 
+[![codecov](https://codecov.io/gh/LittleMardiah/E-Tix/branch/main/graph/badge.svg)](https://codecov.io/gh/LittleMardiah/E-Tix)
+
 E-Tix Flash adalah platform smart ticketing untuk portfolio project. Sistem ini dibangun sebagai monorepo yang terpisah menjadi backend (Go) dan frontend (Next.js 14 PWA).
 
 ## Status
