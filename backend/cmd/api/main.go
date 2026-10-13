@@ -43,6 +43,9 @@ func main() {
 	}
 	defer func() { _ = logger.Sync() }()
 
+	// Activate global zap logger so zap.L() works across the codebase.
+	zap.ReplaceGlobals(logger)
+
 	ctx := context.Background()
 
 	pgPool, err := db.NewDBPool(ctx, cfg.DatabaseURL)
@@ -64,7 +67,8 @@ func main() {
 		logger.Fatal("failed to init jwt service", zap.Error(err))
 	}
 
-	authSvc := auth.NewAuthService(userRepo, jwtSvc)
+	notifSvc := auth.NewLogNotification(logger)
+	authSvc := auth.NewAuthService(userRepo, jwtSvc, rdb, notifSvc)
 	authHandler := auth.NewAuthHandler(authSvc, rdb)
 
 	mq, err := queue.NewConnection(cfg.RabbitMQURL)

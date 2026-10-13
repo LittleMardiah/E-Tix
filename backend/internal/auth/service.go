@@ -2,13 +2,22 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
+	"math/big"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	goredis "github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
 )
 
 const (
@@ -49,10 +58,12 @@ func (e *ValidationError) Error() string {
 type AuthService struct {
 	repo UserRepository
 	jwt  *JWTService
+	rdb  *redis.Client
+	otp  OTPNotification
 }
 
-func NewAuthService(repo UserRepository, jwt *JWTService) *AuthService {
-	return &AuthService{repo: repo, jwt: jwt}
+func NewAuthService(repo UserRepository, jwt *JWTService, rdb *redis.Client, otp OTPNotification) *AuthService {
+	return &AuthService{repo: repo, jwt: jwt, rdb: rdb, otp: otp}
 }
 
 func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*RegisterResponse, error) {
@@ -230,4 +241,108 @@ func computeTier(baseScore, totalPurchases int) string {
 	default:
 		return "TIER_3"
 	}
+}
+
+const (
+	OTPCodeLength = 6
+	OTPTTL        = 5 * time.Minute
+
+	otpKeyPrefix = "otp:"
+)
+
+var (
+	ErrOTPExpired = errors.New("auth: otp expired or not found")
+	ErrOTPInvalid = errors.New("auth: invalid otp code")
+)
+
+func otpKey(userID uuid.UUID) string {
+	return otpKeyPrefix + userID.String()
+}
+
+func generateOTPCode() (string, error) {
+	codeSpace := int64(1)
+	for i := 0; i < OTPCodeLength; i++ {
+		codeSpace *= 10
+	}
+
+	n, err := rand.Int(rand.Reader, big.NewInt(codeSpace))
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%0*d", OTPCodeLength, n.Int64()), nil
+}
+
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// GenerateOTP creates a 6-digit OTP, stores it in Redis with a 5 minute TTL,
+// and attempts to notify the user. A notification failure is logged but does
+// not fail OTP generation. The code is returned for dev/testing.
+func (s *AuthService) GenerateOTP(ctx context.Context, userID uuid.UUID, email string) (string, error) {
+	if s.rdb == nil {
+		return "", errors.New("auth: redis client is not configured")
+	}
+
+	code, err := generateOTPCode()
+	if err != nil {
+		return "", fmt.Errorf("auth: generate otp code: %w", err)
+	}
+
+	if err := s.rdb.Set(ctx, otpKey(userID), code, OTPTTL).Err(); err != nil {
+		return "", fmt.Errorf("auth: store otp: %w", err)
+	}
+
+	if s.otp != nil {
+		if err := s.otp.SendOTP(ctx, userID, email, code); err != nil {
+			zap.L().Warn("failed to send otp notification",
+				zap.String("user_id", userID.String()),
+				zap.Error(err),
+			)
+		}
+	}
+
+	return code, nil
+}
+
+// VerifyOTP validates a user-supplied OTP against the value stored in Redis.
+// On success the code is deleted so it cannot be reused.
+func (s *AuthService) VerifyOTP(ctx context.Context, userID uuid.UUID, code string) error {
+	if len(code) != OTPCodeLength || !isNumeric(code) {
+		return ErrOTPInvalid
+	}
+
+	if s.rdb == nil {
+		return errors.New("auth: redis client is not configured")
+	}
+
+	stored, err := s.rdb.GetString(ctx, otpKey(userID))
+	if errors.Is(err, goredis.Nil) {
+		return ErrOTPExpired
+	}
+	if err != nil {
+		return fmt.Errorf("auth: get otp: %w", err)
+	}
+	if stored == "" {
+		return ErrOTPExpired
+	}
+
+	if subtle.ConstantTimeCompare([]byte(stored), []byte(code)) != 1 {
+		return ErrOTPInvalid
+	}
+
+	if err := s.rdb.Del(ctx, otpKey(userID)).Err(); err != nil {
+		return fmt.Errorf("auth: delete otp: %w", err)
+	}
+
+	return nil
 }
