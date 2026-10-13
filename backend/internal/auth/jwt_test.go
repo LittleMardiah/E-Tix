@@ -1,6 +1,12 @@
 package auth
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,12 +22,41 @@ const (
 	testIssuer      = "etix-test"
 )
 
+func generateTestRSAKey(t *testing.T) *rsa.PrivateKey {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	return key
+}
+
+func writeTestKeys(t *testing.T) (string, string) {
+	t.Helper()
+	key := generateTestRSAKey(t)
+	dir := t.TempDir()
+
+	privDER, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+	privPath := filepath.Join(dir, "jwt_private.pem")
+	privFile, err := os.Create(privPath)
+	require.NoError(t, err)
+	require.NoError(t, pem.Encode(privFile, &pem.Block{Type: "PRIVATE KEY", Bytes: privDER}))
+	require.NoError(t, privFile.Close())
+
+	pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	require.NoError(t, err)
+	pubPath := filepath.Join(dir, "jwt_public.pem")
+	pubFile, err := os.Create(pubPath)
+	require.NoError(t, err)
+	require.NoError(t, pem.Encode(pubFile, &pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}))
+	require.NoError(t, pubFile.Close())
+
+	return privPath, pubPath
+}
+
 func newTestJWTService(t *testing.T) *JWTService {
 	t.Helper()
-	svc, err := NewJWTService(testPrivKeyPath, testPubKeyPath, testIssuer)
-	require.NoError(t, err)
-	require.NotNil(t, svc)
-	return svc
+	key := generateTestRSAKey(t)
+	return &JWTService{priv: key, pub: &key.PublicKey, issuer: testIssuer}
 }
 
 func newTestUser() *User {
@@ -33,7 +68,8 @@ func newTestUser() *User {
 }
 
 func TestNewJWTService_ValidKeys(t *testing.T) {
-	svc, err := NewJWTService(testPrivKeyPath, testPubKeyPath, testIssuer)
+	privPath, pubPath := writeTestKeys(t)
+	svc, err := NewJWTService(privPath, pubPath, testIssuer)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	assert.NotEmpty(t, svc.issuer)

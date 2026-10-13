@@ -108,7 +108,7 @@ func TestVerifyOTP_Success(t *testing.T) {
 	svc, mr := newTestAuthService(t)
 	uid := uuid.New()
 	const code = "123456"
-	mr.Set(otpKey(uid), code)
+	require.NoError(t, mr.Set(otpKey(uid), code))
 
 	require.NoError(t, svc.VerifyOTP(context.Background(), uid, code))
 	assert.False(t, mr.Exists(otpKey(uid)))
@@ -126,7 +126,7 @@ func TestVerifyOTP_Expired(t *testing.T) {
 func TestVerifyOTP_InvalidCode(t *testing.T) {
 	svc, mr := newTestAuthService(t)
 	uid := uuid.New()
-	mr.Set(otpKey(uid), "123456")
+	require.NoError(t, mr.Set(otpKey(uid), "123456"))
 
 	err := svc.VerifyOTP(context.Background(), uid, "654321")
 	require.Error(t, err)
