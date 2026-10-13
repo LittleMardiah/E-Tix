@@ -4,12 +4,24 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/config"
+	"github.com/LittleMardiah/E-Tix/backend/internal/middleware"
 )
+
+func parseOrigins(csv string) []string {
+	origins := make([]string, 0)
+	for _, part := range strings.Split(csv, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	return origins
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -30,7 +42,10 @@ func main() {
 		port = "8080"
 	}
 
-	router := gin.Default()
+	router := gin.New()
+	router.Use(middleware.RecoveryMiddleware(logger))
+	router.Use(middleware.LoggerMiddleware(logger))
+	router.Use(middleware.CORSMiddleware(parseOrigins(cfg.CORSOrigins)))
 
 	router.GET("/healthz/liveness", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})
