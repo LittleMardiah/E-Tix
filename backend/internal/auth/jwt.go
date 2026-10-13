@@ -179,7 +179,6 @@ func (s *JWTService) parse(tokenString, expectedType string) (*JWTClaims, error)
 	return claims, nil
 }
 
-
 func NewJWTServiceWithKeys(privateKey *rsa.PrivateKey, publicKey *rsa.PublicKey, issuer string) *JWTService {
 	if issuer == "" {
 		issuer = "e-tix"
@@ -189,7 +188,6 @@ func NewJWTServiceWithKeys(privateKey *rsa.PrivateKey, publicKey *rsa.PublicKey,
 	}
 	return &JWTService{priv: privateKey, pub: publicKey, issuer: issuer}
 }
-
 
 func (s *JWTService) ValidateRefreshToken(tokenString string) (*JWTClaims, error) {
 	return s.parse(tokenString, "refresh")
