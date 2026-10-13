@@ -209,7 +209,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*LoginRespo
 		return nil, ErrForbidden
 	}
 
-	tier := computeTier(user.BaseScore, user.TotalPurchases)
+	tier, _ := ComputeLoyaltyTier(user.BaseScore, user.TotalPurchases)
 
 	accessToken, err := s.jwt.GenerateAccessToken(user, tier)
 	if err != nil {
@@ -271,7 +271,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*R
 		return nil, fmt.Errorf("auth: blacklist old refresh token: %w", err)
 	}
 
-	tier := computeTier(user.BaseScore, user.TotalPurchases)
+	tier, _ := ComputeLoyaltyTier(user.BaseScore, user.TotalPurchases)
 
 	accessToken, err := s.jwt.GenerateAccessToken(user, tier)
 	if err != nil {
@@ -310,16 +310,50 @@ func (s *AuthService) Logout(ctx context.Context, accessToken string, refreshTok
 	return nil
 }
 
-func computeTier(baseScore, totalPurchases int) string {
-	score := baseScore + totalPurchases*10
+func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*UserMeResponse, error) {
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, ErrInvalidCredentials
+		}
+		return nil, fmt.Errorf("auth: get user by id: %w", err)
+	}
+
+	if user.Status != "ACTIVE" {
+		return nil, ErrForbidden
+	}
+
+	tier, score := ComputeLoyaltyTier(user.BaseScore, user.TotalPurchases)
+
+	return &UserMeResponse{
+		UserID:          user.ID.String(),
+		Email:           user.Email,
+		Phone:           user.Phone,
+		Name:            user.Name,
+		Role:            user.Role,
+		Status:          user.Status,
+		BaseScore:       user.BaseScore,
+		TotalPurchases:  user.TotalPurchases,
+		LoyaltyTier:     tier,
+		LoyaltyScore:    score,
+		FirstPurchaseAt: user.FirstPurchaseAt,
+		LastPurchaseAt:  user.LastPurchaseAt,
+		ProfilePhotoURL: user.ProfilePhotoURL,
+		CreatedAt:       user.CreatedAt,
+	}, nil
+}
+
+func ComputeLoyaltyTier(baseScore, totalPurchases int) (tier string, score int) {
+	score = baseScore + totalPurchases*10
 	switch {
 	case score >= 90:
-		return "TIER_1"
+		tier = "TIER_1"
 	case score >= 70:
-		return "TIER_2"
+		tier = "TIER_2"
 	default:
-		return "TIER_3"
+		tier = "TIER_3"
 	}
+	return tier, score
 }
 
 const (

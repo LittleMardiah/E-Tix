@@ -207,3 +207,84 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		},
 	})
 }
+
+func (h *AuthHandler) GetMe(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, errorResponse("UNAUTHORIZED", "missing authentication context"))
+		return
+	}
+
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, errorResponse("UNAUTHORIZED", "invalid user id"))
+		return
+	}
+
+	resp, err := h.svc.GetMe(c.Request.Context(), uid)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidCredentials):
+			c.JSON(http.StatusNotFound, errorResponse("NOT_FOUND", "user not found"))
+		case errors.Is(err, ErrForbidden):
+			c.JSON(http.StatusForbidden, errorResponse("FORBIDDEN", "account is not active"))
+		default:
+			c.JSON(http.StatusInternalServerError, errorResponse("INTERNAL_ERROR", "internal server error"))
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    resp,
+		"error":   nil,
+		"meta": gin.H{
+			"timestamp":  time.Now().UTC().Format(time.RFC3339Nano),
+			"request_id": uuid.NewString(),
+		},
+	})
+}
+
+func (h *AuthHandler) VerifyOTP(c *gin.Context) {
+	var req VerifyOTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse("INVALID_REQUEST", "invalid request body"))
+		return
+	}
+
+	if req.UserID != c.GetString("user_id") {
+		c.JSON(http.StatusForbidden, errorResponse("FORBIDDEN", "user id mismatch"))
+		return
+	}
+
+	uid, err := uuid.Parse(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse("INVALID_REQUEST", "invalid user id"))
+		return
+	}
+
+	if err := h.svc.VerifyOTP(c.Request.Context(), uid, req.Code); err != nil {
+		switch {
+		case errors.Is(err, ErrOTPExpired):
+			c.JSON(http.StatusBadRequest, errorResponse("INVALID_REQUEST", "otp expired or not found"))
+		case errors.Is(err, ErrOTPInvalid):
+			c.JSON(http.StatusUnauthorized, errorResponse("UNAUTHORIZED", "invalid otp code"))
+		default:
+			c.JSON(http.StatusInternalServerError, errorResponse("INTERNAL_ERROR", "internal server error"))
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"email_verified":    true,
+			"email_verified_at": time.Now().UTC().Format(time.RFC3339),
+		},
+		"error": nil,
+		"meta": gin.H{
+			"timestamp":  time.Now().UTC().Format(time.RFC3339Nano),
+			"request_id": uuid.NewString(),
+		},
+	})
+}

@@ -88,9 +88,13 @@ func main() {
 	router.Use(middleware.LoggerMiddleware(logger))
 	router.Use(middleware.CORSMiddleware(parseOrigins(cfg.CORSOrigins), logger))
 
-	router.POST("/auth/register", authHandler.Register)
-	router.POST("/auth/login", authHandler.Login)
-	router.POST("/auth/refresh-token", authHandler.RefreshToken)
+	router.POST("/auth/register", auth.RateLimitMiddleware(rdb, 10, time.Hour), authHandler.Register)
+	router.POST("/auth/login", auth.RateLimitMiddleware(rdb, 5, time.Minute), authHandler.Login)
+	router.POST("/auth/refresh-token", auth.RateLimitMiddleware(rdb, 10, 15*time.Minute), authHandler.RefreshToken)
+
+	router.POST("/auth/verify-otp", auth.AuthMiddleware(jwtSvc, blacklistSvc), auth.RateLimitMiddleware(rdb, 5, 15*time.Minute), authHandler.VerifyOTP)
+	router.POST("/auth/logout", auth.AuthMiddleware(jwtSvc, blacklistSvc), authHandler.Logout)
+	router.GET("/users/me", auth.AuthMiddleware(jwtSvc, blacklistSvc), authHandler.GetMe)
 
 	router.GET("/healthz/liveness", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})
