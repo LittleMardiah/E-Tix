@@ -54,13 +54,13 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to init redis client", zap.Error(err))
 	}
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	mq, err := queue.NewConnection(cfg.RabbitMQURL)
 	if err != nil {
 		logger.Fatal("failed to init rabbitmq connection", zap.Error(err))
 	}
-	defer mq.Close()
+	defer func() { _ = mq.Close() }()
 
 	port := os.Getenv("PORT")
 	if port == "" {

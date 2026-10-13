@@ -31,7 +31,7 @@ func (c *Connection) DeclareQueue(name string, durable bool) error {
 	if err != nil {
 		return err
 	}
-	defer ch.Close()
+	defer func() { _ = ch.Close() }()
 
 	_, err = ch.QueueDeclare(name, durable, false, false, false, nil)
 	return err
@@ -42,7 +42,7 @@ func (c *Connection) Publish(ctx context.Context, queueName string, body []byte)
 	if err != nil {
 		return err
 	}
-	defer ch.Close()
+	defer func() { _ = ch.Close() }()
 
 	return ch.PublishWithContext(ctx, "", queueName, false, false, amqp.Publishing{
 		ContentType: "application/json",
