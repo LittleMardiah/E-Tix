@@ -1,0 +1,52 @@
+# Docker Compose - E-Tix Flash (FASE 0, E2-S1-T8)
+# Local dev dependencies: PostgreSQL, Redis, RabbitMQ.
+# Semua port host di-offset karena port default (5432, 6379, 5672, 15672)
+# sudah dipakai project lain milik user.
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: etix-postgres
+    environment:
+      POSTGRES_DB: etix_flash_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      # host 15433 -> container 5432. Offset dari default 5432 (bentrok project lain).
+      - "15433:5432"
+    volumes:
+      - etix-pgdata:/var/lib/postgresql/data
+    networks:
+      - etix-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: etix-redis
+    ports:
+      # host 16379 -> container 6379. Offset dari default 6379 (bentrok project lain).
+      - "16379:6379"
+    volumes:
+      - etix-redisdata:/data
+    networks:
+      - etix-net
+
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: etix-rabbitmq
+    ports:
+      # host 5673 -> container 5672 (AMQP). Offset dari default 5672 (bentrok project lain).
+      - "5673:5672"
+      # host 15673 -> container 15672 (management UI). Offset dari default 15672 (bentrok project lain).
+      - "15673:15672"
+    volumes:
+      - etix-rabbitmqdata:/var/lib/rabbitmq
+    networks:
+      - etix-net
+
+volumes:
+  etix-pgdata:
+  etix-redisdata:
+  etix-rabbitmqdata:
+
+networks:
+  etix-net:
