@@ -71,3 +71,8 @@ temp/
 
 # AI prompt files
 /prompt_*.txt
+
+# Sensitive documents — never commit (case-insensitive match)
+docs/*[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]*
+docs/*[Ss][Ee][Cc][Rr][Ee][Tt]*
+docs/*[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]*
