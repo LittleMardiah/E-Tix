@@ -578,3 +578,356 @@ CREATE POLICY "Anyone can read config" ON system_config
 
 CREATE POLICY "Admins can update config" ON system_config
   FOR UPDATE USING ((auth.jwt() ->> 'role') = 'admin');
+
+-- ============================================================================
+-- TRIGGERS (7 active — slot #2 REMOVED, handled by MQ)
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION check_booking_payment_complete()
+RETURNS TRIGGER AS $$
+DECLARE
+  booking_record bookings%ROWTYPE;
+  seat_pos INTEGER;
+  obligation_record payment_obligations%ROWTYPE;
+BEGIN
+  IF NEW.status = 'PAID' THEN
+    SELECT * INTO booking_record FROM bookings WHERE id = NEW.booking_id FOR UPDATE;
+    
+    IF booking_record.payment_status = 'PENDING' THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM payment_obligations 
+        WHERE booking_id = NEW.booking_id 
+        AND status != 'PAID'
+      ) THEN
+        UPDATE bookings 
+        SET payment_status = 'PAID', updated_at = NOW()
+        WHERE id = NEW.booking_id;
+        
+        IF booking_record.payment_mode = 'BULK' THEN
+          FOR seat_pos IN SELECT jsonb_array_elements_text(booking_record.seat_positions)::integer
+          LOOP
+            INSERT INTO tickets (
+              booking_id,
+              payment_obligation_id,
+              owner_user_id,
+              section_id,
+              seat_position,
+              qr_secret_key,
+              fallback_pin,
+              status,
+              is_assigned
+            ) VALUES (
+              booking_record.id,
+              NEW.id,
+              booking_record.leader_user_id,
+              booking_record.section_id,
+              seat_pos,
+              gen_random_uuid()::text,
+              UPPER(SUBSTRING(REPLACE(gen_random_uuid()::text, '-', ''), 1, 12)),
+              'CONFIRMED',
+              FALSE
+            );
+          END LOOP;
+          
+        ELSE
+          -- SPLIT mode: validate seat_position is NOT NULL
+          FOR obligation_record IN 
+            SELECT * FROM payment_obligations 
+            WHERE booking_id = NEW.booking_id 
+            AND status = 'PAID'
+          LOOP
+            IF obligation_record.seat_position IS NULL THEN
+              RAISE EXCEPTION 'seat_position cannot be NULL for SPLIT mode payment obligation %', obligation_record.id;
+            END IF;
+            
+            INSERT INTO tickets (
+              booking_id,
+              payment_obligation_id,
+              owner_user_id,
+              section_id,
+              seat_position,
+              qr_secret_key,
+              fallback_pin,
+              status,
+              is_assigned
+            ) VALUES (
+              booking_record.id,
+              obligation_record.id,
+              obligation_record.user_id,
+              booking_record.section_id,
+              obligation_record.seat_position,
+              gen_random_uuid()::text,
+              UPPER(SUBSTRING(REPLACE(gen_random_uuid()::text, '-', ''), 1, 12)),
+              'CONFIRMED',
+              TRUE
+            );
+          END LOOP;
+        END IF;
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_check_booking_payment ON payment_obligations;
+CREATE TRIGGER trigger_check_booking_payment
+AFTER UPDATE OF status ON payment_obligations
+FOR EACH ROW
+EXECUTE FUNCTION check_booking_payment_complete();
+
+CREATE OR REPLACE FUNCTION update_user_loyalty_score()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.status = 'CONFIRMED' THEN
+    UPDATE users 
+    SET 
+      total_purchases = total_purchases + 1,
+      last_purchase_at = NOW(),
+      updated_at = NOW()
+    WHERE id = NEW.owner_user_id;
+    
+    UPDATE users 
+    SET first_purchase_at = COALESCE(first_purchase_at, NOW())
+    WHERE id = NEW.owner_user_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_update_loyalty_score ON tickets;
+CREATE TRIGGER trigger_update_loyalty_score
+AFTER INSERT ON tickets
+FOR EACH ROW
+EXECUTE FUNCTION update_user_loyalty_score();
+
+CREATE OR REPLACE FUNCTION generate_post_event_report()
+RETURNS TRIGGER AS $$
+DECLARE
+  report_data JSONB;
+  gate_utilization JSONB;
+BEGIN
+  IF NEW.status = 'COMPLETED' THEN
+    WITH gate_stats AS (
+      SELECT 
+        ts.gate_id,
+        COUNT(*) as total_scans,
+        SUM(CASE WHEN ts.scan_status = 'VALID' THEN 1 ELSE 0 END) as valid_scans
+      FROM ticket_scans ts
+      JOIN tickets t ON t.id = ts.ticket_id
+      JOIN bookings b ON b.id = t.booking_id
+      WHERE b.event_id = NEW.id
+      GROUP BY ts.gate_id
+    ),
+    gate_agg AS (
+      SELECT jsonb_object_agg(
+        gate_id, 
+        jsonb_build_object('total', total_scans, 'valid', valid_scans)
+      ) as gate_utilization
+      FROM gate_stats
+    ),
+    ticket_stats AS (
+      SELECT 
+        COUNT(*) as total_tickets,
+        SUM(CASE WHEN status = 'USED' THEN 1 ELSE 0 END) as used_tickets,
+        SUM(CASE WHEN status = 'CONFIRMED' THEN 1 ELSE 0 END) as unused_tickets
+      FROM tickets t
+      JOIN bookings b ON b.id = t.booking_id
+      WHERE b.event_id = NEW.id
+    ),
+    loyal_fans AS (
+      SELECT COUNT(DISTINCT u.id) as loyal_customers
+      FROM users u
+      JOIN tickets t ON t.owner_user_id = u.id
+      JOIN bookings b ON b.id = t.booking_id
+      WHERE b.event_id = NEW.id
+      AND u.total_purchases > 1
+    )
+    SELECT 
+      jsonb_build_object(
+        'event_id', NEW.id,
+        'event_name', NEW.name,
+        'total_tickets', (SELECT total_tickets FROM ticket_stats),
+        'used_tickets', (SELECT used_tickets FROM ticket_stats),
+        'unused_tickets', (SELECT unused_tickets FROM ticket_stats),
+        'no_show_rate', 
+          CASE 
+            WHEN (SELECT total_tickets FROM ticket_stats) > 0 
+            THEN ROUND(((SELECT unused_tickets FROM ticket_stats)::NUMERIC / (SELECT total_tickets FROM ticket_stats)::NUMERIC) * 100, 2)
+            ELSE 0
+          END,
+        'total_scans', COALESCE((SELECT SUM(total_scans) FROM gate_stats), 0),
+        'valid_scans', COALESCE((SELECT SUM(valid_scans) FROM gate_stats), 0),
+        'gate_utilization', COALESCE((SELECT gate_utilization FROM gate_agg), '{}'::jsonb),
+        'loyal_customers', (SELECT loyal_customers FROM loyal_fans),
+        'generated_at', NOW()
+      ) INTO report_data;
+    
+    INSERT INTO insights (
+      event_id,
+      insight_type,
+      title,
+      description,
+      recommendation
+    ) VALUES (
+      NEW.id,
+      'PEAK_TIME',
+      'Post-Event Report - ' || NEW.name,
+      'Auto-generated report after event completion',
+      report_data
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_generate_post_event_report ON events;
+CREATE TRIGGER trigger_generate_post_event_report
+AFTER UPDATE OF status ON events
+FOR EACH ROW
+WHEN (NEW.status = 'COMPLETED' AND OLD.status != 'COMPLETED')
+EXECUTE FUNCTION generate_post_event_report();
+
+CREATE OR REPLACE FUNCTION handle_resale_lifecycle()
+RETURNS TRIGGER AS $$
+DECLARE
+  old_ticket_record tickets%ROWTYPE;
+  new_ticket_id UUID;
+BEGIN
+  -- CASE 1: New resale listing (INSERT)
+  IF TG_OP = 'INSERT' THEN
+    UPDATE tickets 
+    SET status = 'RESALE_PENDING', updated_at = NOW()
+    WHERE id = NEW.ticket_id;
+    
+    RETURN NEW;
+  END IF;
+  
+  -- CASE 2: Resale completed (UPDATE to COMPLETED)
+  IF TG_OP = 'UPDATE' AND NEW.status = 'COMPLETED' AND OLD.status != 'COMPLETED' THEN
+    -- Get current ticket details
+    SELECT * INTO old_ticket_record FROM tickets WHERE id = NEW.ticket_id;
+    
+    -- Step 1: Mark old ticket as RESOLD (audit trail)
+    UPDATE tickets 
+    SET 
+      status = 'RESOLD',
+      original_owner_user_id = OLD.seller_user_id,
+      resale_transaction_id = NEW.id,
+      updated_at = NOW()
+    WHERE id = NEW.ticket_id;
+    
+    -- Step 2: Create new ticket for buyer
+    INSERT INTO tickets (
+      booking_id,
+      payment_obligation_id,
+      owner_user_id,
+      section_id,
+      seat_position,
+      status,
+      is_assigned,
+      qr_secret_key,
+      fallback_pin,
+      original_owner_user_id,
+      resale_transaction_id,
+      created_at
+    ) VALUES (
+      old_ticket_record.booking_id,
+      old_ticket_record.payment_obligation_id,
+      NEW.buyer_user_id,
+      old_ticket_record.section_id,
+      old_ticket_record.seat_position,
+      'CONFIRMED',
+      TRUE,
+      gen_random_uuid()::text,
+      UPPER(SUBSTRING(REPLACE(gen_random_uuid()::text, '-', ''), 1, 12)),
+      OLD.seller_user_id,
+      NEW.id,
+      NOW()
+    ) RETURNING id INTO new_ticket_id;
+    
+    RETURN NEW;
+  END IF;
+  
+  -- CASE 3: Resale cancelled (UPDATE to CANCELLED)
+  IF TG_OP = 'UPDATE' AND NEW.status = 'CANCELLED' AND OLD.status != 'CANCELLED' THEN
+    -- Return ticket to CONFIRMED status (owner remains seller)
+    UPDATE tickets 
+    SET 
+      status = 'CONFIRMED',
+      resale_transaction_id = NULL,
+      updated_at = NOW()
+    WHERE id = NEW.ticket_id;
+    
+    RETURN NEW;
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_handle_resale_lifecycle ON resale_transactions;
+CREATE TRIGGER trigger_handle_resale_lifecycle
+AFTER INSERT OR UPDATE OF status ON resale_transactions
+FOR EACH ROW
+EXECUTE FUNCTION handle_resale_lifecycle();
+
+CREATE OR REPLACE FUNCTION update_ticket_status_on_scan()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.scan_status = 'VALID' THEN
+    UPDATE tickets 
+    SET status = 'USED', updated_at = NOW()
+    WHERE id = NEW.ticket_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_update_ticket_status_on_scan ON ticket_scans;
+CREATE TRIGGER trigger_update_ticket_status_on_scan
+AFTER INSERT ON ticket_scans
+FOR EACH ROW
+EXECUTE FUNCTION update_ticket_status_on_scan();
+
+CREATE OR REPLACE FUNCTION handle_ticket_cancellation_on_refund()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.status IN ('REFUNDED', 'FAILED') AND OLD.status NOT IN ('REFUNDED', 'FAILED') THEN
+    UPDATE tickets 
+    SET status = 'CANCELLED', updated_at = NOW()
+    WHERE payment_obligation_id = NEW.id
+    AND status NOT IN ('CANCELLED', 'USED', 'RESOLD');
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_handle_ticket_cancellation ON payment_obligations;
+CREATE TRIGGER trigger_handle_ticket_cancellation
+AFTER UPDATE OF status ON payment_obligations
+FOR EACH ROW
+EXECUTE FUNCTION handle_ticket_cancellation_on_refund();
+
+CREATE OR REPLACE FUNCTION handle_booking_cancellation()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.payment_status = 'CANCELLED' AND OLD.payment_status != 'CANCELLED' THEN
+    UPDATE tickets 
+    SET status = 'CANCELLED', updated_at = NOW()
+    WHERE booking_id = NEW.id
+    AND status NOT IN ('CANCELLED', 'USED', 'RESOLD');
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_handle_booking_cancellation ON bookings;
+CREATE TRIGGER trigger_handle_booking_cancellation
+AFTER UPDATE OF payment_status ON bookings
+FOR EACH ROW
+EXECUTE FUNCTION handle_booking_cancellation();
+
+

@@ -5,6 +5,27 @@
 -- Order:     DROP tables (FK children first) -> DROP types -> DROP extension
 -- ============================================================================
 
+
+-- ============================================================================
+-- TRIGGERS (DOWN) - drop triggers then functions (before DROP TABLE)
+-- ============================================================================
+
+DROP TRIGGER IF EXISTS trigger_check_booking_payment ON payment_obligations;
+DROP TRIGGER IF EXISTS trigger_update_loyalty_score ON tickets;
+DROP TRIGGER IF EXISTS trigger_generate_post_event_report ON events;
+DROP TRIGGER IF EXISTS trigger_handle_resale_lifecycle ON resale_transactions;
+DROP TRIGGER IF EXISTS trigger_update_ticket_status_on_scan ON ticket_scans;
+DROP TRIGGER IF EXISTS trigger_handle_ticket_cancellation ON payment_obligations;
+DROP TRIGGER IF EXISTS trigger_handle_booking_cancellation ON bookings;
+
+DROP FUNCTION IF EXISTS check_booking_payment_complete() CASCADE;
+DROP FUNCTION IF EXISTS update_user_loyalty_score() CASCADE;
+DROP FUNCTION IF EXISTS generate_post_event_report() CASCADE;
+DROP FUNCTION IF EXISTS handle_resale_lifecycle() CASCADE;
+DROP FUNCTION IF EXISTS update_ticket_status_on_scan() CASCADE;
+DROP FUNCTION IF EXISTS handle_ticket_cancellation_on_refund() CASCADE;
+DROP FUNCTION IF EXISTS handle_booking_cancellation() CASCADE;
+
 DROP TABLE IF EXISTS blacklist CASCADE;
 DROP TABLE IF EXISTS ticket_scans CASCADE;
 DROP TABLE IF EXISTS resale_transactions CASCADE;
