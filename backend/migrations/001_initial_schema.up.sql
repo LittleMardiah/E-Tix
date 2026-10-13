@@ -395,3 +395,186 @@ CREATE TABLE IF NOT EXISTS system_config (
 -- ============================================================================
 -- END OF MIGRATION 001 (UP)
 -- ============================================================================
+
+
+-- Local dev auth shim: Supabase-compatible stubs for auth.uid()/auth.jwt().
+-- Guarded with IF NOT EXISTS to avoid overwriting Supabase's auth schema.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'auth') THEN
+    CREATE SCHEMA auth;
+    CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $func$
+      SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
+    $func$ LANGUAGE SQL STABLE;
+    CREATE OR REPLACE FUNCTION auth.jwt() RETURNS JSONB AS $func$
+      SELECT COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb);
+    $func$ LANGUAGE SQL STABLE;
+  END IF;
+END $$;
+
+-- RLS POLICIES (from DATABASE_SCHEMA v2.9)
+-- 1. USERS
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own data" ON users
+  FOR SELECT USING (id = auth.uid() OR (auth.jwt() ->> 'role') IN ('admin', 'event_organizer'));
+
+CREATE POLICY "Users can update own data" ON users
+  FOR UPDATE USING (id = auth.uid());
+
+CREATE POLICY "Admins can manage all users" ON users
+  FOR ALL USING ((auth.jwt() ->> 'role') = 'admin');
+
+-- 2. EVENTS
+ALTER TABLE events ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Anyone can view published events" ON events
+  FOR SELECT USING (status IN ('PUBLISHED', 'ON_SALE', 'SOLD_OUT', 'COMPLETED'));
+
+CREATE POLICY "Organizers can manage own events" ON events
+  FOR ALL USING (organizer_id = auth.uid());
+
+CREATE POLICY "Admins can manage all events" ON events
+  FOR ALL USING ((auth.jwt() ->> 'role') = 'admin');
+
+-- 3. SECTIONS
+ALTER TABLE sections ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Anyone can view sections of published events" ON sections
+  FOR SELECT USING (
+    EXISTS (SELECT 1 FROM events WHERE id = event_id AND status IN ('PUBLISHED', 'ON_SALE', 'SOLD_OUT'))
+  );
+
+CREATE POLICY "Organizers can manage sections" ON sections
+  FOR ALL USING (
+    EXISTS (SELECT 1 FROM events WHERE id = event_id AND organizer_id = auth.uid())
+  );
+
+CREATE POLICY "Admins can manage all sections" ON sections
+  FOR ALL USING ((auth.jwt() ->> 'role') = 'admin');
+
+-- 4. BOOKINGS
+ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own bookings" ON bookings
+  FOR SELECT USING (leader_user_id = auth.uid());
+
+CREATE POLICY "Users can insert bookings" ON bookings
+  FOR INSERT WITH CHECK (leader_user_id = auth.uid());
+
+CREATE POLICY "Users can update own bookings" ON bookings
+  FOR UPDATE USING (leader_user_id = auth.uid());
+
+CREATE POLICY "Admins can view all bookings" ON bookings
+  FOR SELECT USING ((auth.jwt() ->> 'role') IN ('admin', 'event_organizer'));
+
+-- 5. PAYMENT_OBLIGATIONS
+ALTER TABLE payment_obligations ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own obligations" ON payment_obligations
+  FOR SELECT USING (user_id = auth.uid());
+
+CREATE POLICY "Users can update own obligations (payment)" ON payment_obligations
+  FOR UPDATE USING (user_id = auth.uid() AND status = 'PENDING');
+
+CREATE POLICY "Admins can view all obligations" ON payment_obligations
+  FOR SELECT USING ((auth.jwt() ->> 'role') IN ('admin', 'event_organizer'));
+
+-- 6. TICKETS
+ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own tickets" ON tickets
+  FOR SELECT USING (owner_user_id = auth.uid());
+
+CREATE POLICY "Users can update fallback PIN usage" ON tickets
+  FOR UPDATE
+  USING (owner_user_id = auth.uid() AND status = 'CONFIRMED')
+  WITH CHECK (owner_user_id = auth.uid());
+
+CREATE POLICY "Gate staff can view tickets for scanning" ON tickets
+  FOR SELECT USING ((auth.jwt() ->> 'role') = 'gate_staff');
+
+CREATE POLICY "Admins can view all tickets" ON tickets
+  FOR SELECT USING ((auth.jwt() ->> 'role') IN ('admin', 'event_organizer'));
+
+-- 7. TICKET_SCANS
+ALTER TABLE ticket_scans ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Staff, EO, and Admins can view scans" ON ticket_scans
+  FOR SELECT USING (
+    (auth.jwt() ->> 'role') IN ('admin', 'event_organizer', 'gate_staff')
+  );
+
+CREATE POLICY "Gate staff can insert scans" ON ticket_scans
+  FOR INSERT WITH CHECK ((auth.jwt() ->> 'role') = 'gate_staff');
+
+-- 8. RESALE_TRANSACTIONS
+ALTER TABLE resale_transactions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own resale transactions" ON resale_transactions
+  FOR SELECT USING (seller_user_id = auth.uid() OR buyer_user_id = auth.uid());
+
+CREATE POLICY "Anyone can view pending resale tickets" ON resale_transactions
+  FOR SELECT USING (status = 'PENDING');
+
+CREATE POLICY "Buyer can complete resale purchase" ON resale_transactions
+  FOR UPDATE
+  USING (
+    (seller_user_id = auth.uid() AND status = 'PENDING') OR
+    ((buyer_user_id IS NULL OR buyer_user_id = auth.uid()) AND status = 'PENDING')
+  )
+  WITH CHECK (
+    status IN ('PENDING', 'COMPLETED', 'CANCELLED')
+  );
+
+CREATE POLICY "Users can insert resale" ON resale_transactions
+  FOR INSERT WITH CHECK (
+    seller_user_id = auth.uid() 
+    AND EXISTS (
+      SELECT 1 FROM tickets 
+      WHERE id = ticket_id 
+      AND owner_user_id = auth.uid() 
+      AND status = 'CONFIRMED'
+    )
+  );
+
+CREATE POLICY "Admins can view all resale" ON resale_transactions
+  FOR SELECT USING ((auth.jwt() ->> 'role') IN ('admin', 'event_organizer'));
+
+-- 9. ADMIN_ACTIONS
+ALTER TABLE admin_actions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Admins can view all actions" ON admin_actions
+  FOR SELECT USING ((auth.jwt() ->> 'role') = 'admin');
+
+CREATE POLICY "Admins can insert actions" ON admin_actions
+  FOR INSERT WITH CHECK ((auth.jwt() ->> 'role') = 'admin');
+
+-- 10. INSIGHTS
+ALTER TABLE insights ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "EO can view insights for own events" ON insights
+  FOR SELECT USING (
+    EXISTS (SELECT 1 FROM events WHERE id = event_id AND organizer_id = auth.uid())
+  );
+
+CREATE POLICY "Admins can view all insights" ON insights
+  FOR SELECT USING ((auth.jwt() ->> 'role') = 'admin');
+
+-- 11. BLACKLIST
+ALTER TABLE blacklist ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Admins can manage blacklist" ON blacklist
+  FOR ALL USING ((auth.jwt() ->> 'role') = 'admin');
+
+CREATE POLICY "System can read blacklist" ON blacklist
+  FOR SELECT USING (TRUE);
+
+-- 12. SYSTEM_CONFIG
+ALTER TABLE system_config ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Anyone can read config" ON system_config
+  FOR SELECT USING (TRUE);
+
+CREATE POLICY "Admins can update config" ON system_config
+  FOR UPDATE USING ((auth.jwt() ->> 'role') = 'admin');
