@@ -1,14 +1,30 @@
 package main
 
 import (
-	"log"
+	"fmt"
 	"net/http"
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+
+	"github.com/LittleMardiah/E-Tix/backend/internal/config"
 )
 
 func main() {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	logger, err := config.NewLogger(cfg.LogLevel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to init logger: %v\n", err)
+		os.Exit(1)
+	}
+	defer logger.Sync()
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -32,8 +48,11 @@ func main() {
 	})
 
 	addr := ":" + port
-	log.Printf("starting server on %s", addr)
+	logger.Info("starting server",
+		zap.String("environment", cfg.Environment),
+		zap.String("addr", addr),
+	)
 	if err := router.Run(addr); err != nil {
-		log.Fatalf("server failed to start: %v", err)
+		logger.Fatal("server failed to start", zap.Error(err))
 	}
 }
