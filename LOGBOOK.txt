@@ -238,3 +238,49 @@ Audit .env.example: 23 keys (DATABASE, REDIS, RABBITMQ, JWT, PAYMENT,
 EMAIL, FRONTEND, LOGGING, CIRCUIT BREAKER, BUSINESS, ENV).
 Semua value <fill_me>. Zero real secret. File tracked by git.
 Task E1-S2-T4 = audit only (file sudah ada dari E1-S1-T1).
+
+
+## FASE 0 — T5 sampai T11 + Hotfix CORS
+
+[2026-10-13 15:31] FASE 0 — T5 sampai T11 + Hotfix CORS — DONE
+
+8 commit (hash + pesan):
+- bbe61ea  feat(fase-0): init Go module backend (E2-S1-T5)
+- ecb2a03  feat(fase-0): scaffold backend folder structure (E2-S1-T6)
+- f7d97da  feat(fase-0): Gin HTTP server + health endpoints (E2-S1-T7)
+- 9dd1a53  feat(fase-0): docker-compose + pgx/v5 connection pool (E2-S2-T8)
+- 3a65e5f  feat(fase-0): zap logger + config loader (E2-S2-T9)
+- 2358c68  feat(fase-0): middleware logger + CORS + recovery + header sanitization (E2-S3-T10)
+- ad2ee25  feat(fase-0): readiness real check DB+Redis+RabbitMQ (E2-S3-T11)
+- 67b4737  fix(fase-0): CORS no panic saat origins kosong (hotfix E2-S3-T10)
+
+Learning checkpoint:
+1. T8 — OpenCode catch pgxpool.Pool.Ping() built-in. Reviewer salah asumsi
+   harus tulis helper ping manual; pgxpool.Pool sudah punya Ping(ctx) sendiri.
+   Dipakai langsung di readiness check (backend/cmd/api/main.go:90,
+   pgPool.Ping(checkCtx)) tanpa helper tambahan.
+2. T10-T11 — CORS panic saat CORS_ORIGINS kosong. gin-contrib/cors panic
+   "all origins disabled" kalau AllowOrigins kosong. Guard no-op dikembalikan
+   lebih dulu saat len(origins)==0
+   (backend/internal/middleware/cors.go:15-20). Hotfix 67b4737 meneruskan
+   logger ke CORSMiddleware supaya warning tercatat.
+
+Workflow deviation:
+- Dev FASE 0-6 pakai LOCAL docker Postgres (host port 15433), Supabase
+  hanya untuk staging/prod. Logged per TEAM CONTRACT v2.6 section 11.5.
+
+Port offset env lokal (dari project lain):
+- Postgres: host 15433 -> container 5432 (default 5432 bentrok).
+- Redis: host 16379 -> container 6379 (default 6379 bentrok).
+- RabbitMQ: host 5673 -> container 5672 (AMQP), host 15673 -> container
+  15672 (management UI). Default 5672/15672 bentrok.
+
+Reference commit per task:
+- T5 init Go module -> bbe61ea
+- T6 folder scaffold -> ecb2a03
+- T7 Gin server + health -> f7d97da
+- T8 docker-compose + pgx pool -> 9dd1a53
+- T9 zap logger + config -> 3a65e5f
+- T10 middleware logger+CORS+recovery -> 2358c68
+- T11 readiness real check -> ad2ee25
+- Hotfix CORS no panic -> 67b4737
