@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -158,4 +159,75 @@ func validatePassword(password string) error {
 	}
 
 	return nil
+}
+
+var (
+	ErrInvalidCredentials = errors.New("auth: invalid credentials")
+	ErrForbidden          = errors.New("auth: forbidden")
+)
+
+const loginExpiresIn = int64(3600)
+
+func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*LoginResponse, error) {
+	if req == nil {
+		return nil, &ValidationError{Field: "body", Message: "request body is required"}
+	}
+
+	if strings.TrimSpace(req.Email) == "" {
+		return nil, &ValidationError{Field: "email", Message: "email is required"}
+	}
+	if req.Password == "" {
+		return nil, &ValidationError{Field: "password", Message: "password is required"}
+	}
+
+	user, err := s.repo.GetUserByEmail(ctx, req.Email)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) || errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrInvalidCredentials
+		}
+		return nil, fmt.Errorf("auth: get user by email: %w", err)
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		return nil, ErrInvalidCredentials
+	}
+
+	if user.Status != "ACTIVE" {
+		return nil, ErrForbidden
+	}
+
+	tier := computeTier(user.BaseScore, user.TotalPurchases)
+
+	accessToken, err := s.jwt.GenerateAccessToken(user, tier)
+	if err != nil {
+		return nil, fmt.Errorf("auth: generate access token: %w", err)
+	}
+
+	refreshToken, err := s.jwt.GenerateRefreshToken(user)
+	if err != nil {
+		return nil, fmt.Errorf("auth: generate refresh token: %w", err)
+	}
+
+	return &LoginResponse{
+		UserID:       user.ID.String(),
+		Email:        user.Email,
+		Name:         user.Name,
+		Role:         user.Role,
+		Tier:         tier,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresIn:    loginExpiresIn,
+	}, nil
+}
+
+func computeTier(baseScore, totalPurchases int) string {
+	score := baseScore + totalPurchases*10
+	switch {
+	case score >= 90:
+		return "TIER_1"
+	case score >= 70:
+		return "TIER_2"
+	default:
+		return "TIER_3"
+	}
 }

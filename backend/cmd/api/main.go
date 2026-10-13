@@ -84,6 +84,7 @@ func main() {
 	router.Use(middleware.CORSMiddleware(parseOrigins(cfg.CORSOrigins), logger))
 
 	router.POST("/auth/register", authHandler.Register)
+	router.POST("/auth/login", authHandler.Login)
 
 	router.GET("/healthz/liveness", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})

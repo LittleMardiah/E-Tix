@@ -113,3 +113,41 @@ func errorResponse(code, message string) gin.H {
 		},
 	}
 }
+
+func (h *AuthHandler) Login(c *gin.Context) {
+	var req LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse("INVALID_REQUEST", "invalid request body"))
+		return
+	}
+
+	resp, err := h.svc.Login(c.Request.Context(), &req)
+	if err != nil {
+		writeLoginError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    resp,
+		"error":   nil,
+		"meta": gin.H{
+			"timestamp":  time.Now().UTC().Format(time.RFC3339Nano),
+			"request_id": uuid.NewString(),
+		},
+	})
+}
+
+func writeLoginError(c *gin.Context, err error) {
+	var validationErr *ValidationError
+	switch {
+	case errors.Is(err, ErrInvalidCredentials):
+		c.JSON(http.StatusUnauthorized, errorResponse("UNAUTHORIZED", "invalid email or password"))
+	case errors.As(err, &validationErr):
+		c.JSON(http.StatusBadRequest, errorResponse("INVALID_REQUEST", validationErr.Error()))
+	case errors.Is(err, ErrForbidden):
+		c.JSON(http.StatusForbidden, errorResponse("FORBIDDEN", "account is not active"))
+	default:
+		c.JSON(http.StatusInternalServerError, errorResponse("INTERNAL_ERROR", "internal server error"))
+	}
+}
