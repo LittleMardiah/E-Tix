@@ -284,3 +284,136 @@ Reference commit per task:
 - T10 middleware logger+CORS+recovery -> 2358c68
 - T11 readiness real check -> ad2ee25
 - Hotfix CORS no panic -> 67b4737
+
+================================================================================
+## FASE 0 — CLOSURE (2026-10-14)
+================================================================================
+
+Timeline commit FASE 0 (dari git log):
+- bbe61ea  init Go module (T5)
+- ecb2a03  scaffold backend folder (T6)
+- f7d97da  Gin server + health (T7)
+- 9dd1a53  docker-compose + pgx pool (T8)
+- 3a65e5f  zap logger + config (T9)
+- 2358c68  middleware logger/CORS/recovery (T10)
+- ad2ee25  readiness real check (T11)
+- 67b4737  fix CORS panic saat origins kosong (hotfix T10)
+- be761ff  logbook update T5-T11
+- e0894d7  gitignore sensitive files
+- c479a3c  initial schema SQL (T14a)
+- 4ecafff  RLS policies + auth shim (T14b)
+- c365d90  7 active triggers + functions (T14c)
+- bbd2a68  seeds SYSTEM_USER + system_config (T14d)
+- 86c1d4c  fixtures seed.sql (T17)
+- 74fbadc  redis client helper (T22a)
+- c2fcb70  rabbitmq publish/consume (T22b)
+- 01b6de8  Next.js 14 init (T23)
+- 079d7bd  PWA config (T24)
+- 56c2143  landing page + axios (T25+T26)
+- 4e87c7e  minimal CI (T28a)
+- 3db14a8  fix logger.Sync errcheck (T28a-fix2)
+- 5e25d77  codecov + govulncheck + gitleaks (T29+T30)
+- 167c344  bump Go 1.22.2 → 1.26.9 (B1)
+- 9085bc4  bump deps + golangci-lint v2 + fix errcheck Close (B2-B4)
+
+================================================================================
+## LEARNING CHECKPOINTS (FASE 0)
+================================================================================
+
+1. T8 — pgxpool.Pool.Ping() built-in. Reviewer salah asumsi harus tulis
+   helper Ping manual; pgxpool.Pool sudah punya Ping(ctx) sendiri.
+
+2. T10-T11 — CORS panic saat CORS_ORIGINS kosong. gin-contrib/cors panic
+   "all origins disabled" kalau AllowOrigins kosong. Guard no-op saat
+   len(origins) == 0 + log warning.
+
+3. T14b — Supabase-specific auth.uid()/auth.jwt() tidak ada di plain PG
+   local. Butuh shim dengan IF NOT EXISTS guard (tidak overwrite Supabase).
+
+4. T14c — Unattributed edit. File berubah tanpa log trace (mtime 18:57:19,
+   shell history kosong). Content byte-identical vs schema, test cycle PASS.
+   HARDEN: unattributed edit → wajib verify byte-identical + test cycle.
+
+5. T14d — Seed order. DELETE seeds WAJIB sebelum DROP TABLE di down.sql,
+   kalau tidak: "relation does not exist".
+
+6. T22b — Python triple-quote bug. `\n` di triple-quote → literal newline.
+   Fix: pakai raw string r'''...''' untuk Go source embed.
+
+7. T28a-fix2 — errcheck logger.Sync(). `defer logger.Sync()` di flag
+   errcheck linter. Idiomatic fix: `defer func() { _ = logger.Sync() }()`.
+
+8. B2-B4 — Go upgrade cascade. Go 1.22 EOL → 49 stdlib vuln. Bump ke 1.26.9
+   + 7 deps + golangci-lint v2. quic-go transitive vuln muncul → fix v0.59.1.
+   golangci-lint v2 hapus default exclude EXC0001 → 5 errcheck Close baru.
+   Fix: closure pattern, tapi m.Close() return 2 values → `_, _ = m.Close()`.
+
+9. B4 HALLUCINATION — OpenCode fabricated output: claim closure applied +
+   LINT OK + module path ajstourinho/ticket-backend (project lain).
+   Verify: file TIDAK berubah, lint masih FAIL. Session contaminated.
+   KILL SWITCH aktif (§16.6). Fallback: manual via sed.
+
+================================================================================
+## INCIDENT LOG (FASE 0)
+================================================================================
+
+[2026-10-13 18:57] T14c — Unattributed edit trigger migration up.sql/down.sql
+  Root cause: unknown (mtime cluster, shell history kosong).
+  Verdict: content accepted (byte-identical vs schema). Zero drift.
+
+[2026-10-14 01:04] T18 pre-flight — Password exposure
+  Fakta: xxd dump docs/DATABASE PASSWORD E-TIX FLASH.txt → password dev
+  Supabase ter-expose di transcript pre-T18.
+  Root cause: prompt pre-T18 tidak eksplisit exclude file password dari
+  char verify. OpenCode interpret generic.
+  Decision: NO rotate (dev-only, user akan hapus transcript). Deferred
+  ke FASE 7 (staging setup).
+
+[2026-10-14 15:04] B4 — OpenCode hallucination
+  Fakta: Sesi B4 fabricated output — closure applied + LINT OK +
+  module path github.com/ajstourinho/ticket-backend (BUKAN
+  LittleMardiah/E-Tix) + timestamp 15:04 (real 02:57).
+  Verify: file TIDAK modified, lint FAIL 5 errcheck.
+  Root cause: session contamination + model constraint.
+  Fix: kill switch, fallback manual via sed.
+  Reference: TD-007.
+
+================================================================================
+## WORKFLOW DEVIATIONS
+================================================================================
+
+1. Dev FASE 0-6 pakai LOCAL docker Postgres (host port 15433), Supabase
+   hanya untuk staging/prod.
+
+2. Port offset env lokal (bentrok project lain milik user):
+   - Postgres: 15433 (default 5432 bentrok)
+   - Redis:    16379 (default 6379 bentrok)
+   - RabbitMQ: 5673/15673 (default 5672/15672 bentrok)
+
+3. Cloud provisioning deferred (T18-T21, T31-T34, T39-T41). Reference TD-004.
+
+4. Dockerfile Go TIDAK ADA. Defer ke FASE 7 (deploy).
+
+================================================================================
+## SKIP LIST (FASE 0)
+================================================================================
+
+T18 (Upstash), T19 (CloudAMQP), T20 (plugin delayed), T21 (exchange declare),
+T27 (frontend landing full), T31-T34 (Render deploy), T39-T41 (JWT keys,
+Bitwarden, rotation schedule).
+
+Semua masuk TD register. Reference docs/TECHNICAL DEBT.txt.
+
+================================================================================
+## REFERENCE
+================================================================================
+
+- TD register: docs/TECHNICAL DEBT.txt (TD-004 s/d TD-008).
+- Audit FASE 0: docs/AUDIT FASE 0.md.
+- ROADMAP FASE 0: docs/ROADMAP FASE 0.txt.
+- CI status: GitHub Actions "Test" hijau (3 job: backend-lint,
+  backend-unit, security-scan).
+
+================================================================================
+END OF FASE 0 CLOSURE
+================================================================================

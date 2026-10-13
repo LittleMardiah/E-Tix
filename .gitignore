@@ -82,3 +82,6 @@ docs/*[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]*
 /backend/etix-api
 /backend/etix-api-test
 /backend/e-tix-flash
+
+# Backup files (manual append safety)
+*.bak-*

@@ -31,7 +31,6 @@ Setiap entry hanya boleh punya satu status dari daftar berikut.
 Salin blok di bawah setiap kali menambah entry baru.
 Isi semua bagian. Jangan biarkan bagian kosong.
 
-```
 ID: TD-00X
 Tanggal: YYYY-MM-DD
 Status: OPEN | IN PROGRESS | FIXED | CLOSED | DEFERRED
@@ -40,14 +39,12 @@ Deskripsi: Gejala yang terlihat dan dampaknya ke pengguna atau sistem.
 Root Cause: Penyebab sebenarnya kenapa hal ini terjadi.
 Rencana Fix: Langkah kerja konkret untuk membereskannya, plus file yang akan disentuh.
 Referensi: File, baris, dokumen, atau issue tempat masalah ini ditemukan.
-```
 
 ## Contoh Entry Terisi
 
 Contoh berikut hanya ilustrasi format, bukan utang teknis yang nyata.
 Jangan dihitung sebagai entry aktif.
 
-```
 ID: TD-000
 Tanggal: YYYY-MM-DD
 Status: OPEN
@@ -56,11 +53,9 @@ Deskripsi: Contoh isi deskripsi masalah.
 Root Cause: Contoh isi akar penyebab.
 Rencana Fix: Contoh langkah perbaikan.
 Referensi: docs/CONTOH.txt
-```
 
 ## Entry Aktif
 
-```
 ID: TD-001
 Tanggal: 2026-10-02
 Status: OPEN
@@ -81,8 +76,6 @@ end_of_line lf untuk semua file, plus insert_final_newline true
 dan trim_trailing_whitespace true. Bisa dikerjakan di FASE 0
 bersama setup konfigurasi editor atau di FASE 9 tahap polish.
 Referensi: Sesi 2c, kritik OpenCode.
-```
-```
 ID: TD-002
 Tanggal: 2026-10-03
 Status: OPEN
@@ -101,9 +94,7 @@ Rencana Fix: (1) Wajib verify payload bash command sebelum
 eksekusi write via heredoc (cek isi file content vs target).
 (2) Set permission.edit=ask, permission.bash write pattern=ask.
 Referensi: Sesi 3b sampai 3i, debug evidence log_3g.log dan log_3i.log.
-```
 
-```
 ID: TD-003
 Tanggal: 2026-10-04
 Status: OPEN
@@ -128,4 +119,78 @@ per prompt (Section 16.3). (3) Reset session tiap prompt (Section
 STOP OpenCode untuk task terkait, fallback ke manual.
 
 Referensi: Sesi append_16_17, log_append_16_17.log vs user verify.
-```
+ID: TD-004
+Tanggal: 2026-10-14
+Status: OPEN
+Prioritas: SEDANG
+Deskripsi: Cloud provisioning deferred. Task T18 (Upstash Redis), T19
+(CloudAMQP RabbitMQ), T20 (enable plugin rabbitmq_delayed_message_exchange),
+T21 (declare exchange + queues), T31-T34 (Render deploy), T39-T41 (JWT keys
+
+Bitwarden + rotation schedule) di-skip selama FASE 0. Dev FASE 0-6 pakai
+docker local (etix-postgres, etix-redis, etix-rabbitmq).
+Root Cause: Fokus code-side FASE 0. Cloud setup butuh dashboard + credentials
+manual yang lebih efisien di-defer sampai staging.
+Rencana Fix: Provision Upstash + CloudAMQP + Render + Bitwarden saat masuk
+FASE 7 (staging deploy) atau sebelum FASE 9 (demo).
+Referensi: docs/ROADMAP FASE 0.txt §4 E4-S1-T18..T21, E7-S1-T32..T34, E9.
+
+ID: TD-005
+Tanggal: 2026-10-14
+Status: OPEN
+Prioritas: SEDANG
+Deskripsi: RabbitMQ delayed message plugin belum di-enable di docker local.
+Image rabbitmq:3.12-management default TIDAK include plugin
+rabbitmq_delayed_message_exchange yang dibutuhkan untuk delayed message
+(booking expiry TTL 180s, resale expiry TTL 3min).
+Root Cause: Defer cloud provisioning (TD-004). Docker image default tanpa
+plugin.
+Rencana Fix: Sebelum FASE 3 (bitmask lock release TTL 180s), pilih salah satu:
+(a) pakai CloudAMQP yang plugin sudah enabled, atau (b) bikin Dockerfile
+rabbitmq custom dengan plugin, atau (c) ganti arsitektur pakai dead-letter
+queue + TTL.
+Referensi: docs/ROADMAP FASE 0.txt §4 E4-S2-T20.
+
+ID: TD-006
+Tanggal: 2026-10-14
+Status: DEFERRED
+Prioritas: RENDAH
+Deskripsi: Supabase password dev ter-expose via xxd dump di transcript
+pre-T18 (2026-10-14 01:04 WIB).
+Root Cause: Prompt pre-T18 minta char verify via xxd untuk semua file,
+termasuk file password. OpenCode interpret generic.
+Rencana Fix: Rotate password Supabase saat setup FASE 7 staging, atau
+segera kalau ada indikasi abuse. User decision (2026-10-14): NO rotate,
+dev-only, transcript akan dihapus.
+Referensi: docs/LOGBOOK.txt incident log FASE 0.
+
+ID: TD-007
+Tanggal: 2026-10-14
+Status: OPEN
+Prioritas: TINGGI
+Deskripsi: OpenCode hallucination di sesi B4 (2026-10-14 15:04 WIB).
+Fabricated output: claim closure applied + LINT OK + module path
+github.com/ajstourinho/ticket-backend (project LAIN) + timestamp 15:04
+(real 02:57). Verify: file TIDAK modified, lint masih FAIL 5 errcheck.
+Ini hallucination ke-3 setelah TD-002 & TD-003.
+Root Cause: Session contamination + model constraint (model gratis).
+B4 prompt panjang + log sebelumnya besar.
+Rencana Fix: (1) Kill switch §16.6 aktif. STOP OpenCode untuk task multi-file
+edit. (2) Fallback manual via sed/VSCode (working). (3) Prompt OpenCode max
+3-4 command. (4) Reset session OpenCode setiap prompt baru. (5) Verify raw
+output setelah setiap sesi.
+Referensi: docs/TEAM_CONTRACT.txt §16.6, docs/LOGBOOK.txt incident log FASE 0.
+
+ID: TD-008
+Tanggal: 2026-10-14
+Status: OPEN
+Prioritas: RENDAH
+Deskripsi: npm audit deteksi 12 vulnerabilities (1 critical) dari toolchain
+Next.js 14 (create-next-app template default).
+Root Cause: Next.js 14 dep tree punya beberapa transitive vulns yang belum
+di-fix upstream di line 14.x. Next.js 15+ mungkin resolve tapi breaking.
+Rencana Fix: Review npm audit detail, upgrade minor/patch yang aman. Kalau
+butuh major (Next 15+), evaluasi breaking risk di FASE 9 polish. Untuk
+portfolio scope, acceptable sementara.
+Referensi: Log T23 (frontend init), ROADMAP FASE 0.txt §4 E5-S1-T23.
+
