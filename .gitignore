@@ -76,3 +76,9 @@ temp/
 docs/*[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]*
 docs/*[Ss][Ee][Cc][Rr][Ee][Tt]*
 docs/*[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]*
+
+# Go build binaries (FASE 0 T13)
+/backend/migrate
+/backend/etix-api
+/backend/etix-api-test
+/backend/e-tix-flash
