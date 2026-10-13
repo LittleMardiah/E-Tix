@@ -32,7 +32,7 @@ func NewPostgresUserRepository(db *pgxpool.Pool) *PostgresUserRepository {
 
 const userColumns = `id, email, phone, name, password_hash, role, status, ` +
 	`base_score, total_purchases, first_purchase_at, last_purchase_at, ` +
-	`profile_photo_url, created_at, updated_at`
+	`COALESCE(profile_photo_url, '') AS profile_photo_url, created_at, updated_at`
 
 func scanUser(row pgx.Row) (*User, error) {
 	var u User
