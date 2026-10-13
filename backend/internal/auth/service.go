@@ -56,14 +56,15 @@ func (e *ValidationError) Error() string {
 }
 
 type AuthService struct {
-	repo UserRepository
-	jwt  *JWTService
-	rdb  *redis.Client
-	otp  OTPNotification
+	repo      UserRepository
+	jwt       *JWTService
+	rdb       *redis.Client
+	otp       OTPNotification
+	blacklist *TokenBlacklistService
 }
 
-func NewAuthService(repo UserRepository, jwt *JWTService, rdb *redis.Client, otp OTPNotification) *AuthService {
-	return &AuthService{repo: repo, jwt: jwt, rdb: rdb, otp: otp}
+func NewAuthService(repo UserRepository, jwt *JWTService, rdb *redis.Client, otp OTPNotification, blacklist *TokenBlacklistService) *AuthService {
+	return &AuthService{repo: repo, jwt: jwt, rdb: rdb, otp: otp, blacklist: blacklist}
 }
 
 func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*RegisterResponse, error) {
@@ -175,6 +176,7 @@ func validatePassword(password string) error {
 var (
 	ErrInvalidCredentials = errors.New("auth: invalid credentials")
 	ErrForbidden          = errors.New("auth: forbidden")
+	ErrTokenBlacklisted   = errors.New("auth: token blacklisted")
 )
 
 const loginExpiresIn = int64(3600)
@@ -229,6 +231,83 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*LoginRespo
 		RefreshToken: refreshToken,
 		ExpiresIn:    loginExpiresIn,
 	}, nil
+}
+
+func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*RefreshTokenResponse, error) {
+	claims, err := s.jwt.ParseRefreshToken(refreshToken)
+	if err != nil {
+		if errors.Is(err, ErrTokenTypeMismatch) {
+			return nil, ErrTokenTypeMismatch
+		}
+		return nil, ErrInvalidCredentials
+	}
+
+	blacklisted, err := s.blacklist.IsBlacklisted(ctx, claims.ID)
+	if err != nil {
+		return nil, fmt.Errorf("auth: check blacklist: %w", err)
+	}
+	if blacklisted {
+		return nil, ErrTokenBlacklisted
+	}
+
+	userID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		return nil, ErrInvalidCredentials
+	}
+
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, ErrInvalidCredentials
+		}
+		return nil, fmt.Errorf("auth: get user by id: %w", err)
+	}
+
+	if user.Status != "ACTIVE" {
+		return nil, ErrForbidden
+	}
+
+	if err := s.blacklist.AddToBlacklist(ctx, claims.ID, time.Until(claims.ExpiresAt.Time)); err != nil {
+		return nil, fmt.Errorf("auth: blacklist old refresh token: %w", err)
+	}
+
+	tier := computeTier(user.BaseScore, user.TotalPurchases)
+
+	accessToken, err := s.jwt.GenerateAccessToken(user, tier)
+	if err != nil {
+		return nil, fmt.Errorf("auth: generate access token: %w", err)
+	}
+
+	newRefreshToken, err := s.jwt.GenerateRefreshToken(user)
+	if err != nil {
+		return nil, fmt.Errorf("auth: generate refresh token: %w", err)
+	}
+
+	return &RefreshTokenResponse{
+		AccessToken:  accessToken,
+		RefreshToken: newRefreshToken,
+		ExpiresIn:    loginExpiresIn,
+	}, nil
+}
+
+func (s *AuthService) Logout(ctx context.Context, accessToken string, refreshToken string) error {
+	if accessToken != "" {
+		if claims, err := s.jwt.ValidateAccessToken(accessToken); err == nil {
+			if bErr := s.blacklist.AddToBlacklist(ctx, claims.ID, time.Until(claims.ExpiresAt.Time)); bErr != nil {
+				zap.L().Warn("failed to blacklist access token", zap.String("jti", claims.ID), zap.Error(bErr))
+			}
+		}
+	}
+
+	if refreshToken != "" {
+		if claims, err := s.jwt.ParseRefreshToken(refreshToken); err == nil {
+			if bErr := s.blacklist.AddToBlacklist(ctx, claims.ID, time.Until(claims.ExpiresAt.Time)); bErr != nil {
+				zap.L().Warn("failed to blacklist refresh token", zap.String("jti", claims.ID), zap.Error(bErr))
+			}
+		}
+	}
+
+	return nil
 }
 
 func computeTier(baseScore, totalPurchases int) string {

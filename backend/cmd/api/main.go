@@ -68,7 +68,8 @@ func main() {
 	}
 
 	notifSvc := auth.NewLogNotification(logger)
-	authSvc := auth.NewAuthService(userRepo, jwtSvc, rdb, notifSvc)
+	blacklistSvc := auth.NewTokenBlacklistService(rdb)
+	authSvc := auth.NewAuthService(userRepo, jwtSvc, rdb, notifSvc, blacklistSvc)
 	authHandler := auth.NewAuthHandler(authSvc, rdb)
 
 	mq, err := queue.NewConnection(cfg.RabbitMQURL)
@@ -89,6 +90,7 @@ func main() {
 
 	router.POST("/auth/register", authHandler.Register)
 	router.POST("/auth/login", authHandler.Login)
+	router.POST("/auth/refresh-token", authHandler.RefreshToken)
 
 	router.GET("/healthz/liveness", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})

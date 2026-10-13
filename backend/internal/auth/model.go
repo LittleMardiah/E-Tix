@@ -79,6 +79,12 @@ type LoginResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
+type RefreshTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int64  `json:"expires_in"`
+}
+
 type UserMeResponse struct {
 	UserID          string     `json:"user_id"`
 	Email           string     `json:"email"`

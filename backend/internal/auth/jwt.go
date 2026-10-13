@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -11,6 +12,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
+
+var ErrTokenTypeMismatch = errors.New("jwt: token type mismatch")
 
 func LoadPrivateKey(path string) (*rsa.PrivateKey, error) {
 	data, err := os.ReadFile(path)
@@ -168,7 +171,7 @@ func (s *JWTService) parse(tokenString, expectedType string) (*JWTClaims, error)
 	}
 
 	if claims.TokenType != expectedType {
-		return nil, fmt.Errorf("jwt: invalid token_type %q, expected %q", claims.TokenType, expectedType)
+		return nil, ErrTokenTypeMismatch
 	}
 
 	claims.UserID = claims.Subject

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -150,4 +151,59 @@ func writeLoginError(c *gin.Context, err error) {
 	default:
 		c.JSON(http.StatusInternalServerError, errorResponse("INTERNAL_ERROR", "internal server error"))
 	}
+}
+
+func (h *AuthHandler) RefreshToken(c *gin.Context) {
+	var req RefreshTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.RefreshToken) == "" {
+		c.JSON(http.StatusBadRequest, errorResponse("INVALID_REQUEST", "refresh_token is required"))
+		return
+	}
+
+	resp, err := h.svc.RefreshToken(c.Request.Context(), req.RefreshToken)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTokenBlacklisted):
+			c.JSON(http.StatusUnauthorized, errorResponse("TOKEN_BLACKLISTED", "refresh token has been revoked"))
+		case errors.Is(err, ErrInvalidCredentials):
+			c.JSON(http.StatusUnauthorized, errorResponse("UNAUTHORIZED", "invalid refresh token"))
+		case errors.Is(err, ErrTokenTypeMismatch):
+			c.JSON(http.StatusUnauthorized, errorResponse("TOKEN_TYPE_MISMATCH", "refresh token has wrong token type"))
+		case errors.Is(err, ErrForbidden):
+			c.JSON(http.StatusForbidden, errorResponse("FORBIDDEN", "account is not active"))
+		default:
+			c.JSON(http.StatusInternalServerError, errorResponse("INTERNAL_ERROR", "internal server error"))
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    resp,
+		"error":   nil,
+		"meta": gin.H{
+			"timestamp":  time.Now().UTC().Format(time.RFC3339Nano),
+			"request_id": uuid.NewString(),
+		},
+	})
+}
+
+func (h *AuthHandler) Logout(c *gin.Context) {
+	var req LogoutRequest
+	_ = c.ShouldBindJSON(&req)
+
+	authHeader := c.GetHeader("Authorization")
+	accessToken := strings.TrimPrefix(authHeader, "Bearer ")
+
+	_ = h.svc.Logout(c.Request.Context(), accessToken, req.RefreshToken)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    nil,
+		"error":   nil,
+		"meta": gin.H{
+			"timestamp":  time.Now().UTC().Format(time.RFC3339Nano),
+			"request_id": uuid.NewString(),
+		},
+	})
 }
