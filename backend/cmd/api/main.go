@@ -1,16 +1,21 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/config"
+	"github.com/LittleMardiah/E-Tix/backend/internal/db"
 	"github.com/LittleMardiah/E-Tix/backend/internal/middleware"
+	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
+	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
 )
 
 func parseOrigins(csv string) []string {
@@ -37,6 +42,26 @@ func main() {
 	}
 	defer logger.Sync()
 
+	ctx := context.Background()
+
+	pgPool, err := db.NewDBPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Fatal("failed to init postgres pool", zap.Error(err))
+	}
+	defer pgPool.Close()
+
+	rdb, err := redis.NewClient(cfg.RedisURL)
+	if err != nil {
+		logger.Fatal("failed to init redis client", zap.Error(err))
+	}
+	defer rdb.Close()
+
+	mq, err := queue.NewConnection(cfg.RabbitMQURL)
+	if err != nil {
+		logger.Fatal("failed to init rabbitmq connection", zap.Error(err))
+	}
+	defer mq.Close()
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -52,14 +77,34 @@ func main() {
 	})
 
 	router.GET("/healthz/readiness", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status": "ready",
-			"checks": gin.H{
-				"database": "ok",
-				"redis":    "ok",
-				"rabbitmq": "ok",
-			},
-		})
+		checkCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+
+		checks := gin.H{
+			"database": "ok",
+			"redis":    "ok",
+			"rabbitmq": "ok",
+		}
+		ready := true
+
+		if err := pgPool.Ping(checkCtx); err != nil {
+			checks["database"] = "fail"
+			ready = false
+		}
+		if err := rdb.Ping(checkCtx).Err(); err != nil {
+			checks["redis"] = "fail"
+			ready = false
+		}
+		if mq.IsClosed() {
+			checks["rabbitmq"] = "fail"
+			ready = false
+		}
+
+		if ready {
+			c.JSON(http.StatusOK, gin.H{"status": "ready", "checks": checks})
+			return
+		}
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "checks": checks})
 	})
 
 	addr := ":" + port
