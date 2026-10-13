@@ -26,6 +26,22 @@ DROP FUNCTION IF EXISTS update_ticket_status_on_scan() CASCADE;
 DROP FUNCTION IF EXISTS handle_ticket_cancellation_on_refund() CASCADE;
 DROP FUNCTION IF EXISTS handle_booking_cancellation() CASCADE;
 
+-- ============================================================================
+-- SEEDS (DOWN) - delete seeds BEFORE dropping tables
+-- ============================================================================
+
+DELETE FROM system_config WHERE key IN (
+  'seat_lock_ttl_seconds',
+  'split_pay_timeout_minutes',
+  'resale_price_cap_percent',
+  'post_event_report_timeout_minutes',
+  'max_group_seats',
+  'fan_score_threshold_vip',
+  'fan_score_threshold_regular'
+);
+
+DELETE FROM users WHERE id = '00000000-0000-0000-0000-000000000000';
+
 DROP TABLE IF EXISTS blacklist CASCADE;
 DROP TABLE IF EXISTS ticket_scans CASCADE;
 DROP TABLE IF EXISTS resale_transactions CASCADE;

@@ -931,3 +931,32 @@ FOR EACH ROW
 EXECUTE FUNCTION handle_booking_cancellation();
 
 
+
+
+-- ============================================================================
+-- SEEDS (SYSTEM_USER + system_config)
+-- ============================================================================
+
+-- SYSTEM_USER_UUID: internal admin account, no login capability (TDD v1.10 §4)
+INSERT INTO users (id, email, phone, name, password_hash, role, status, created_at)
+VALUES (
+  '00000000-0000-0000-0000-000000000000',
+  'system@e-tix-flash.internal',
+  '+000000000000',
+  'System',
+  '$2a$12$SYSTEM_USER_NO_LOGIN_ACCOUNT_DUMMY_HASH',
+  'admin',
+  'ACTIVE',
+  NOW()
+) ON CONFLICT (id) DO NOTHING;
+
+-- SYSTEM_CONFIG seed (7 keys — source: DATABASE_SCHEMA v2.9 §12)
+INSERT INTO system_config (key, value, description) VALUES
+  ('seat_lock_ttl_seconds', '180', 'TTL untuk lock kursi (detik) — dibaca oleh backend untuk mengisi bookings.expires_at'),
+  ('split_pay_timeout_minutes', '3', 'Batas waktu split-pay (menit)'),
+  ('resale_price_cap_percent', '10', 'Batas maksimum harga resale (%)'),
+  ('post_event_report_timeout_minutes', '60', 'Batas waktu generate post-event report (menit)'),
+  ('max_group_seats', '10', 'Maksimum kursi per grup'),
+  ('fan_score_threshold_vip', '90', 'Batas skor untuk Tier 1 (VIP)'),
+  ('fan_score_threshold_regular', '70', 'Batas skor untuk Tier 2 (Regular)')
+ON CONFLICT (key) DO NOTHING;
