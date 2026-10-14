@@ -417,3 +417,100 @@ Semua masuk TD register. Reference docs/TECHNICAL DEBT.txt.
 ================================================================================
 END OF FASE 0 CLOSURE
 ================================================================================
+
+================================================================================
+## FASE 1 — AUTH & USER MANAGEMENT (2026-10-14)
+================================================================================
+
+Timeline commit FASE 1 (dari git log):
+- 39b5849  auth skeleton + models + repository interface + JWT key loading (P1)
+- ad0be5e  JWT service RS256 sign/verify (P2)
+- 9d6be47  register flow (P3)
+- 565d15a  fix golang-jwt CVE-2025-30204 (P3-fix)
+- b24b9bf  login flow (P4)
+- ccda1fb  OTP service + global zap logger (P5)
+- dca1b80  refresh rotation + logout + blacklist + TOKEN_TYPE_MISMATCH (P6)
+- 9db4a79  auth + rbac + rate limit middleware (P7a)
+- 20ae763  wire all routes + GetMe + VerifyOTP handler (P7b)
+- cddc5e7  unit + integration tests + fix NULL scan profile_photo_url (P8a)
+- b29abce  self-contained JWT keys + errcheck mr.Set (P8a-fixC)
+- 7acd81d  auth security tests (P8b)
+- 9f64ea7  NewJWTServiceWithKeys + ValidateRefreshToken (P8b-fix)
+- 01fcea9  gofmt jwt.go (P8b-fix2)
+
+Total: 14 commit.
+
+================================================================================
+## LEARNING CHECKPOINTS (FASE 1)
+================================================================================
+
+1. JWT keys file-based. Env JWT_PRIVATE_KEY_PATH + JWT_PUBLIC_KEY_PATH
+   (bukan inline PEM). Config.Load() di-update flexible (inline OR path).
+
+2. golang-jwt CVE-2025-30204 (ParseUnverified memory alloc).
+   Fix: bump v5.2.1 → v5.3.1. Fixed by CI govulncheck.
+
+3. JWTClaims = separate type (embed jwt.RegisteredClaims) di jwt.go.
+   Tidak modif model.go. UserID di-mirror dari RegisteredClaims.Subject.
+
+4. Config path check flexible. `if cfg.JWTPrivateKey == "" && cfg.JWTPrivateKeyPath == ""`
+   supaya inline (legacy) atau path (current) sama-sama valid.
+
+5. TOKEN_TYPE_MISMATCH: sentinel di jwt.go (package auth).
+   Prompt asumsi package `jwt` terpisah → conflict. Reality: same package.
+   Lesson: verify package structure sebelum prompt.
+
+6. Repo NULL scan bug: profile_photo_url TEXT nullable → *string scan fail.
+   Fix 1 baris: COALESCE(profile_photo_url, '') AS profile_photo_url di userColumns.
+   Bug ini blokir Login/GetMe/Refresh/GetUserByID. Critical.
+
+7. Test must be self-contained. JWT test baca ../../keys/*.pem → CI fail (gitignored).
+   Fix: rsa.GenerateKey in-memory + t.TempDir().
+
+8. JWT tampered test quirk: base64url trailing char = 2 bits data + 4 bits padding.
+   Ganti char terakhir tidak selalu ubah byte decoded. Fix: tamper mid-char.
+
+9. go mod tidy prune unused dep. Testify+miniredis hilang setelah install
+   sebelum test import. Re-tidy setelah tulis test.
+
+10. gofmt cek pakai output, bukan exit code. `gofmt -l` exit 0 selalu.
+    Fix: `[ -z "$(gofmt -l file)" ]` atau hitung lines.
+
+================================================================================
+## INCIDENT LOG (FASE 1)
+================================================================================
+
+[2026-10-14 06:12] P8a — OpenCode hallucination
+  Fakta: log klaim "PASS 22/22" unit tests. Verify: TestValidateAccessToken_Tampered FAIL.
+  Root cause: prompt panjang (~7 step + 30 test cases).
+  Mitigasi: split prompt, verify raw output setiap sesi, kill switch.
+  Reference: TD-007 (B4 hallucination pattern).
+
+[2026-10-14 06:43] P8b — Scope breach minor
+  Fakta: OpenCode tambah NewJWTServiceWithKeys + ValidateRefreshToken di jwt.go
+  tanpa log deviasi (§11.5 wajib). Helper legit, tapi rule breach.
+  Mitigasi: next prompt eksplisit "no new helper; STOP kalau butuh".
+
+[2026-10-14 06:53] P8b-fix2 — gofmt tertinggal
+  Fakta: jwt.go double blank line dari patch. CI gofmt step fail.
+  Root cause: patch di sesi terpisah, gofmt lokal tidak re-run.
+  Lesson: setiap patch = re-run gofmt -l . sebelum commit.
+
+[2026-10-14 06:43] P8b — Commit hygiene miss
+  Fakta: PowerShell commit hanya git add backend/tests/security/auth_security_test.go,
+  lupa backend/internal/auth/jwt.go. CI fail "undefined: NewJWTServiceWithKeys".
+  Lesson: selalu git add -A atau verify semua file modified.
+
+================================================================================
+## TD REGISTER SUMMARY (FASE 1)
+================================================================================
+
+- TD-010: RateLimit scope USER/USER_VIA_TOKEN belum implemented.
+- TD-011: /users/me belum rate-limited (100/min per API_CONTRACT §5).
+- TD-014: API tests Postman/Newman deferred (T30).
+
+Reference: docs/TECHNICAL DEBT.txt.
+
+================================================================================
+END OF FASE 1 CLOSURE
+================================================================================

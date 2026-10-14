@@ -194,3 +194,41 @@ butuh major (Next 15+), evaluasi breaking risk di FASE 9 polish. Untuk
 portfolio scope, acceptable sementara.
 Referensi: Log T23 (frontend init), ROADMAP FASE 0.txt §4 E5-S1-T23.
 
+
+ID: TD-010
+Tanggal: 2026-10-14
+Status: OPEN
+Prioritas: RENDAH
+Deskripsi: RateLimitMiddleware cuma support scope IP-based
+(c.KlienIP + c.FullPath). ROADMAP FASE 1 §8.5 minta 3 scope:
+IP, USER (dari JWT sub), USER_VIA_TOKEN (parse refresh token body).
+Untuk FASE 1 /auth/refresh-token pakai IP fallback - acceptable.
+Root Cause: Defer implementasi - endpoint spesifik per scope belum ada.
+Rencana Fix: Extend RateLimitMiddleware jadi varian (scope param) di FASE 2
+atau saat ada endpoint yang butuh USER scope.
+Referensi: docs/ROADMAP FASE 1.txt §8.5, commit 9db4a79 (P7a).
+
+ID: TD-011
+Tanggal: 2026-10-14
+Status: OPEN
+Prioritas: RENDAH
+Deskripsi: GET /users/me belum di-rate-limit. API_CONTRACT §5 target
+100 req/min per user. Endpoint protected AuthMiddleware saja.
+Root Cause: FASE 1 skip - RLS + AuthMiddleware dianggap cukup untuk MVP.
+Rencana Fix: Tambah RateLimitMiddleware(rdb, 100, time.Minute) di
+/users/me route + route protected lain.
+Referensi: docs/API_CONTRACT.txt §5, commit 20ae763 (P7b).
+
+ID: TD-014
+Tanggal: 2026-10-14
+Status: DEFERRED
+Prioritas: SEDANG
+Deskripsi: API tests via Postman/Newman (T30) ditunda. Butuh
+orchestration kompleks: docker-compose + migrate + seed + server live
+di CI. Security tests (T31, Go-based self-contained) sudah cover
+rate limit + bcrypt + replay + token type.
+Root Cause: Effort vs nilai - Newman butuh setup CI heavy, coverage
+overlap dengan security tests.
+Rencana Fix: Implementasi di FASE 6 (staging CI) atau FASE 9 (polish)
+saat infra docker-compose sudah mature untuk CI.
+Referensi: docs/ROADMAP FASE 1.txt §3.10 (API test cases).
