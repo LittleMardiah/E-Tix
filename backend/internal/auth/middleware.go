@@ -10,7 +10,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
+	"io"
 )
 
 const (
@@ -64,9 +68,33 @@ func AuthMiddleware(jwt *JWTService, blacklist *TokenBlacklistService) gin.Handl
 	}
 }
 
+type RateLimitScope string
+
+const (
+	RateLimitScopeIP           RateLimitScope = "ip"
+	RateLimitScopeUser         RateLimitScope = "user"
+	RateLimitScopeUserViaToken RateLimitScope = "user_via_token"
+)
+
 func RateLimitMiddleware(rdb *redis.Client, limit int, window time.Duration) gin.HandlerFunc {
+	return RateLimitMiddlewareScoped(rdb, limit, window, RateLimitScopeIP)
+}
+
+func RateLimitMiddlewareScoped(rdb *redis.Client, limit int, window time.Duration, scope RateLimitScope) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		key := "rate:" + c.ClientIP() + ":" + c.FullPath()
+		var identifier string
+		switch scope {
+		case RateLimitScopeUser:
+			identifier = c.GetString("user_id")
+		case RateLimitScopeUserViaToken:
+			identifier = extractUserIDFromRefreshToken(c)
+		default:
+			identifier = c.ClientIP()
+		}
+		if identifier == "" {
+			identifier = c.ClientIP()
+		}
+		key := "rate:" + string(scope) + ":" + identifier + ":" + c.FullPath()
 
 		cnt, err := rdb.IncrWithTTL(c.Request.Context(), key, window)
 		if err != nil {
@@ -91,4 +119,37 @@ func RateLimitMiddleware(rdb *redis.Client, limit int, window time.Duration) gin
 
 		c.Next()
 	}
+}
+
+func extractUserIDFromRefreshToken(c *gin.Context) string {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return ""
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+
+	var payload struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload.RefreshToken == "" {
+		return ""
+	}
+
+	parts := strings.Split(payload.RefreshToken, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims map[string]interface{}
+	if err := json.Unmarshal(decoded, &claims); err != nil {
+		return ""
+	}
+	sub, _ := claims["sub"].(string)
+	if sub == "" {
+		return ""
+	}
+	return sub
 }
