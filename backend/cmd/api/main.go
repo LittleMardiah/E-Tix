@@ -83,6 +83,16 @@ func main() {
 	fanWorker := worker.NewFanScoreWorker(mq, rdb, blacklistRepo, logger)
 	go func() { _ = fanWorker.Run(context.Background()) }()
 
+	fanScoreSvc := queue.NewFanScoreService(rdb, userRepo)
+	queueTokenSvc, err := queue.NewQueueTokenService(cfg.JWTPrivateKeyPath, cfg.JWTPublicKeyPath, "e-tix-flash-queue")
+	if err != nil {
+		logger.Fatal("failed to init queue token service", zap.Error(err))
+	}
+	captchaSvc := queue.NewMockCaptchaService(true)
+	eventRepo := queue.NewPostgresEventRepository(pgPool)
+	queueSvc := queue.NewQueueService(fanScoreSvc, queueTokenSvc, captchaSvc, eventRepo, rdb)
+	queueHandler := queue.NewQueueHandler(queueSvc, logger)
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -100,6 +110,15 @@ func main() {
 	router.POST("/auth/verify-otp", auth.AuthMiddleware(jwtSvc, blacklistSvc), auth.RateLimitMiddlewareScoped(rdb, 5, 15*time.Minute, auth.RateLimitScopeUser), authHandler.VerifyOTP)
 	router.POST("/auth/logout", auth.AuthMiddleware(jwtSvc, blacklistSvc), auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser), authHandler.Logout)
 	router.GET("/users/me", auth.AuthMiddleware(jwtSvc, blacklistSvc), auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser), authHandler.GetMe)
+
+	router.GET("/queue/status",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser),
+		queueHandler.GetStatus)
+	router.POST("/queue/verify-captcha",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 3, 5*time.Minute, auth.RateLimitScopeIP),
+		queueHandler.VerifyCaptcha)
 
 	router.GET("/healthz/liveness", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})
