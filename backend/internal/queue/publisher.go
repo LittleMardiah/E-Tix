@@ -49,3 +49,16 @@ func (c *Connection) Publish(ctx context.Context, queueName string, body []byte)
 		Body:        body,
 	})
 }
+
+func (c *Connection) PublishToQueue(ctx context.Context, queueName string, payload []byte) error {
+	ch, err := c.Channel()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = ch.Close() }()
+
+	return ch.PublishWithContext(ctx, "", queueName, false, false, amqp.Publishing{
+		ContentType: "application/json",
+		Body:        payload,
+	})
+}
