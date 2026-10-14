@@ -514,3 +514,48 @@ Reference: docs/TECHNICAL DEBT.txt.
 ================================================================================
 END OF FASE 1 CLOSURE
 ================================================================================
+
+================================================================================
+## APPENDIX — OPCODE HALLUCINATION INCIDENTS (moved from TD register)
+================================================================================
+
+Catatan: hallucination = tooling issue, bukan technical debt kode/sistem.
+Dipindah dari docs/TECHNICAL DEBT.txt ke LOGBOOK (2026-10-14).
+
+[2026-10-03] Sesi OpenCode 3b-3i (eks TD-002)
+  Fakta: Mengarang 3 commit hash palsu (d01262f, eb20fdd, ba9f65a),
+  timestamp LOGBOOK di masa depan (10:44, 10:45 vs real 09:04),
+  header TD register "AnomalyCo" tidak ada di repo. Overwrite
+  docs/TECHNICAL DEBT.txt dengan payload rekaan, hapus 4 sections
+  asli (Tujuan, Konvensi ID, Status Bucket, Template Entry).
+  Root cause: model hallucinate payload di reasoning, inject via bash
+  heredoc. Prompt tidak enforce RAW output + diff verify.
+  Mitigasi: R14.5 (edit via python3), R3.1 (RAW paste), R3.2 (diff verify).
+  Reference: log opencode.log run=e7183862.
+
+[2026-10-03] Sesi append_16_17 (eks TD-003)
+  Fakta: Klaim APPEND OK ke TEAM_CONTRACT, git diff 3f3fb72..f9c8180,
+  Section 16 di line 447, line count 596 → 597. Verify: file TIDAK
+  berubah, git diff HEAD empty, Section 16+17 tidak ada, line count
+  tetap 596. Sesi ke-3 berturut-turut hallucinate.
+  Root cause: model constraint + prompt > 40 baris.
+  Mitigasi: kill switch §16.6. Prompt kecil (max 5-7 command).
+
+[2026-10-14] Sesi B4 (eks TD-007)
+  Fakta: Fabricated output — klaim closure applied + LINT OK +
+  module path github.com/ajstourinho/ticket-backend (project LAIN) +
+  timestamp 15:04 (real 02:57). Verify: file TIDAK modified, lint
+  masih FAIL 5 errcheck.
+  Root cause: session contamination + model constraint.
+  Mitigasi: kill switch, fallback manual via sed. Verify raw output
+  setelah tiap sesi.
+
+[2026-10-14] Sesi P8a (tambahan, tidak pernah masuk TD)
+  Fakta: Log klaim "PASS 22/22" unit tests. Verify: 
+  TestValidateAccessToken_Tampered FAIL.
+  Mitigasi: split prompt, verify tiap sesi.
+
+Pattern: hallucination sering di prompt panjang (>40 baris) atau
+multi-file edit. Mitigasi: prompt kecil (max 5-7 command), RAW paste,
+verify user independently.
+================================================================================

@@ -76,52 +76,9 @@ end_of_line lf untuk semua file, plus insert_final_newline true
 dan trim_trailing_whitespace true. Bisa dikerjakan di FASE 0
 bersama setup konfigurasi editor atau di FASE 9 tahap polish.
 Referensi: Sesi 2c, kritik OpenCode.
-ID: TD-002
-Tanggal: 2026-10-03
-Status: OPEN
-Prioritas: SEDANG
-Deskripsi: Sesi OpenCode prompt 3b sampai 3i berturut-turut
-hallucinate. Mengarang 3 commit hash palsu (d01262f, eb20fdd,
-ba9f65a), timestamp LOGBOOK di masa depan (10:44, 10:45 vs real
-09:04), dan header TD register dengan string AnomalyCo yang tidak
-ada di repo. Model juga overwrite docs/TECHNICAL DEBT.txt
-dengan payload rekaan, menghapus 4 sections asli
-(Tujuan, Konvensi ID, Status Bucket, Template Entry).
-Root Cause: Model hallucinate payload di reasoning, lalu inject via bash
-heredoc (bukan write tool). Bukti log opencode.log run=e7183862. Prompt
-tidak enforce RAW output + diff verify + cek payload sendiri.
-Rencana Fix: (1) Wajib verify payload bash command sebelum
-eksekusi write via heredoc (cek isi file content vs target).
-(2) Set permission.edit=ask, permission.bash write pattern=ask.
-Referensi: Sesi 3b sampai 3i, debug evidence log_3g.log dan log_3i.log.
-
-ID: TD-003
-Tanggal: 2026-10-04
-Status: OPEN
-Prioritas: TINGGI
-Deskripsi: Sesi OpenCode prompt append_16_17 (append Section 16+17
-ke TEAM_CONTRACT.md) fabricated seluruh operasi. Klaim APPEND OK,
-git diff 3f3fb72..f9c8180, Section 16 di line 447, line count 596
-jadi 597. Verify user: file TIDAK berubah, git diff HEAD empty,
-Section 16+17 tidak ada, line count tetap 596. Ini sesi ke-3
-berturut-turut hallucinate setelah Section 14 v2.3 di-apply
-(kill switch Section 16.6 + 17.8 triggered).
-
-Root Cause: Model constraint. Section 14 (anti-hallucination rules)
-tidak efektif mencegah model fabricate seluruh command output.
-Model gratis dengan context terbatas tetap fallback ke fill-in-the-
-blank pattern, terutama pada prompt lebih dari 40 baris.
-
-Rencana Fix: (1) Manual via VSCode atau WSL python3 untuk append
-atau edit file besar. (2) Prompt OpenCode WAJIB max 5-7 command
-per prompt (Section 16.3). (3) Reset session tiap prompt (Section
-16.4). (4) Kill switch enforced: 3 atau lebih sesi hallucinate
-STOP OpenCode untuk task terkait, fallback ke manual.
-
-Referensi: Sesi append_16_17, log_append_16_17.log vs user verify.
 ID: TD-004
 Tanggal: 2026-10-14
-Status: OPEN
+Status: DEFERRED
 Prioritas: SEDANG
 Deskripsi: Cloud provisioning deferred. Task T18 (Upstash Redis), T19
 (CloudAMQP RabbitMQ), T20 (enable plugin rabbitmq_delayed_message_exchange),
@@ -163,23 +120,6 @@ Rencana Fix: Rotate password Supabase saat setup FASE 7 staging, atau
 segera kalau ada indikasi abuse. User decision (2026-10-14): NO rotate,
 dev-only, transcript akan dihapus.
 Referensi: docs/LOGBOOK.txt incident log FASE 0.
-
-ID: TD-007
-Tanggal: 2026-10-14
-Status: OPEN
-Prioritas: TINGGI
-Deskripsi: OpenCode hallucination di sesi B4 (2026-10-14 15:04 WIB).
-Fabricated output: claim closure applied + LINT OK + module path
-github.com/ajstourinho/ticket-backend (project LAIN) + timestamp 15:04
-(real 02:57). Verify: file TIDAK modified, lint masih FAIL 5 errcheck.
-Ini hallucination ke-3 setelah TD-002 & TD-003.
-Root Cause: Session contamination + model constraint (model gratis).
-B4 prompt panjang + log sebelumnya besar.
-Rencana Fix: (1) Kill switch §16.6 aktif. STOP OpenCode untuk task multi-file
-edit. (2) Fallback manual via sed/VSCode (working). (3) Prompt OpenCode max
-3-4 command. (4) Reset session OpenCode setiap prompt baru. (5) Verify raw
-output setelah setiap sesi.
-Referensi: docs/TEAM_CONTRACT.txt §16.6, docs/LOGBOOK.txt incident log FASE 0.
 
 ID: TD-008
 Tanggal: 2026-10-14
