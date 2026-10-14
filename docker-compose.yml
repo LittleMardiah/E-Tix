@@ -31,7 +31,7 @@ services:
       - etix-net
 
   rabbitmq:
-    image: rabbitmq:3.12-management
+    build: ./docker/rabbitmq
     container_name: etix-rabbitmq
     ports:
       # host 5673 -> container 5672 (AMQP). Offset dari default 5672 (bentrok project lain).
