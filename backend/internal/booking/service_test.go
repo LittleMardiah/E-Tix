@@ -324,3 +324,42 @@ func TestLockSeats_SeatOutOfRange_ReturnsErrSeatOutOfRange(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSeatOutOfRange)
 }
+
+// ============================================================
+// Service: GetSeatAvailability
+// ============================================================
+
+func TestGetSeatAvailability_Success(t *testing.T) {
+	rdb, _ := newBookingTestRedis(t)
+	eid, sid := uuid.New(), uuid.New()
+	repo := &fakeRepo{section: newSection(eid, sid, 10), taken: []int{1, 3}}
+	svc, _ := newTestService(t, repo, rdb, &fakePublisher{})
+
+	resp, err := svc.GetSeatAvailability(context.Background(), eid, sid)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	assert.Equal(t, eid.String(), resp.EventID)
+	assert.Equal(t, sid.String(), resp.SectionID)
+	assert.Equal(t, "VIP", resp.SectionName)
+	assert.Equal(t, 1, resp.LayoutVersion)
+	assert.Equal(t, 10, resp.TotalSeats)
+	assert.Equal(t, 8, resp.AvailableSeats)
+	require.Len(t, resp.Seats, 10)
+
+	assert.Equal(t, "TAKEN", resp.Seats[0].Status)
+	assert.Equal(t, "AVAILABLE", resp.Seats[1].Status)
+	assert.Equal(t, "TAKEN", resp.Seats[2].Status)
+	assert.NotEmpty(t, resp.LastUpdatedAt)
+}
+
+func TestGetSeatAvailability_EventMismatch(t *testing.T) {
+	rdb, _ := newBookingTestRedis(t)
+	eid, sid := uuid.New(), uuid.New()
+	repo := &fakeRepo{section: newSection(eid, sid, 10)}
+	svc, _ := newTestService(t, repo, rdb, &fakePublisher{})
+
+	wrongEid := uuid.New()
+	_, err := svc.GetSeatAvailability(context.Background(), wrongEid, sid)
+	require.Error(t, err)
+}
