@@ -56,9 +56,27 @@ Referensi: docs/CONTOH.txt
 
 ## Entry Aktif
 
+### Status Overview (Ringkasan Cepat)
+
+| ID     | Prioritas | Status       | Deskripsi Singkat                             |
+|--------|-----------|--------------|-----------------------------------------------|
+| TD-001 | RENDAH    | ✅ FIXED     | .editorconfig                                 |
+| TD-004 | SEDANG    | ⏸️ DEFERRED  | Cloud provisioning (Upstash/CloudAMQP/Render) |
+| TD-005 | SEDANG    | ✅ FIXED     | RabbitMQ delayed message plugin               |
+| TD-006 | RENDAH    | ⏸️ DEFERRED  | Supabase password exposure (dev)              |
+| TD-008 | SEDANG    | 🔄 OPEN      | npm audit — 0 critical, 16 non-crit remaining |
+| TD-010 | RENDAH    | ✅ FIXED     | RateLimit scope USER/USER_VIA_TOKEN           |
+| TD-011 | RENDAH    | ✅ FIXED     | GET /users/me rate limit                      |
+| TD-014 | SEDANG    | ⏸️ DEFERRED  | API tests Newman                              |
+
+Legend: ✅ FIXED · 🔄 OPEN · 🚧 IN PROGRESS · 🎯 CLOSED · ⏸️ DEFERRED
+
+---
+
 ID: TD-001
 Tanggal: 2026-10-02
-Status: OPEN
+Status: ✅ FIXED
+Fixed in: commit 2e2b9b6 (2026-10-14)
 Prioritas: RENDAH
 Deskripsi: Belum ada .editorconfig di root repo. .gitattributes sudah
 men kunci line ending lewat git, tapi editor di Windows tetap bisa
@@ -78,7 +96,7 @@ bersama setup konfigurasi editor atau di FASE 9 tahap polish.
 Referensi: Sesi 2c, kritik OpenCode.
 ID: TD-004
 Tanggal: 2026-10-14
-Status: DEFERRED
+Status: ⏸️ DEFERRED
 Prioritas: SEDANG
 Deskripsi: Cloud provisioning deferred. Task T18 (Upstash Redis), T19
 (CloudAMQP RabbitMQ), T20 (enable plugin rabbitmq_delayed_message_exchange),
@@ -94,7 +112,8 @@ Referensi: docs/ROADMAP FASE 0.txt §4 E4-S1-T18..T21, E7-S1-T32..T34, E9.
 
 ID: TD-005
 Tanggal: 2026-10-14
-Status: OPEN
+Status: ✅ FIXED
+Fixed in: commit 8f60a36 (2026-10-14)
 Prioritas: SEDANG
 Deskripsi: RabbitMQ delayed message plugin belum di-enable di docker local.
 Image rabbitmq:3.12-management default TIDAK include plugin
@@ -110,7 +129,7 @@ Referensi: docs/ROADMAP FASE 0.txt §4 E4-S2-T20.
 
 ID: TD-006
 Tanggal: 2026-10-14
-Status: DEFERRED
+Status: ⏸️ DEFERRED
 Prioritas: RENDAH
 Deskripsi: Supabase password dev ter-expose via xxd dump di transcript
 pre-T18 (2026-10-14 01:04 WIB).
@@ -123,7 +142,7 @@ Referensi: docs/LOGBOOK.txt incident log FASE 0.
 
 ID: TD-008
 Tanggal: 2026-10-14
-Status: OPEN
+Status: 🔄 OPEN
 Prioritas: SEDANG
 Deskripsi: npm audit frontend. Setelah upgrade Next 14.2.35 -> 15.5.27
 (commit c416f32), status: 0 critical, 16 non-critical remaining
@@ -140,7 +159,8 @@ Referensi: commit c416f32, log TD-E (audit ID per npm registry).
 
 ID: TD-010
 Tanggal: 2026-10-14
-Status: OPEN
+Status: ✅ FIXED
+Fixed in: commit 2e2b9b6 (2026-10-14)
 Prioritas: RENDAH
 Deskripsi: RateLimitMiddleware cuma support scope IP-based
 (c.KlienIP + c.FullPath). ROADMAP FASE 1 §8.5 minta 3 scope:
@@ -153,7 +173,8 @@ Referensi: docs/ROADMAP FASE 1.txt §8.5, commit 9db4a79 (P7a).
 
 ID: TD-011
 Tanggal: 2026-10-14
-Status: OPEN
+Status: ✅ FIXED
+Fixed in: commit 2e2b9b6 (2026-10-14)
 Prioritas: RENDAH
 Deskripsi: GET /users/me belum di-rate-limit. API_CONTRACT §5 target
 100 req/min per user. Endpoint protected AuthMiddleware saja.
@@ -164,7 +185,7 @@ Referensi: docs/API_CONTRACT.txt §5, commit 20ae763 (P7b).
 
 ID: TD-014
 Tanggal: 2026-10-14
-Status: DEFERRED
+Status: ⏸️ DEFERRED
 Prioritas: SEDANG
 Deskripsi: API tests via Postman/Newman (T30) ditunda. Butuh
 orchestration kompleks: docker-compose + migrate + seed + server live
