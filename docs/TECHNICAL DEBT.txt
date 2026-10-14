@@ -200,3 +200,21 @@ overlap dengan security tests.
 Rencana Fix: Implementasi di FASE 6 (staging CI) atau FASE 9 (polish)
 saat infra docker-compose sudah mature untuk CI.
 Referensi: docs/ROADMAP FASE 1.txt §3.10 (API test cases).
+
+---
+
+ID: TD-F3-08
+Tanggal: 2026-10-15
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: Chaos test — Redis down → Circuit Breaker OPEN → DB Queue fallback.
+  FASE 3 E9-S2-T27 chaos test (`tests/chaos/redis_down_test.go`) tidak dibuat.
+  Root cause: Circuit Breaker wrapper belum diimplementasi di FASE 3 scope
+  (ROADMAP FASE 3 §2.2 "Booking expiry worker → FASE 4"; CB full spec → FASE 9).
+  Chaos test tanpa CB = tidak ada yang dites.
+Alasan Deferred: Dependency — CB belum ada. Trigger resolve: FASE 9 Epic A
+  (full STP execution) setelah CB diimplementasi (FASE 4 worker path).
+Rencana Fix: Implementasi Circuit Breaker (gobreaker) di service layer saat
+  FASE 4-8, lalu tulis chaos test + verifikasi fallback DB Queue → 5 menit.
+Referensi: ROADMAP FASE 3.txt §4 E9-S2-T27, docs/AUDIT FASE 3.md §2 E9.
+

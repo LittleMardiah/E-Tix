@@ -687,3 +687,114 @@ Fixed langsung (bukan TD):
 ================================================================================
 END OF FASE 2 CLOSURE
 ================================================================================
+
+================================================================================
+## FASE 3 — BITMASK MULTI-SEAT ATOMIC LOCKING (F002) — CLOSURE (2026-10-14/15)
+================================================================================
+
+Timeline commit FASE 3:
+- bc3114f  feat(fase-3): event catalog - list + detail (P1: T4-T5)
+- 659ab24  feat(fase-3): booking seat availability + lua scripts embed (P2)
+- 039c1cb  feat(fase-3): LockSeats service + repo CreateBooking + decimal dep (P3a)
+- e32cf1e  feat(fase-3): LockSeats handler + route wire + TD-F3-01 fix (P3b)
+- 30393c8  feat(fase-3): rate limit catalog endpoints (P3c: T19-T21)
+- 1b1c324  test(fase-3): booking unit tests + DelayedPublisher refactor (P4a)
+- 97d7832  test(fase-3): booking integration tests - concurrency + rollback (P4b)
+- 00ceb04  test(fase-3): coverage boost — handler + service + lua (P4c-1)
+- 9a5da41  test(fase-3): repository integration tests — 77.8% (P4c-2)
+- (pending) chore(fase-3): smoke helper auto-kill zombie port (TD-F3-02)
+
+Total: 10 commit.
+
+================================================================================
+## LEARNING CHECKPOINTS (FASE 3)
+================================================================================
+
+1. Zombie port 18082. Kill dari test sebelumnya belum completed → smoke fail 2x.
+   Fix permanen: backend/scripts/smoke.sh auto-kill + start + curl + cleanup.
+
+2. Python triple-quote heredoc → trailing blank line → GOFMT fail.
+   Selalu gofmt -w . setelah python3 edit + verify COUNT=0.
+
+3. Assertion count sebelum s.replace() — WAJIB. P4b lint-fix attempt:
+   assertion "close count=2" salah (real 1), script STOP, zero damage.
+   Pattern: verify → assert → apply.
+
+4. FK constraint di integration test — bookings.leader_user_id FK ke users.id.
+   Pakai seed UUID (11111111-...), bukan uuid.New(). Common trap.
+
+5. NUMERIC(15,2) di PG return "8000000.00", service return "8000000".
+   API_CONTRACT §9.1 = no decimals (source of truth untuk API).
+   DB read = dengan decimals. Dua representasi, dua konteks.
+
+6. Coverage per-package ≠ real. Integration test di tests/integration/
+   tidak masuk hitungan go test ./internal/booking/... -cover.
+   Real coverage 77.8% (dengan -tags integration + in-package integration tests).
+
+7. DelayedPublisher interface refactor — concrete *queue.Connection → interface.
+   Zero production code change, hanya injection untuk testability.
+
+8. staticcheck SA1012: nil context. rdb.SetBit(nil, ...) → silently fail,
+   assertion pass di test tapi test yang diverifikasi FAIL. Fix: context.Background().
+
+================================================================================
+## INCIDENT LOG (FASE 3)
+================================================================================
+
+[2026-10-14 23:14] P2 — OpenCode hallucination #6 (log cross-project)
+  Fakta: log OpenCode user "dii", imports "analytics"/"database" (tidak ada
+  di repo), timestamp 14:44 (real 23:14). Cross-project contamination.
+  Mitigasi: kill session, fresh run.
+
+[2026-10-14 23:15] P2 re-run — PASS (valid session)
+  Bukti: user legion_5a, timestamp real, 7 file sesuai klaim.
+
+[2026-10-15 00:09] P4b — FK violation di integration test
+  Fakta: bookings insert fail FK bookings_leader_user_id_fkey.
+  Root cause: uuid.New() leader_user_id tidak ada di users.
+  Fix: pakai seedCustomerID (11111111-...).
+
+[2026-10-15 00:18] P4c-1 handler_test — SA1012 + Conflict test fail
+  Fakta: rdb.SetBit(nil, ...) → silently fail → test conflict FAIL.
+  staticcheck SA1012 (nil context).
+  Fix: context.Background() + import context.
+
+================================================================================
+## TD REGISTER — FASE 3 STATUS
+================================================================================
+
+CLOSED (fix langsung, sesuai R14 Fix-First Policy):
+- TD-F3-01 ✅ CLOSED — ErrSectionNotFound sentinel (P3b)
+- TD-F3-02 ✅ CLOSED — smoke.sh auto-kill zombie (chore commit)
+- TD-F3-04 ✅ CLOSED — ErrEmptySeatPositions dedicated (P3a)
+- TD-F3-07 ✅ CLOSED — coverage 77.8% (P4c-1 + P4c-2)
+
+NON-TD (workflow lesson, catat di LOGBOOK):
+- TD-F3-03 → pre-flight check go.mod (LOGBOOK lesson #8)
+
+CLOSED by design (spec-compliant, bukan bug):
+- TD-F3-05 → MarkUsed burn-before-section-validate (LOGIC_FLOW §3.3 spec)
+- TD-F3-06 → API vs DB decimal (API_CONTRACT §9.1 + DATABASE_SCHEMA spec)
+
+================================================================================
+## FASE 3 STATUS: CLOSED — COVERAGE 77.8%
+================================================================================
+
+Functional guarantee:
+  ✅ F002 bitmask atomic lock — verified (concurrency 10 → 1 winner)
+  ✅ Partial conflict rollback — verified (bit preserved)
+  ✅ Queue token single-use — verified
+  ✅ 0-based offset GETBIT/SETBIT — verified
+  ✅ DB INSERT integration — verified
+  ✅ Rate limit catalog + booking — wired
+  ✅ Smoke helper — implemented (auto-kill zombie)
+
+Coverage: 77.8% package-level (target realistic ≥70% met; 90% aspirational
+defer FASE 9).
+
+Tests: 20 unit + 3 integration booking + 5 repository integration = 28 test
+  PASS, zero flake.
+
+================================================================================
+END OF FASE 3 CLOSURE
+================================================================================
