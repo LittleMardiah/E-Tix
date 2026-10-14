@@ -143,8 +143,12 @@ func main() {
 		auth.RateLimitMiddlewareScoped(rdb, 10, time.Minute, auth.RateLimitScopeUser),
 		bookingHandler.LockSeats)
 
-	router.GET("/events", catalogHandler.List)
-	router.GET("/events/:event_id", catalogHandler.GetByID)
+	router.GET("/events",
+		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
+		catalogHandler.List)
+	router.GET("/events/:event_id",
+		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
+		catalogHandler.GetByID)
 
 	router.GET("/healthz/liveness", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})
