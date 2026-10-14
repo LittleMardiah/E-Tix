@@ -64,6 +64,13 @@ type fakeBookingReader struct {
 	err  error
 }
 
+func (f *fakeBookingReader) GetByID(_ context.Context, _ uuid.UUID) (*BookingSnapshot, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.snap, nil
+}
+
 func (f *fakeBookingReader) GetByIDForUpdate(_ context.Context, _ pgx.Tx, _ uuid.UUID) (*BookingSnapshot, error) {
 	if f.err != nil {
 		return nil, f.err

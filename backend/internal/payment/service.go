@@ -20,9 +20,10 @@ type TxBeginner interface {
 }
 
 // BookingReader is the minimum booking-side interface needed by the payment
-// service. Implemented by booking.PostgresBookingRepository. Kept local to
-// avoid a circular import (booking does not import payment).
+// service. Kept as an interface (not a concrete import) to keep the payment
+// package self-contained and test-friendly. Implemented at composition time.
 type BookingReader interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*BookingSnapshot, error)
 	GetByIDForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*BookingSnapshot, error)
 }
 
@@ -34,13 +35,6 @@ type BookingSnapshot struct {
 	PaymentMode   string
 	PaymentStatus string
 	ExpiresAt     time.Time
-}
-
-// BookingReaderFunc adapts a function to BookingReader (test-friendly).
-type BookingReaderFunc func(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*BookingSnapshot, error)
-
-func (f BookingReaderFunc) GetByIDForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*BookingSnapshot, error) {
-	return f(ctx, tx, id)
 }
 
 // PaymentService orchestrates the payment flow. FASE 4 scope: initiate only.
