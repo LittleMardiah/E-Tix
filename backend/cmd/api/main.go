@@ -17,6 +17,7 @@ import (
 	"github.com/LittleMardiah/E-Tix/backend/internal/middleware"
 	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
+	"github.com/LittleMardiah/E-Tix/backend/internal/worker"
 )
 
 func parseOrigins(csv string) []string {
@@ -77,6 +78,10 @@ func main() {
 		logger.Fatal("failed to init rabbitmq connection", zap.Error(err))
 	}
 	defer func() { _ = mq.Close() }()
+
+	blacklistRepo := worker.NewPgxBlacklistRepo(pgPool)
+	fanWorker := worker.NewFanScoreWorker(mq, rdb, blacklistRepo, logger)
+	go func() { _ = fanWorker.Run(context.Background()) }()
 
 	port := os.Getenv("PORT")
 	if port == "" {
