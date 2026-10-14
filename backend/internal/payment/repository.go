@@ -20,6 +20,9 @@ type PaymentObligationRepository interface {
 	GetByIdempotencyKey(ctx context.Context, key string) (*PaymentObligation, error)
 	// ListByBooking returns all obligations for a booking, ordered by id ASC.
 	ListByBooking(ctx context.Context, bookingID uuid.UUID) ([]PaymentObligation, error)
+
+	// GetByIDForUpdate reads an obligation FOR UPDATE inside the caller's tx.
+	GetByIDForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*PaymentObligation, error)
 }
 
 // PostgresPaymentObligationRepository is the PostgreSQL implementation.
@@ -117,4 +120,16 @@ func (r *PostgresPaymentObligationRepository) ListByBooking(ctx context.Context,
 		out = append(out, *o)
 	}
 	return out, rows.Err()
+}
+
+func (r *PostgresPaymentObligationRepository) GetByIDForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*PaymentObligation, error) {
+	row := tx.QueryRow(ctx, `SELECT `+obligationColumns+` FROM payment_obligations WHERE id = $1 FOR UPDATE`, id)
+	o, err := scanObligation(row)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrObligationNotFound
+		}
+		return nil, err
+	}
+	return o, nil
 }

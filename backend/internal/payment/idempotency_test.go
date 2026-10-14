@@ -7,6 +7,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,6 +36,10 @@ func (f *fakeRepoL2) GetByIdempotencyKey(ctx context.Context, key string) (*Paym
 }
 func (f *fakeRepoL2) ListByBooking(ctx context.Context, bookingID uuid.UUID) ([]PaymentObligation, error) {
 	return nil, nil
+}
+
+func (f *fakeRepoL2) GetByIDForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*PaymentObligation, error) {
+	return nil, ErrObligationNotFound
 }
 
 func newTestIdempotencyService(t *testing.T, repo PaymentObligationRepository) (*IdempotencyService, *miniredis.Miniredis) {
