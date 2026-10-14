@@ -208,3 +208,42 @@ Blocker: TIDAK ADA.
 ---
 
 END OF AUDIT TOTAL FASE 0-3
+
+---
+
+## 10. BEHAVIORAL VERIFICATION TD FIXED (2026-10-15)
+
+Audit tambahan setelah feedback User: TD register label saja TIDAK CUKUP.
+Harus verify behavioral (file content + symbol + wire).
+
+| TD | Status | Behavioral Evidence |
+|----|--------|---------------------|
+| TD-001 | ✅ FIXED | `.editorconfig` exists: `end_of_line=lf`, `insert_final_newline=true`, `trim_trailing_whitespace=true` |
+| TD-005 | ✅ FIXED | `docker/rabbitmq/Dockerfile`: `chmod 644` + `rabbitmq-plugins enable --offline rabbitmq_delayed_message_exchange`. `docker-compose.yml` references `build: ./docker/rabbitmq`. |
+| TD-010 | ✅ FIXED | `backend/internal/auth/middleware.go`: `RateLimitScopeIP`, `RateLimitScopeUser`, `RateLimitScopeUserViaToken` |
+| TD-011 | ✅ FIXED | `backend/cmd/api/main.go:126`: `/users/me` with `RateLimitMiddlewareScoped(rdb, 100, time.Minute, RateLimitScopeUser)` |
+| TD-014 | ⏸️ DEFERRED | `postman_collection.json` MISSING — sesuai defer |
+| TD-004 | ⏸️ DEFERRED | Cloud provisioning — manual dashboard step |
+| TD-006 | ⏸️ DEFERRED | Password dev-only, user decided NO rotate |
+| TD-008 | ⏸️ DEFERRED | npm vulns — butuh breaking major upgrade |
+| TD-F3-08 | ⏸️ DEFERRED | Chaos test — butuh Circuit Breaker (dependency) |
+
+**Note kesalahan audit awal**: Awalnya grep `backend/Dockerfile` (path salah),
+menghasilkan false positive "TD-005 FIXED tapi file missing". Setelah `find . -name "Dockerfile*"`:
+ternyata di `docker/rabbitmq/Dockerfile` (monorepo pattern — docker files di root, bukan di backend/).
+
+**Lesson**: audit script WAJIB `find` dulu untuk locate, baru grep konten.
+Manual grep tanpa `find` = blind spot path.
+
+## 11. OPENCODE INTEGRATION (FASE 4+ AUDIT)
+
+Untuk audit fase berikutnya, pendekatan hybrid:
+1. **OpenCode** — discovery scan (find + grep + raw output) → hemat waktu
+2. **User (terminal)** — verify raw output independen
+3. **Reviewer (DeepSeek)** — interpret + cross-check
+
+Pure manual = blind spot. Pure OpenCode = hallucination risk. Hybrid = robust.
+
+---
+
+END OF CORRECTION NOTE
