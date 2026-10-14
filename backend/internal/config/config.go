@@ -26,6 +26,18 @@ type Config struct {
 	PaymentGatewayURL    string
 	PaymentGatewayAPIKey string
 
+	// Midtrans (Sandbox default). Activated when TestMode != "true".
+	MidtransServerKey    string
+	MidtransClientKey    string
+	MidtransIsProduction string
+
+	// PaymentGatewayWebhookSecret is the HMAC secret for generic webhook
+	// signature validation (in addition to Midtrans SHA512 formula).
+	PaymentGatewayWebhookSecret string
+
+	// TestMode enables MockPaymentAdapter (dev/CI). "true" → mock, else real.
+	TestMode string
+
 	TwilioAccountSID string
 	TwilioAuthToken  string
 	SendgridAPIKey   string
@@ -65,6 +77,12 @@ func Load() (*Config, error) {
 
 		PaymentGatewayURL:    os.Getenv("PAYMENT_GATEWAY_URL"),
 		PaymentGatewayAPIKey: os.Getenv("PAYMENT_GATEWAY_API_KEY"),
+
+		MidtransServerKey:           os.Getenv("MIDTRANS_SERVER_KEY"),
+		MidtransClientKey:           os.Getenv("MIDTRANS_CLIENT_KEY"),
+		MidtransIsProduction:        os.Getenv("MIDTRANS_IS_PRODUCTION"),
+		PaymentGatewayWebhookSecret: os.Getenv("PAYMENT_GATEWAY_WEBHOOK_SECRET"),
+		TestMode:                    os.Getenv("TEST_MODE"),
 
 		TwilioAccountSID: os.Getenv("TWILIO_ACCOUNT_SID"),
 		TwilioAuthToken:  os.Getenv("TWILIO_AUTH_TOKEN"),
