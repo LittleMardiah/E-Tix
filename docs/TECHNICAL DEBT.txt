@@ -64,7 +64,7 @@ Referensi: docs/CONTOH.txt
 | TD-004 | SEDANG    | ⏸️ DEFERRED  | Cloud provisioning (Upstash/CloudAMQP/Render) |
 | TD-005 | SEDANG    | ✅ FIXED     | RabbitMQ delayed message plugin               |
 | TD-006 | RENDAH    | ⏸️ DEFERRED  | Supabase password exposure (dev)              |
-| TD-008 | SEDANG    | 🔄 OPEN      | npm audit — 0 critical, 16 non-crit remaining |
+| TD-008 | SEDANG    | ⏸️ DEFERRED  | npm audit — 0 critical, 16 non-crit (breaking major) |
 | TD-010 | RENDAH    | ✅ FIXED     | RateLimit scope USER/USER_VIA_TOKEN           |
 | TD-011 | RENDAH    | ✅ FIXED     | GET /users/me rate limit                      |
 | TD-014 | SEDANG    | ⏸️ DEFERRED  | API tests Newman                              |
@@ -142,12 +142,16 @@ Referensi: docs/LOGBOOK.txt incident log FASE 0.
 
 ID: TD-008
 Tanggal: 2026-10-14
-Status: 🔄 OPEN
+Status: ⏸️ DEFERRED
 Prioritas: SEDANG
 Deskripsi: npm audit frontend. Setelah upgrade Next 14.2.35 -> 15.5.27
 (commit c416f32), status: 0 critical, 16 non-critical remaining
 (6 moderate + 10 high). Sisanya transitive dari @ducanh2912/next-pwa@10.2.9
 + tailwindcss@3.4.x, butuh breaking upgrade (Next 16 / Tailwind 4 / next-pwa 6).
+Alasan Deferred: Situasi tertentu — fix butuh breaking major upgrade (3
+major bumps) di luar scope FASE 0-2. Risk tinggi regression di landing
+page + PWA + E2E test. Trigger resolve: sebelum production deploy / demo
+publik (FASE 9).
 Root Cause: toolchain major versions dari FASE 0 T23 create-next-app default.
 Rencana Fix: Sprint dedicated FASE 9 polish. Upgrade Next 16 + Tailwind 4 +
 next-pwa 6 + re-test PWA + E2E full. Trigger resolve: sebelum production
