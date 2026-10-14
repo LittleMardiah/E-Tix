@@ -77,6 +77,7 @@ type PaymentGateway interface {
 
 	// ValidateWebhookSignature verifies the raw signature for an inbound
 	// webhook. Implementations may extract from headers (primary) or fall
-	// back to body.signature (defensive, see ROADMAP FASE 4 §3.5).
+	// back to the body signature field (Midtrans native: "signature_key";
+	// generic: "signature") — defensive dual-source, per ROADMAP FASE 4 §3.5.
 	ValidateWebhookSignature(headers map[string]string, payload []byte) error
 }

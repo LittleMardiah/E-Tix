@@ -134,7 +134,16 @@ func (m *MidtransPaymentAdapter) Initiate(ctx context.Context, req InitiateReque
 	if req.Amount == "" {
 		return nil, fmt.Errorf("midtrans: amount is required")
 	}
-	orderID := "etix-" + req.BookingID + "-" + time.Now().Format("20060102150405")
+	if req.BookingID == "" {
+		return nil, fmt.Errorf("midtrans: booking_id is required")
+	}
+	if req.Method != "" && req.Method != "VA" {
+		return nil, fmt.Errorf("midtrans: method %q not supported (VA only in FASE 4)", req.Method)
+	}
+	// order_id must be unique per Midtrans charge attempt. SPLIT mode may
+	// fire N charges on the same booking within the same second, so a
+	// second-resolution timestamp alone collides. Append 4-byte random hex.
+	orderID := "etix-" + req.BookingID + "-" + randomHex(4)
 	chargeReq := midtransChargeReq{
 		PaymentType: "bank_transfer",
 		TransactionDetail: midtransTransactionDetail{
