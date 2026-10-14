@@ -8,11 +8,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
 )
+
+// TxBeginner abstracts the transaction opener for testability. In production
+// it is *pgxpool.Pool; in unit tests, a fake returning a stub pgx.Tx.
+type TxBeginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
 
 // BookingReader is the minimum booking-side interface needed by the payment
 // service. Implemented by booking.PostgresBookingRepository. Kept local to
@@ -40,7 +45,7 @@ func (f BookingReaderFunc) GetByIDForUpdate(ctx context.Context, tx pgx.Tx, id u
 
 // PaymentService orchestrates the payment flow. FASE 4 scope: initiate only.
 type PaymentService struct {
-	db         *pgxpool.Pool
+	db         TxBeginner
 	repo       PaymentObligationRepository
 	booking    BookingReader
 	gateway    adapter.PaymentGateway
@@ -49,7 +54,7 @@ type PaymentService struct {
 
 // NewPaymentService wires the service. booking may be nil for read-only paths.
 func NewPaymentService(
-	db *pgxpool.Pool,
+	db TxBeginner,
 	repo PaymentObligationRepository,
 	booking BookingReader,
 	gateway adapter.PaymentGateway,
