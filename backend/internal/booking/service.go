@@ -16,15 +16,20 @@ import (
 
 const lockTTLSeconds = 180
 
+// DelayedPublisher abstracts the delayed message publisher for testability.
+type DelayedPublisher interface {
+	PublishDelayed(ctx context.Context, queueName string, payload []byte, delay time.Duration) error
+}
+
 type BookingService struct {
 	repo       BookingRepository
 	rdb        *redis.Client
 	scripts    *LuaScripts
 	queueToken *queue.QueueTokenService
-	queueConn  *queue.Connection
+	queueConn  DelayedPublisher
 }
 
-func NewBookingService(repo BookingRepository, rdb *redis.Client, scripts *LuaScripts, queueToken *queue.QueueTokenService, queueConn *queue.Connection) *BookingService {
+func NewBookingService(repo BookingRepository, rdb *redis.Client, scripts *LuaScripts, queueToken *queue.QueueTokenService, queueConn DelayedPublisher) *BookingService {
 	return &BookingService{repo: repo, rdb: rdb, scripts: scripts, queueToken: queueToken, queueConn: queueConn}
 }
 
