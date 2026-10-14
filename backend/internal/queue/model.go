@@ -24,3 +24,15 @@ type FanScoreMetadata struct {
 	FinalScore int       `json:"final_score"`
 	Timestamp  time.Time `json:"timestamp"`
 }
+
+// VerifyCaptchaRequest is the request body for POST /queue/verify-captcha.
+type VerifyCaptchaRequest struct {
+	ChallengeID string `json:"challenge_id"`
+	Solution    string `json:"solution"`
+}
+
+// VerifyCaptchaResponse is the response body for POST /queue/verify-captcha.
+type VerifyCaptchaResponse struct {
+	Verified   bool   `json:"verified"`
+	QueueToken string `json:"queue_token"`
+}
