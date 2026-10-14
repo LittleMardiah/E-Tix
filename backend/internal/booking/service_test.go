@@ -14,6 +14,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,6 +81,14 @@ func (f *fakeRepo) CreateBooking(_ context.Context, b *Booking) error {
 	}
 	f.createdBooking = b
 	return nil
+}
+
+func (f *fakeRepo) GetByID(_ context.Context, _ uuid.UUID) (*Booking, error) {
+	return nil, ErrBookingNotFound
+}
+
+func (f *fakeRepo) GetByIDForUpdate(_ context.Context, _ pgx.Tx, _ uuid.UUID) (*Booking, error) {
+	return nil, ErrBookingNotFound
 }
 
 // fakePublisher implements DelayedPublisher.
