@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/auth"
+	"github.com/LittleMardiah/E-Tix/backend/internal/booking"
 	"github.com/LittleMardiah/E-Tix/backend/internal/config"
 	"github.com/LittleMardiah/E-Tix/backend/internal/db"
 	"github.com/LittleMardiah/E-Tix/backend/internal/event"
@@ -94,6 +95,14 @@ func main() {
 	queueSvc := queue.NewQueueService(fanScoreSvc, queueTokenSvc, captchaSvc, eventRepo, rdb)
 	queueHandler := queue.NewQueueHandler(queueSvc, logger)
 
+	bookingRepo := booking.NewPostgresBookingRepository(pgPool)
+	luaScripts, err := booking.LoadLuaScripts(context.Background(), rdb)
+	if err != nil {
+		logger.Fatal("failed to load lua scripts", zap.Error(err))
+	}
+	bookingSvc := booking.NewBookingService(bookingRepo, rdb, luaScripts)
+	bookingHandler := booking.NewBookingHandler(bookingSvc, logger)
+
 	catalogRepo := event.NewPostgresEventRepository(pgPool)
 	catalogSvc := event.NewEventService(catalogRepo)
 	catalogHandler := event.NewEventHandler(catalogSvc)
@@ -124,6 +133,11 @@ func main() {
 		auth.AuthMiddleware(jwtSvc, blacklistSvc),
 		auth.RateLimitMiddlewareScoped(rdb, 3, 5*time.Minute, auth.RateLimitScopeIP),
 		queueHandler.VerifyCaptcha)
+
+	router.GET("/events/:event_id/sections/:section_id/seats",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser),
+		bookingHandler.GetSeatAvailability)
 
 	router.GET("/events", catalogHandler.List)
 	router.GET("/events/:event_id", catalogHandler.GetByID)
