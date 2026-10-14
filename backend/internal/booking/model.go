@@ -1,10 +1,22 @@
 package booking
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+const MaxGroupSeats = 10
+
+var ErrSectionNotFound = errors.New("booking: section not found")
+var ErrSeatsNotAvailable = errors.New("booking: seats not available")
+var ErrTokenAlreadyUsed = errors.New("booking: queue token already used")
+var ErrInvalidPaymentMode = errors.New("booking: invalid payment mode")
+var ErrMaxGroupSeatsExceeded = errors.New("booking: max group seats exceeded")
+var ErrSeatOutOfRange = errors.New("booking: seat out of range")
+var ErrEmptySeatPositions = errors.New("booking: seat positions empty")
+var ErrQueueTokenInvalid = errors.New("booking: queue token invalid")
 
 type Booking struct {
 	ID            uuid.UUID `json:"id"`

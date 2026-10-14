@@ -100,7 +100,7 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to load lua scripts", zap.Error(err))
 	}
-	bookingSvc := booking.NewBookingService(bookingRepo, rdb, luaScripts)
+	bookingSvc := booking.NewBookingService(bookingRepo, rdb, luaScripts, queueTokenSvc, mq)
 	bookingHandler := booking.NewBookingHandler(bookingSvc, logger)
 
 	catalogRepo := event.NewPostgresEventRepository(pgPool)
