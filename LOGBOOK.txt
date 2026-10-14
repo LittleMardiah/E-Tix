@@ -604,3 +604,86 @@ Lesson checkpoint:
 ================================================================================
 END OF DEBT FIX SESSION
 ================================================================================
+
+================================================================================
+## FASE 2 — BEHAVIORAL INGRESS (F001) — CLOSURE (2026-10-14)
+================================================================================
+
+Timeline commit FASE 2:
+- 20d72fa  queue skeleton + fan score engine (P1)
+- eecee3d  ingress middleware + delayed publisher + rabbitmq plugin chmod (P2)
+- 25cca01  fan score worker + bot detection (P3)
+- 7227d20  queue token service + captcha service (P4)
+- 9d90a33  queue handlers + service + event repo + wire (P5)
+- 5232597  unit tests queue (P6a)
+- 4ce5073  integration + security tests queue (P6b)
+- 2d111d7  fix ROADMAP DoD tier boundary inconsistency (doc)
+- 8f0064e  handler + service + middleware unit tests (coverage boost)
+
+Total: 9 commit.
+
+================================================================================
+## LEARNING CHECKPOINTS (FASE 2)
+================================================================================
+
+1. Docker ADD https:// hard-codes mode 0600 (root:root). Plugin .ez tidak
+   bisa dibaca runtime user rabbitmq → eacces.
+   Fix: RUN chmod 644 setelah ADD sebelum enable plugin.
+
+2. Plugin [E ] enabled != [E*] running. Verify asterisk.
+
+3. Fan Score Tier (>90) != Loyalty Tier (>=90). Dua domain berbeda:
+   - Fan Score (F001): base + dynamic, boundary >90 → TIER_1.
+   - Loyalty Tier: base + total_purchases*10, boundary >=90 → TIER_1.
+   PRD §F001 + LOGIC_FLOW §2.2 = source of truth untuk fan tier.
+
+4. RabbitMQ delayed exchange butuh arg x-delayed-type.
+   PublishDelayed pakai header x-delay (int64 ms).
+
+5. queue_token single-use: Redis SET NX EX 300. Validate (JWT) != MarkUsed.
+
+6. Test phone regex: `phone ~* '^\+?[0-9]{10,15}$'`. Generator phone pakai
+   digits, bukan hex.
+
+7. Coverage boost tanpa TD: prompt v2 (P6c) → 24.1% → 64.7%.
+   Sisa gap: infra-heavy (delayed, publisher, consumer, repository,
+   TurnstileCaptcha) butuh external service.
+
+================================================================================
+## INCIDENT LOG (FASE 2)
+================================================================================
+
+[2026-10-14 ~20:40] P2 — RabbitMQ plugin chmod bug
+  Fakta: plugin [E] enabled tapi not loaded karena ADD https mode 600.
+  RabbitMQ user tidak bisa baca file → eacces.
+  Fix: RUN chmod 644. Rebuild → [E*] loaded.
+
+[2026-10-14 ~21:10] P4 — OpenCode hallucination #5
+  Fakta: STOP di STEP 1, log fabricated (klaim file berisi struct tidak ada).
+  Verify: file TIDAK berubah.
+  Mitigasi: fallback manual cat heredoc (3 block). Evaluasi per-task,
+  bukan permanent ban.
+
+[2026-10-14 ~21:28] P6a-v1 — Prompt test table wrong (my fault)
+  Fakta: test table (90→TIER_1) konflik dengan kode (>90→TIER_1).
+  OpenCode STOP valid. Diagnose "off-by-one" SALAH — konflated Fan tier
+  vs Loyalty tier.
+  Fix: prompt v2 dengan tabel benar (91→TIER_1, 90→TIER_2).
+
+[2026-10-14 ~21:53] P6b — Integration phone regex fail
+  Fakta: run pertama gagal CHECK phone_valid (phone hex). Fix regex.
+
+================================================================================
+## DOC CONSISTENCY FIX
+================================================================================
+
+Fixed langsung (bukan TD):
+- ROADMAP FASE 2.txt line 745: DoD tier boundary dari "90 → TIER_1"
+  (salah) → "91 → TIER_1, 90 → TIER_2 (boundary atas)".
+  Commit 2d111d7.
+- Coverage boost P6c: 24.1% → 64.7%. Commit 8f0064e.
+  Target 70% aspirational. Gap butuh infra test (FASE 3+).
+
+================================================================================
+END OF FASE 2 CLOSURE
+================================================================================
