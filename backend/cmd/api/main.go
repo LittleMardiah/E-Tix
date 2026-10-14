@@ -17,6 +17,8 @@ import (
 	"github.com/LittleMardiah/E-Tix/backend/internal/db"
 	"github.com/LittleMardiah/E-Tix/backend/internal/event"
 	"github.com/LittleMardiah/E-Tix/backend/internal/middleware"
+	"github.com/LittleMardiah/E-Tix/backend/internal/payment"
+	paymentadapter "github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
 	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
 	"github.com/LittleMardiah/E-Tix/backend/internal/worker"
@@ -103,6 +105,20 @@ func main() {
 	bookingSvc := booking.NewBookingService(bookingRepo, rdb, luaScripts, queueTokenSvc, mq)
 	bookingHandler := booking.NewBookingHandler(bookingSvc, logger)
 
+	paymentRepo := payment.NewPostgresPaymentObligationRepository(pgPool)
+	paymentIdem := payment.NewIdempotencyService(rdb, paymentRepo)
+	paymentBookingReader := payment.NewBookingReaderFromRepo(bookingRepo)
+
+	var paymentGateway paymentadapter.PaymentGateway
+	if cfg.TestMode == "true" {
+		paymentGateway = paymentadapter.NewMockPaymentAdapter("https://mock.pay.local")
+	} else {
+		paymentGateway = paymentadapter.NewMidtransPaymentAdapter(cfg.MidtransServerKey, cfg.MidtransIsProduction == "true")
+	}
+
+	paymentSvc := payment.NewPaymentService(pgPool, paymentRepo, paymentBookingReader, paymentGateway, paymentIdem)
+	paymentHandler := payment.NewPaymentHandler(paymentSvc, paymentRepo, paymentBookingReader, logger)
+
 	catalogRepo := event.NewPostgresEventRepository(pgPool)
 	catalogSvc := event.NewEventService(catalogRepo)
 	catalogHandler := event.NewEventHandler(catalogSvc)
@@ -142,6 +158,15 @@ func main() {
 		auth.AuthMiddleware(jwtSvc, blacklistSvc),
 		auth.RateLimitMiddlewareScoped(rdb, 10, time.Minute, auth.RateLimitScopeUser),
 		bookingHandler.LockSeats)
+
+	router.POST("/bookings/:booking_id/payments",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 30, time.Minute, auth.RateLimitScopeUser),
+		paymentHandler.InitiatePayments)
+	router.GET("/bookings/:booking_id/status",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser),
+		paymentHandler.GetBookingStatus)
 
 	router.GET("/events",
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
