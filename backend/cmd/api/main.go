@@ -138,6 +138,10 @@ func main() {
 		auth.AuthMiddleware(jwtSvc, blacklistSvc),
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser),
 		bookingHandler.GetSeatAvailability)
+	router.POST("/events/:event_id/sections/:section_id/seats",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 10, time.Minute, auth.RateLimitScopeUser),
+		bookingHandler.LockSeats)
 
 	router.GET("/events", catalogHandler.List)
 	router.GET("/events/:event_id", catalogHandler.GetByID)
