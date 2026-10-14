@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -298,4 +299,75 @@ func (s *PaymentService) buildInitiateResponseFromObligation(ctx context.Context
 		pointers = append(pointers, &all[i])
 	}
 	return s.buildResponse(first.BookingID, pointers), nil
+}
+
+// HandleWebhook processes an inbound payment gateway webhook.
+//
+// Per ROADMAP FASE 4 §3.5 + FLAG #7:
+//   - Signature validated via adapter (header primary, body fallback).
+//   - PENDING / CHALLENGE → ACK without DB mutation (transitional).
+//   - SUCCESS / SETTLEMENT / CAPTURE → PAID.
+//   - DENY / CANCEL / EXPIRE / FAILURE → FAILED.
+//   - Duplicate PAID webhook → no-op, returns nil.
+//
+// Callers return HTTP 200 when err == nil, even for transitional statuses
+// (prevents retry storms).
+func (s *PaymentService) HandleWebhook(ctx context.Context, payload []byte, headers map[string]string) error {
+	if err := s.gateway.ValidateWebhookSignature(headers, payload); err != nil {
+		return fmt.Errorf("%w: %v", ErrWebhookInvalidSig, err)
+	}
+
+	var p WebhookPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("payment: unmarshal webhook: %w", err)
+	}
+	if p.ExternalTransactionID == "" {
+		return fmt.Errorf("payment: webhook missing external_transaction_id")
+	}
+
+	newStatus := classifyWebhookStatus(p.Status)
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("payment: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	obligation, err := s.repo.GetByExternalTxIDForUpdate(ctx, tx, p.ExternalTransactionID)
+	if err != nil {
+		return err
+	}
+
+	// Transitional (PENDING/CHALLENGE) → ACK, no mutation.
+	if newStatus == "" {
+		return nil
+	}
+	// Idempotent: already PAID and inbound is PAID → no-op.
+	if obligation.Status == StatusPaid && newStatus == StatusPaid {
+		return nil
+	}
+	// Already in final state, inbound would downgrade → ignore.
+	if obligation.Status == StatusPaid && newStatus == StatusFailed {
+		return nil
+	}
+
+	if err := s.repo.UpdateStatusWithWebhook(ctx, tx, obligation.ID, newStatus); err != nil {
+		return fmt.Errorf("payment: update status: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// classifyWebhookStatus maps a provider status string to an internal
+// payment_status_enum value. Returns "" for transitional states that
+// should NOT be persisted.
+func classifyWebhookStatus(s string) string {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "SUCCESS", "SETTLEMENT", "CAPTURE":
+		return StatusPaid
+	case "DENY", "CANCEL", "EXPIRE", "FAILURE":
+		return StatusFailed
+	default:
+		// PENDING, CHALLENGE, unknown — do not mutate DB.
+		return ""
+	}
 }

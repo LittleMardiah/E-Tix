@@ -23,6 +23,13 @@ type PaymentObligationRepository interface {
 
 	// GetByIDForUpdate reads an obligation FOR UPDATE inside the caller's tx.
 	GetByIDForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*PaymentObligation, error)
+
+	// GetByExternalTxIDForUpdate locks an obligation by external_transaction_id.
+	// Used by the webhook receiver to serialize concurrent webhook deliveries.
+	GetByExternalTxIDForUpdate(ctx context.Context, tx pgx.Tx, txID string) (*PaymentObligation, error)
+
+	// UpdateStatusWithWebhook sets status + webhook_received_at atomically.
+	UpdateStatusWithWebhook(ctx context.Context, tx pgx.Tx, id uuid.UUID, status string) error
 }
 
 // PostgresPaymentObligationRepository is the PostgreSQL implementation.
@@ -132,4 +139,24 @@ func (r *PostgresPaymentObligationRepository) GetByIDForUpdate(ctx context.Conte
 		return nil, err
 	}
 	return o, nil
+}
+
+func (r *PostgresPaymentObligationRepository) GetByExternalTxIDForUpdate(ctx context.Context, tx pgx.Tx, txID string) (*PaymentObligation, error) {
+	row := tx.QueryRow(ctx, `SELECT `+obligationColumns+` FROM payment_obligations WHERE external_transaction_id = $1 FOR UPDATE`, txID)
+	o, err := scanObligation(row)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrWebhookNotFound
+		}
+		return nil, err
+	}
+	return o, nil
+}
+
+func (r *PostgresPaymentObligationRepository) UpdateStatusWithWebhook(ctx context.Context, tx pgx.Tx, id uuid.UUID, status string) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE payment_obligations
+		SET status = $1, webhook_received_at = NOW(), updated_at = NOW()
+		WHERE id = $2`, status, id)
+	return err
 }

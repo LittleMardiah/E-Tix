@@ -168,6 +168,9 @@ func main() {
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser),
 		paymentHandler.GetBookingStatus)
 
+	// Public webhook — auth via signature (adapter), no rate limit per API_CONTRACT §9.5.
+	router.POST("/webhook/payment", paymentHandler.HandleWebhook)
+
 	router.GET("/events",
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
 		catalogHandler.List)

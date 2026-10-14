@@ -42,6 +42,14 @@ func (f *fakeRepoL2) GetByIDForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UU
 	return nil, ErrObligationNotFound
 }
 
+func (f *fakeRepoL2) GetByExternalTxIDForUpdate(ctx context.Context, tx pgx.Tx, txID string) (*PaymentObligation, error) {
+	return nil, ErrWebhookNotFound
+}
+
+func (f *fakeRepoL2) UpdateStatusWithWebhook(ctx context.Context, tx pgx.Tx, id uuid.UUID, status string) error {
+	return nil
+}
+
 func newTestIdempotencyService(t *testing.T, repo PaymentObligationRepository) (*IdempotencyService, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)

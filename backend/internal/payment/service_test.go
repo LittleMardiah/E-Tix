@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
@@ -197,6 +198,22 @@ func (m *memObligationRepo) ListByBooking(_ context.Context, bookingID uuid.UUID
 
 func (m *memObligationRepo) GetByIDForUpdate(_ context.Context, _ pgx.Tx, id uuid.UUID) (*PaymentObligation, error) {
 	return m.GetByID(context.Background(), id)
+}
+
+func (m *memObligationRepo) GetByExternalTxIDForUpdate(_ context.Context, _ pgx.Tx, txID string) (*PaymentObligation, error) {
+	return m.GetByExternalTxID(context.Background(), txID)
+}
+
+func (m *memObligationRepo) UpdateStatusWithWebhook(_ context.Context, _ pgx.Tx, id uuid.UUID, status string) error {
+	m.ensure()
+	o, ok := m.byID[id]
+	if !ok {
+		return ErrObligationNotFound
+	}
+	o.Status = status
+	now := time.Now().UTC()
+	o.WebhookReceivedAt = &now
+	return nil
 }
 
 // ============================================================
