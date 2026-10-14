@@ -124,15 +124,18 @@ Referensi: docs/LOGBOOK.txt incident log FASE 0.
 ID: TD-008
 Tanggal: 2026-10-14
 Status: OPEN
-Prioritas: RENDAH
-Deskripsi: npm audit deteksi 12 vulnerabilities (1 critical) dari toolchain
-Next.js 14 (create-next-app template default).
-Root Cause: Next.js 14 dep tree punya beberapa transitive vulns yang belum
-di-fix upstream di line 14.x. Next.js 15+ mungkin resolve tapi breaking.
-Rencana Fix: Review npm audit detail, upgrade minor/patch yang aman. Kalau
-butuh major (Next 15+), evaluasi breaking risk di FASE 9 polish. Untuk
-portfolio scope, acceptable sementara.
-Referensi: Log T23 (frontend init), ROADMAP FASE 0.txt §4 E5-S1-T23.
+Prioritas: SEDANG
+Deskripsi: npm audit frontend. Setelah upgrade Next 14.2.35 -> 15.5.27
+(commit c416f32), status: 0 critical, 16 non-critical remaining
+(6 moderate + 10 high). Sisanya transitive dari @ducanh2912/next-pwa@10.2.9
++ tailwindcss@3.4.x, butuh breaking upgrade (Next 16 / Tailwind 4 / next-pwa 6).
+Root Cause: toolchain major versions dari FASE 0 T23 create-next-app default.
+Rencana Fix: Sprint dedicated FASE 9 polish. Upgrade Next 16 + Tailwind 4 +
+next-pwa 6 + re-test PWA + E2E full. Trigger resolve: sebelum production
+deploy / demo publik.
+Catatan: 1 critical CVE (RCE Image Optimization di Next 14.2.35) SUDAH
+di-resolve via upgrade ke 15.5.27.
+Referensi: commit c416f32, log TD-E (audit ID per npm registry).
 
 
 ID: TD-010

@@ -559,3 +559,48 @@ Pattern: hallucination sering di prompt panjang (>40 baris) atau
 multi-file edit. Mitigasi: prompt kecil (max 5-7 command), RAW paste,
 verify user independently.
 ================================================================================
+
+================================================================================
+## APPENDIX — DEBT FIX SESSION (2026-10-14, ~14:00-20:00 WIB)
+================================================================================
+
+Tujuan: selesaikan OPEN TD (bukan DEFERRED) sebelum lanjut FASE 2.
+
+Timeline commit:
+- 2e2b9b6  fix TD-001 (editorconfig) + TD-010 (rate limit scope) + TD-011 (/users/me)
+- 8f60a36  fix TD-005 (rabbitmq delayed message plugin via custom Dockerfile)
+- c416f32  fix TD-008 critical (Next 14.2.35 -> 15.5.27)
+
+TD final status:
+- FIXED: TD-001, TD-005, TD-010, TD-011.
+- MOVED to LOGBOOK: TD-002, TD-003, TD-007 (hallucination = tooling, bukan hutang kode).
+- DEFERRED (valid reason): TD-004 (cloud), TD-006 (password), TD-014 (Newman).
+- PARTIAL / OPEN-SEDANG: TD-008 (16 non-crit remain, defer FASE 9).
+
+Incident log:
+[2026-10-14 ~14:00] Sesi TD-BC — OpenCode hallucination #4
+  Fakta: klaim .editorconfig + RateLimitMiddlewareScoped + 6 routes updated.
+  Verify: NO file changed, git status EMPTY.
+  Root cause: session contaminated (pattern B4 + P8a).
+  Mitigasi: kill switch §16.6. Fallback manual via python3.
+  Reference: hallu incidents appendix (2026-10-03, 2026-10-14).
+
+[2026-10-14 ~15:00] TD-BC post-fix — gofmt tertinggal
+  Fakta: middleware.go blank line + import order. CI gofmt fail.
+  Fix: gofmt -w, use output length (bukan exit code) untuk verify.
+
+Lesson checkpoint:
+1. `gofmt -l` exit 0 always. Verify via output length:
+   `[ "$(gofmt -l f | wc -l)" -eq 0 ]`.
+2. `npm view <pkg>@<major>` bisa return 404 jika major tidak ada.
+   Cek `dist-tags` untuk verifikasi.
+3. Next 15 auto-modify tsconfig (target ES2017). Expected behavior, bukan drift.
+4. Next.js 14.2.35 = last 14.x, EOL security. Branch patched = 15.5.x+.
+5. npm audit critical di Next 14: RCE Image Optimization (GHSA-2xp9-vwfh-vxw4).
+   Range <15.5.24. Fix minimal 15.5.24.
+6. Bad grep pattern `DAH$` bisa false-positive match "RENDAH"/"SUDAH".
+   Verify pattern dengan raw output, jangan assume.
+
+================================================================================
+END OF DEBT FIX SESSION
+================================================================================
