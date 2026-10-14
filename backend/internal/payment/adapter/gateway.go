@@ -46,6 +46,15 @@ type PayoutResponse struct {
 	PayoutID string
 }
 
+// StatusResponse is the normalized transaction status for reconciliation.
+// Provider-specific statuses are mapped to the transaction_status field
+// (pending, settlement, capture, deny, cancel, expire, refund, etc.).
+type StatusResponse struct {
+	TransactionStatus string
+	FraudStatus       string
+	Amount            string
+}
+
 // PaymentGateway is the provider-agnostic payment interface.
 //
 // Implementations:
@@ -61,6 +70,10 @@ type PaymentGateway interface {
 	// Payout sends funds to a seller (used by resale, FASE 7). Interface-only
 	// for FASE 4 — never called by the FASE 4 acceptance tests.
 	Payout(ctx context.Context, req PayoutRequest) (*PayoutResponse, error)
+
+	// GetStatus queries the provider for the current status of a transaction.
+	// Used by the WebhookReconciliationWorker (FASE 4 P4).
+	GetStatus(ctx context.Context, externalTxID string) (*StatusResponse, error)
 
 	// ValidateWebhookSignature verifies the raw signature for an inbound
 	// webhook. Implementations may extract from headers (primary) or fall

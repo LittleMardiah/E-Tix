@@ -55,6 +55,19 @@ func (m *MockPaymentAdapter) Payout(ctx context.Context, req PayoutRequest) (*Pa
 	return &PayoutResponse{PayoutID: "mock-payout-" + randomHex(8)}, nil
 }
 
+// GetStatus in mock mode returns "settlement" (final-success) so
+// reconciliation-flow tests can exercise the happy path.
+func (m *MockPaymentAdapter) GetStatus(ctx context.Context, externalTxID string) (*StatusResponse, error) {
+	if externalTxID == "" {
+		return nil, fmt.Errorf("mock: external_transaction_id is required")
+	}
+	return &StatusResponse{
+		TransactionStatus: "settlement",
+		FraudStatus:       "accept",
+		Amount:            "0.00",
+	}, nil
+}
+
 // ValidateWebhookSignature in mock mode accepts any non-empty signature
 // found in headers (primary) or payload body (fallback).
 func (m *MockPaymentAdapter) ValidateWebhookSignature(headers map[string]string, payload []byte) error {
