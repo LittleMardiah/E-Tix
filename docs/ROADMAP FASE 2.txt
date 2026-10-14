@@ -742,7 +742,7 @@ E2-S2-T6 [1 jam] — Final Score calculator + Tier assignment
      a. finalScore = base + dynamic
      b. Tier: >90 → TIER_1, >=70 → TIER_2, else TIER_3
    DoD: 
-     - unit test: 91 → TIER_1, 90 → TIER_1, 70 → TIER_2, 69 → TIER_3
+     - unit test: 91 → TIER_1, 90 → TIER_2 (boundary atas), 70 → TIER_2, 69 → TIER_3
 
 ────────────────────────────────────────────────────────────────────────────────
 EPIC E3: STAGE 1 MIDDLEWARE
