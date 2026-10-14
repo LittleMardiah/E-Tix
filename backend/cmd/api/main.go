@@ -14,6 +14,7 @@ import (
 	"github.com/LittleMardiah/E-Tix/backend/internal/auth"
 	"github.com/LittleMardiah/E-Tix/backend/internal/config"
 	"github.com/LittleMardiah/E-Tix/backend/internal/db"
+	"github.com/LittleMardiah/E-Tix/backend/internal/event"
 	"github.com/LittleMardiah/E-Tix/backend/internal/middleware"
 	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
@@ -93,6 +94,10 @@ func main() {
 	queueSvc := queue.NewQueueService(fanScoreSvc, queueTokenSvc, captchaSvc, eventRepo, rdb)
 	queueHandler := queue.NewQueueHandler(queueSvc, logger)
 
+	catalogRepo := event.NewPostgresEventRepository(pgPool)
+	catalogSvc := event.NewEventService(catalogRepo)
+	catalogHandler := event.NewEventHandler(catalogSvc)
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -119,6 +124,9 @@ func main() {
 		auth.AuthMiddleware(jwtSvc, blacklistSvc),
 		auth.RateLimitMiddlewareScoped(rdb, 3, 5*time.Minute, auth.RateLimitScopeIP),
 		queueHandler.VerifyCaptcha)
+
+	router.GET("/events", catalogHandler.List)
+	router.GET("/events/:event_id", catalogHandler.GetByID)
 
 	router.GET("/healthz/liveness", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})
