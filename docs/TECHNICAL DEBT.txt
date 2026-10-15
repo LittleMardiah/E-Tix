@@ -304,3 +304,46 @@ Rencana Fix: Skip (WONTFIX), dokumentasi only.
 Trigger: N/A.
 Referensi: docs/AUDIT FASE 2 findings H16.
 
+
+---
+
+ID: TD-F3-01
+Tanggal: 2026-10-15
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: internal/event package TIDAK punya test (zero coverage). N+1 fix
+  (H5) dan availability bitmap aggregation tidak teruji. Kalau repo query
+  berubah, regression silent.
+Root Cause: FASE 3 fokus booking; event dianggap "trivial catalog".
+Rencana Fix: Unit test buildEventSummary + integration test ListEvents +
+  GetSectionsByEventIDs + GetEventByID.
+Trigger: FASE 9 (full test suite) atau saat event logic berubah.
+Referensi: docs/AUDIT FASE 3 findings H11, opencode review 2026-10-15.
+
+ID: TD-F3-02
+Tanggal: 2026-10-15
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: Reservation seat_owner:{key}:{pos} key TTL 7d, tapi mapping
+  booking:{id} TTL 7d. Kalau seat bits persistent + owner TTL 7d, seat yang
+  di-lock tapi booking expire setelah 7d tidak akan bisa di-release (owner
+  key gone → release skip). Praktik umum booking expire <7d (180s), tapi edge
+  case kalau ada bug/eviction.
+Root Cause: TTL trade-off antara persistence dan garbage collection.
+Rencana Fix: Bump owner TTL sync dengan booking TTL atau event_end_time.
+Trigger: saat ada insiden "seat stuck > 7d" atau monitoring anomali.
+Referensi: docs/AUDIT FASE 3, H2 fix (scripts/lock_seats.lua).
+
+ID: TD-F3-03
+Tanggal: 2026-10-15
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: GET /seats membaca bitmap bitmap untuk LOCKED status (H1 fix),
+  tapi granularity per-bit via loop GETBIT (position-by-position). Untuk
+  section 5000 seat, response time bisa naik.
+Root Cause: MVP read path, per-bit loop.
+Rencana Fix: Pipeline GETBIT via Redis MGET batched, atau fetch raw byte
+  slice + decode di Go (mirip readLockedBitmap).
+Trigger: profil latency p95 > 100ms di staging/prod.
+Referensi: docs/AUDIT FASE 3, H1 fix.
+

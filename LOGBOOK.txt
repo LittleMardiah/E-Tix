@@ -918,3 +918,39 @@ Coverage: 30.4% payment + 48% worker (target aspirational 90% deferred FASE 9).
 ================================================================================
 END OF FASE 4 CLOSURE
 ================================================================================
+
+================================================================================
+## FASE 0-4 COMPREHENSIVE RETRO-AUDIT (2026-10-15) — LESSON
+================================================================================
+
+Konteks: comprehensive audit FASE 0-4 via hybrid (OpenCode + manual verify).
+Bukan hanya "task DONE", tapi "implementation vs spec".
+
+Temuan per fase:
+- FASE 0: 15 findings (RLS WITH CHECK, SYSTEM_USER hash, env var broken, CI no
+  integration tests, dll). Fixed langsung — zero TD baru.
+- FASE 1: 15 findings (blacklist fail-open, refresh TOCTOU, config env bug,
+  OTP dead, dll). Fixed langsung — zero TD baru.
+- FASE 2: 16 findings (IngressMiddleware dead, MockCaptcha prod, worker Nack
+  transient, dll). Fixed H1-H14; H9/H11/H12 → TD-F2-01..04.
+- FASE 3: 11 findings (availability bitmap, release ownership, layout_version,
+  X-Idempotency-Key, N+1, dll). Fixed H1-H10; H11 → TD-F3-01.
+- FASE 4: 11 findings (worker race, refund audit, reconciliation RowsAffected,
+  dll). Fixed H-1..L-3; M-3/M-4 → TD-F4-02/03.
+
+Cross-cutting lessons:
+1. **Audit dengan grep label ≠ audit**. Setiap klaim "zero drift" butuh
+   behavioral compare vs API_CONTRACT + LOGIC_FLOW + DATABASE_SCHEMA.
+2. **OpenCode = discovery, manual = verify**. Retro-audit OpenCode menemukan
+   bug yang Reviewer (DeepSeek) miss. Tapi setiap finding WAJIB cross-verify
+   via terminal sebelum fix — jangan trust buta.
+3. **Semua findings fixable <30 min → fix langsung (R14)**. TD hanya untuk
+   yang butuh schema amendment / design decision / cross-module.
+4. **Pattern bug Reviewer yang berulang**: tulis prompt dari memory, tidak
+   verify file path. Contoh: H10 prompt target event/repository.go, padahal
+   spot asli di booking/repository.go. Fix: SELALU grep cross-ref dulu.
+
+================================================================================
+END OF RETRO-AUDIT LESSON
+================================================================================
+

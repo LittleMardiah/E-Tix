@@ -134,7 +134,8 @@ DEFERRED:
 
 ## 6. REKOMENDASI
 
-FASE 3 status: **READY TO CLOSE** untuk scope MVP.
+FASE 3 status: **CONDITIONAL CLOSE** — retro-audit 2026-10-15 menemukan 3 HIGH + 4 MED + 3 LOW.
+Fix applied H1-H10 (lihat §Retro-Audit Correction). H11 → TD-F3-01.
 
 Reason:
 1. 26/27 task DONE; 1 chaos deferred (CB belum di FASE 3).
@@ -168,8 +169,42 @@ Blocker: tidak ada.
 | Executor | OpenCode | 2026-10-15 | ⚠️ HALLUCINATE 1x (P2 cross-project) |
 | Fallback | Manual | 2026-10-15 | ✅ USED (P2 fallback) |
 
-**STATUS: FASE 3 READY TO CLOSE**
+**STATUS: FASE 3 CONDITIONAL CLOSE (retro-audit fixed H1-H10; H11 → TD)**
 
 ---
 
 END OF AUDIT FASE 3
+
+---
+
+## 9. RETRO-AUDIT CORRECTION (2026-10-15)
+
+Audit ini awalnya menyatakan "zero drift / READY TO CLOSE" pada 2026-10-14.
+Retro-audit OpenCode (2026-10-15) menemukan 3 HIGH + 4 MED + 3 LOW findings.
+Kesalahan audit awal: hanya `grep` label + test PASS, tidak compare
+implementation vs API_CONTRACT / LOGIC_FLOW spec.
+
+### Findings & Fixes
+
+| ID | Sev | Finding | Fix |
+|----|-----|---------|-----|
+| H1 | HIGH | Availability dari tickets, bukan Redis bitmap → LOCKED never emitted | `readLockedBitmap` + precedence TAKEN > LOCKED > AVAILABLE |
+| H2 | HIGH | `release_seats.lua` tanpa ownership guard → double-release oversell | owner tag + guard di Lua |
+| H3 | HIGH | Release pakai current layout_version, lock pakai lock-time version | Simpan layout_version di mapping + `readLockLayoutVersion` |
+| H4 | MED | X-Idempotency-Key tidak diimplementasi di POST /seats | Handler L1 idempotency + test helper |
+| H5 | MED | N+1 query sections per event di list | `GetSectionsByEventIDs` batch + service refactor |
+| H6 | MED | Token dibakar saat CONFLICT | `QueueTokenService.Refund` + call on CONFLICT |
+| H7 | MED | Duplicate seat_positions → overcharge | `ErrDuplicateSeatPosition` validation |
+| H8 | LOW | No explicit SUCCESS check Lua result | Defensive check + return error |
+| H9 | LOW | LockSHA/ReleaseSHA dead fields | Removed + test updated |
+| H10 | LOW | `err == pgx.ErrNoRows` (12 spots) | `errors.Is(err, pgx.ErrNoRows)` |
+| H11 | LOW | internal/event zero test | → TD-F3-01 |
+
+### Lesson
+
+Audit klaim "zero drift" WAJIB disertai bukti file:line behavioral + cross-check
+vs API_CONTRACT / LOGIC_FLOW spec. Grep label + test PASS ≠ drift check.
+
+---
+END OF RETRO-AUDIT CORRECTION
+
