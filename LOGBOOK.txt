@@ -1053,3 +1053,35 @@ Hasil: 3 HIGH + 7 MED + 5 LOW. Total: 15 findings.
 END OF AUDIT BLIND SPOT TEST QUALITY
 ================================================================================
 
+
+================================================================================
+## INCIDENT — M4 Redundant Prompt (2026-10-16)
+================================================================================
+
+Fakta: Reviewer (DeepSeek) kirim prompt "fix M4" padahal M4 SUDAH FIXED
+di commit 902151e. Bukti diff BEFORE: kode sudah punya komentar
+"M4 FIX: DB_MAX_CONNECTIONS + DB_STATEMENT_TIMEOUT env vars are now
+actually consumed instead of being silently ignored" + field PoolOptions
+sudah wired di main.go.
+
+Root cause Reviewer:
+1. Baca LOGBOOK snippet "pending F3 (M4)" → asumsi M4 belum fixed
+2. TIDAK verify state HEAD via `git log -p -1` + `cat` file sebelum
+   kirim prompt
+3. Kirim prompt fix → OpenCode interpret sebagai "refactor" (PoolOptions
+   → positional args). Output functional OK tapi bukan yang diminta.
+
+Verdict: REVERT. Kode kembali ke state 902151e. Commit noise dihindari.
+
+Lesson (reviewer checklist baru — WAJIB sebelum kirim prompt fix X):
+- [ ] `git log --oneline -3`
+- [ ] `git log -p -1 <target-commit> -- <target-files>` (lihat actual diff)
+- [ ] `cat <target-file>` atau `git show HEAD:<path>` (bukan asumsi dari log)
+- [ ] Cross-check audit trail vs actual state (label ≠ truth)
+- [ ] Kalau fixed → SKIP prompt, catat di LOGBOOK saja
+- [ ] Kalau belum fixed → baru kirim prompt fix
+
+Reference: R1 (root cause), R3 (zero hallucination), R8 (scope control).
+
+================================================================================
+END OF INCIDENT
