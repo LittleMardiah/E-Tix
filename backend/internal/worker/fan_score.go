@@ -3,8 +3,8 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,8 +39,10 @@ func (w *FanScoreWorker) Run(ctx context.Context) error {
 	}
 	for delivery := range deliveries {
 		if perr := w.processMessage(ctx, delivery.Body); perr != nil {
-			w.logger.Error("fan score message processing failed", zap.Error(perr))
-			if nerr := w.conn.Nack(delivery, false); nerr != nil {
+			requeue := !errors.Is(perr, errPoison)
+			w.logger.Error("fan score message processing failed",
+				zap.Error(perr), zap.Bool("requeue", requeue))
+			if nerr := w.conn.Nack(delivery, requeue); nerr != nil {
 				w.logger.Error("fan score nack failed", zap.Error(nerr))
 			}
 			continue
@@ -55,7 +57,10 @@ func (w *FanScoreWorker) Run(ctx context.Context) error {
 func (w *FanScoreWorker) processMessage(ctx context.Context, body []byte) error {
 	var meta queue.FanScoreMetadata
 	if err := json.Unmarshal(body, &meta); err != nil {
-		return fmt.Errorf("unmarshal fan score metadata: %w", err)
+		return fmt.Errorf("%w: unmarshal fan score metadata: %v", errPoison, err)
+	}
+	if meta.UserID == "" {
+		return fmt.Errorf("%w: empty user_id", errPoison)
 	}
 
 	dynamicScore := calculateDynamicScore(meta)
@@ -64,13 +69,15 @@ func (w *FanScoreWorker) processMessage(ctx context.Context, body []byte) error 
 		return fmt.Errorf("set dynamic score in redis: %w", err)
 	}
 
-	if dynamicScore <= -30 {
-		if err := w.repo.InsertBlacklist(ctx, systemUserID(), "ip", meta.IP, "BOT_DETECTED", nil); err != nil {
-			return fmt.Errorf("insert bot blacklist: %w", err)
-		}
-		w.logger.Warn("bot ip blacklisted", zap.String("ip", meta.IP))
-	} else if meta.FinalScore < 50 {
-		w.logger.Warn("low fan score", zap.String("user_id", meta.UserID), zap.Int("score", meta.FinalScore))
+	// H4 FIX: blacklist from low FinalScore was self-referential (low score →
+	// -30 dynamic → blacklist), conflating "new fan" with "bot". Bot detection
+	// requires behavioral signals (request_interval, user_agent) not yet
+	// present on FanScoreMetadata. Removed to prevent false-positive IP
+	// blacklisting of legitimate low-score users. See TD-F2-01.
+	if meta.FinalScore < 50 {
+		w.logger.Warn("low fan score",
+			zap.String("user_id", meta.UserID),
+			zap.Int("score", meta.FinalScore))
 	}
 	return nil
 }
@@ -89,17 +96,6 @@ func calculateDynamicScore(meta queue.FanScoreMetadata) int {
 	default:
 		return 0
 	}
-}
-
-// systemUserID resolves SYSTEM_USER_UUID (config env source); falls back to
-// the seeded system user from migration 001.
-func systemUserID() uuid.UUID {
-	if v := os.Getenv("SYSTEM_USER_UUID"); v != "" {
-		if id, err := uuid.Parse(v); err == nil {
-			return id
-		}
-	}
-	return uuid.MustParse("00000000-0000-0000-0000-000000000000")
 }
 
 type PgxBlacklistRepo struct {

@@ -22,8 +22,9 @@ type BookingExpiryPayload struct {
 }
 
 // errPoison marks messages that will never succeed on redelivery (JSON/UUID
-// parse errors). These are discarded (Nack requeue=false). All other errors
-// are treated as transient and requeued (Nack requeue=true).
+// parse errors, malformed payloads). Shared across all workers in this
+// package: discard with Nack(requeue=false). All other errors are treated as
+// transient and requeued (Nack requeue=true).
 var errPoison = errors.New("worker: poison message")
 
 // TxBeginner abstracts the transaction opener for testability. In production
