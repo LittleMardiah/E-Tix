@@ -58,6 +58,18 @@ func (f *fakeRepoL2) AssignTicketAtomic(ctx context.Context, tx pgx.Tx, ticketID
 	return 1, nil
 }
 
+func (f *fakeRepoL2) MarkExpiredByBooking(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
+func (f *fakeRepoL2) MarkRefunded(ctx context.Context, tx pgx.Tx, obligationID uuid.UUID, refundTxID string) error {
+	return nil
+}
+
+func (f *fakeRepoL2) ListPendingOlderThan(ctx context.Context, olderThan time.Time, limit int) ([]PaymentObligation, error) {
+	return nil, nil
+}
+
 func newTestIdempotencyService(t *testing.T, repo PaymentObligationRepository) (*IdempotencyService, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)

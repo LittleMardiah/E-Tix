@@ -231,6 +231,18 @@ func (m *memObligationRepo) AssignTicketAtomic(_ context.Context, _ pgx.Tx, _, _
 	return 1, nil
 }
 
+func (m *memObligationRepo) MarkExpiredByBooking(_ context.Context, _ pgx.Tx, _ uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
+func (m *memObligationRepo) MarkRefunded(_ context.Context, _ pgx.Tx, _ uuid.UUID, _ string) error {
+	return nil
+}
+
+func (m *memObligationRepo) ListPendingOlderThan(_ context.Context, _ time.Time, _ int) ([]PaymentObligation, error) {
+	return nil, nil
+}
+
 // ============================================================
 // Tests
 // ============================================================

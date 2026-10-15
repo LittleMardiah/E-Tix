@@ -215,3 +215,30 @@ func (s *BookingService) GetSeatAvailability(ctx context.Context, eventID, secti
 		LastUpdatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
 }
+
+// ReleaseSeatsForExpiry releases a booking's seat bits in Redis (granular
+// SETBIT 0 per seat, never overwriting) and deletes the booking:{id}
+// mapping. Idempotent — safe to call multiple times for the same booking.
+//
+// Used by the BookingExpiryWorker (FASE 4) when a booking's TTL expires
+// without full payment.
+func (s *BookingService) ReleaseSeatsForExpiry(ctx context.Context, bookingID uuid.UUID) error {
+	bk, err := s.repo.GetByID(ctx, bookingID)
+	if err != nil {
+		return fmt.Errorf("booking: release: get by id: %w", err)
+	}
+	sec, err := s.repo.GetSectionByID(ctx, bk.SectionID)
+	if err != nil {
+		return fmt.Errorf("booking: release: get section: %w", err)
+	}
+	key := fmt.Sprintf("seats:%s:%s:v%d", bk.EventID, bk.SectionID, sec.LayoutVersion)
+	seatsJSON, err := json.Marshal(bk.SeatPositions)
+	if err != nil {
+		return fmt.Errorf("booking: release: marshal seats: %w", err)
+	}
+	if _, err := s.rdb.EvalScript(ctx, s.scripts.Release, []string{key},
+		string(seatsJSON), bookingID.String()); err != nil {
+		return fmt.Errorf("booking: release: eval script: %w", err)
+	}
+	return nil
+}

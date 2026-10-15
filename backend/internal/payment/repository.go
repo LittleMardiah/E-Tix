@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -39,6 +40,17 @@ type PaymentObligationRepository interface {
 	// belonging to bookingID that is currently unassigned. Returns rows
 	// affected (0 means the ticket was already assigned or not eligible).
 	AssignTicketAtomic(ctx context.Context, tx pgx.Tx, ticketID, bookingID, targetUserID uuid.UUID) (int64, error)
+
+	// MarkExpiredByBooking flips all PENDING obligations of a booking to
+	// EXPIRED. Returns rows affected.
+	MarkExpiredByBooking(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) (int64, error)
+
+	// MarkRefunded records a successful refund on an obligation.
+	MarkRefunded(ctx context.Context, tx pgx.Tx, obligationID uuid.UUID, refundTxID string) error
+
+	// ListPendingOlderThan returns PENDING obligations older than the given
+	// cutoff, ordered oldest first (used by WebhookReconciliationWorker).
+	ListPendingOlderThan(ctx context.Context, olderThan time.Time, limit int) ([]PaymentObligation, error)
 }
 
 // PostgresPaymentObligationRepository is the PostgreSQL implementation.
@@ -192,4 +204,46 @@ func (r *PostgresPaymentObligationRepository) AssignTicketAtomic(ctx context.Con
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+func (r *PostgresPaymentObligationRepository) MarkExpiredByBooking(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) (int64, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE payment_obligations
+		SET status = 'EXPIRED', updated_at = NOW()
+		WHERE booking_id = $1 AND status = 'PENDING'`, bookingID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (r *PostgresPaymentObligationRepository) MarkRefunded(ctx context.Context, tx pgx.Tx, obligationID uuid.UUID, refundTxID string) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE payment_obligations
+		SET status = 'REFUNDED', refunded_at = NOW(),
+		    refund_transaction_id = $1, updated_at = NOW()
+		WHERE id = $2`, refundTxID, obligationID)
+	return err
+}
+
+func (r *PostgresPaymentObligationRepository) ListPendingOlderThan(ctx context.Context, olderThan time.Time, limit int) ([]PaymentObligation, error) {
+	rows, err := r.db.Query(ctx, `SELECT `+obligationColumns+`
+		FROM payment_obligations
+		WHERE status = 'PENDING' AND created_at < $1
+		ORDER BY created_at ASC
+		LIMIT $2`, olderThan, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PaymentObligation
+	for rows.Next() {
+		o, err := scanObligation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *o)
+	}
+	return out, rows.Err()
 }
