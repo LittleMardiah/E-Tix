@@ -131,6 +131,10 @@ func main() {
 	refundAdapter := worker.NewGatewayRefundAdapter(paymentGateway)
 	bookingExpiryWorker := worker.NewBookingExpiryWorker(mq, pgPool, bookingExpiryRepo, paymentRepo, bookingSvc, refundAdapter, systemUserUUID, logger)
 
+	reconciliationRepo := worker.NewPgxReconciliationRepo(pgPool)
+	statusFetcher := worker.NewGatewayStatusFetcher(paymentGateway)
+	reconciliationWorker := worker.NewWebhookReconciliationWorker(pgPool, paymentRepo, reconciliationRepo, statusFetcher, systemUserUUID, logger)
+
 	catalogRepo := event.NewPostgresEventRepository(pgPool)
 	catalogSvc := event.NewEventService(catalogRepo)
 	catalogHandler := event.NewEventHandler(catalogSvc)
@@ -239,6 +243,11 @@ func main() {
 	go func() {
 		if err := bookingExpiryWorker.Run(context.Background()); err != nil {
 			logger.Error("booking expiry worker stopped", zap.Error(err))
+		}
+	}()
+	go func() {
+		if err := reconciliationWorker.Run(context.Background()); err != nil {
+			logger.Error("reconciliation worker stopped", zap.Error(err))
 		}
 	}()
 
