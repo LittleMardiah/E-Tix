@@ -1,6 +1,7 @@
 package payment
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -15,12 +16,13 @@ type PaymentHandler struct {
 	svc     *PaymentService
 	repo    PaymentObligationRepository
 	booking BookingReader
+	idem    *IdempotencyService
 	logger  *zap.Logger
 }
 
-// NewPaymentHandler wires the handler. booking may be shared with the service.
-func NewPaymentHandler(svc *PaymentService, repo PaymentObligationRepository, booking BookingReader, logger *zap.Logger) *PaymentHandler {
-	return &PaymentHandler{svc: svc, repo: repo, booking: booking, logger: logger}
+// NewPaymentHandler wires the handler. booking + idem may be shared with the service.
+func NewPaymentHandler(svc *PaymentService, repo PaymentObligationRepository, booking BookingReader, idem *IdempotencyService, logger *zap.Logger) *PaymentHandler {
+	return &PaymentHandler{svc: svc, repo: repo, booking: booking, idem: idem, logger: logger}
 }
 
 func writeError(c *gin.Context, status int, code, message string) {
@@ -165,6 +167,7 @@ func (h *PaymentHandler) GetBookingStatus(c *gin.Context) {
 
 	// Step 4: build response (empty obligations → 200 with empty array).
 	resp := buildStatusResponse(bookingID, obligations)
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    resp,
@@ -232,7 +235,8 @@ func (h *PaymentHandler) BulkAssign(c *gin.Context) {
 		return
 	}
 
-	if c.GetHeader("X-Idempotency-Key") == "" {
+	idemKey := c.GetHeader("X-Idempotency-Key")
+	if idemKey == "" {
 		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "X-Idempotency-Key header is required")
 		return
 	}
@@ -243,7 +247,25 @@ func (h *PaymentHandler) BulkAssign(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.svc.BulkAssign(c.Request.Context(), userID, &req)
+	ctx := c.Request.Context()
+	hash := ComputeIdempotencyHash("bulk:"+idemKey, userID, req.BookingID)
+
+	// L1 fast path: replay with same client key returns cached response.
+	if body, hit, err := h.idem.LookupL1(ctx, hash); err == nil && hit {
+		var cached BulkAssignResponse
+		if err := json.Unmarshal(body, &cached); err == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"data":    &cached,
+				"error":   nil,
+				"meta":    paymentMeta(),
+			})
+			return
+		}
+		// Corrupted cache — fall through and rebuild.
+	}
+
+	resp, err := h.svc.BulkAssign(ctx, userID, &req)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidMembers):
@@ -263,6 +285,13 @@ func (h *PaymentHandler) BulkAssign(c *gin.Context) {
 			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		}
 		return
+	}
+
+	// Store L1 (best-effort; non-fatal on error).
+	if body, mErr := json.Marshal(resp); mErr == nil {
+		if sErr := h.idem.StoreL1(ctx, hash, body); sErr != nil {
+			h.logger.Warn("bulk assign: store L1 failed", zap.Error(sErr))
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

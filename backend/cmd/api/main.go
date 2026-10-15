@@ -117,7 +117,7 @@ func main() {
 	}
 
 	paymentSvc := payment.NewPaymentService(pgPool, paymentRepo, paymentBookingReader, paymentGateway, paymentIdem)
-	paymentHandler := payment.NewPaymentHandler(paymentSvc, paymentRepo, paymentBookingReader, logger)
+	paymentHandler := payment.NewPaymentHandler(paymentSvc, paymentRepo, paymentBookingReader, paymentIdem, logger)
 
 	catalogRepo := event.NewPostgresEventRepository(pgPool)
 	catalogSvc := event.NewEventService(catalogRepo)
