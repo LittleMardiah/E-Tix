@@ -252,3 +252,55 @@ Rencana Fix: signal.NotifyContext(context.Background(), os.Interrupt,
   sebelum router shutdown.
 Referensi: docs/AUDIT FASE 4.md §4, opencode review 2026-10-15.
 
+
+---
+
+ID: TD-F2-01
+Tanggal: 2026-10-15
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: FanScoreMetadata tidak punya field `request_interval` + `user_agent`.
+  Dynamic score heuristic di worker (FASE 2) hanya pakai FinalScore (self-
+  referential) — bot detection sesungguhnya butuh behavioral signals.
+  Retro-audit H4 flag + remove trigger blacklist sementara.
+Root Cause: MVP FASE 2 scope memilih heuristic minimal.
+Rencana Fix: Extend queue.FanScoreMetadata (tambah 2 field) + update
+  IngressMiddleware publish + worker calculateDynamicScore pakai interval/UA.
+Trigger: sebelum FASE 8 (admin blacklist management) atau saat abuse report.
+Referensi: docs/AUDIT FASE 2 findings H4/H12, opencode review 2026-10-15.
+
+ID: TD-F2-02
+Tanggal: 2026-10-15
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: Captcha failed-attempt counter + lockout mechanism tidak ada.
+  Attacker bisa brute-force /queue/verify-captcha tanpa lockout (rate limit
+  3/5min per IP masih mitigate).
+Rencana Fix: Redis INCR failed:captcha:{ip}, lockout 15m setelah 3 fails
+  (pattern sama admin 2FA lockout FASE 8).
+Trigger: FASE 8 atau saat abuse report.
+Referensi: docs/AUDIT FASE 2 findings H9.
+
+ID: TD-F2-03
+Tanggal: 2026-10-15
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: IngressMiddleware publish fan_score metadata via goroutine +
+  context.Background() (detached). Publish failure = Warn log only, tidak
+  ada retry/DLQ. Behavioral scoring bisa silent loss.
+Rencana Fix: Ganti publish synchronous dengan timeout, atau pakai RabbitMQ
+  publisher confirms + DLQ.
+Trigger: FASE 9 atau saat observability review.
+Referensi: docs/AUDIT FASE 2 findings H11.
+
+ID: TD-F2-04
+Tanggal: 2026-10-15
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Queue status endpoint tidak punya strict event_id ↔ section
+  validation (event from query, tapi user tidak verify own event context).
+  Minor since event_id dibaca dari path/query, tidak writeable.
+Rencana Fix: Skip (WONTFIX), dokumentasi only.
+Trigger: N/A.
+Referensi: docs/AUDIT FASE 2 findings H16.
+
