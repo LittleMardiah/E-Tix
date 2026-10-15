@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -407,8 +408,17 @@ func (s *PaymentService) BulkAssign(ctx context.Context, userID uuid.UUID, req *
 		return nil, ErrEventAlreadyStarted
 	}
 
-	results := make([]BulkAssignTicketResult, 0, len(req.Assignments))
-	for _, a := range req.Assignments {
+	// Deterministic lock order (deadlock prevention): sort assignments by
+	// TicketID so concurrent BulkAssign calls for the same booking acquire
+	// the per-user FOR UPDATE locks in a consistent order.
+	assignments := make([]BulkAssignEntry, len(req.Assignments))
+	copy(assignments, req.Assignments)
+	sort.Slice(assignments, func(i, j int) bool {
+		return assignments[i].TicketID.String() < assignments[j].TicketID.String()
+	})
+
+	results := make([]BulkAssignTicketResult, 0, len(assignments))
+	for _, a := range assignments {
 		active, err := s.repo.CheckUserActiveForUpdate(ctx, tx, a.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("payment: check user active: %w", err)

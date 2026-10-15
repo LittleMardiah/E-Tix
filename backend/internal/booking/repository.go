@@ -160,8 +160,12 @@ func (r *PostgresBookingRepository) GetByIDForUpdate(ctx context.Context, tx pgx
 
 func (r *PostgresBookingRepository) GetEventStartAt(ctx context.Context, bookingID uuid.UUID) (time.Time, error) {
 	var startAt time.Time
+	// IMPORTANT: event_date + event_start_time is a wall-clock timestamp in
+	// Asia/Jakarta (WIB). The DB session TimeZone is UTC, so a bare ::timestamptz
+	// cast would interpret 19:00 WIB as 19:00 UTC, introducing a 7-hour offset.
+	// Use explicit AT TIME ZONE 'Asia/Jakarta' for a deterministic instant.
 	err := r.db.QueryRow(ctx, `
-		SELECT (e.event_date + e.event_start_time)::timestamptz
+		SELECT ((e.event_date + e.event_start_time) AT TIME ZONE 'Asia/Jakarta')
 		FROM events e
 		JOIN bookings b ON b.event_id = e.id
 		WHERE b.id = $1`, bookingID,

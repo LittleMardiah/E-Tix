@@ -185,6 +185,7 @@ ERROR CODES (STANDARDIZED)
 | TOKEN_ALREADY_USED                  | 409  | Queue token already used (replay attack)           |
 | TARGET_USER_INACTIVE_OR_SUSPENDED   | 422  | Bulk assign target not ACTIVE/blacklisted          |
 | UNPROCESSABLE_ENTITY                | 422  | Business logic violation                           |
+| EVENT_ALREADY_STARTED               | 422  | Assignment attempted after event start time        |
 | RATE_LIMIT_EXCEEDED                 | 429  | Too many requests                                  |
 | INTERNAL_ERROR                      | 500  | Unexpected backend error                           |
 | SERVICE_UNAVAILABLE                 | 503  | Database down or Redis circuit breaker open        |
