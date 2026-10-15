@@ -171,6 +171,11 @@ func main() {
 	// Public webhook — auth via signature (adapter), no rate limit per API_CONTRACT §9.5.
 	router.POST("/webhook/payment", paymentHandler.HandleWebhook)
 
+	router.POST("/payments/bulk/assign",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 30, time.Minute, auth.RateLimitScopeUser),
+		paymentHandler.BulkAssign)
+
 	router.GET("/events",
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
 		catalogHandler.List)

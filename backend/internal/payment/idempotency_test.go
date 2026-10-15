@@ -50,6 +50,14 @@ func (f *fakeRepoL2) UpdateStatusWithWebhook(ctx context.Context, tx pgx.Tx, id 
 	return nil
 }
 
+func (f *fakeRepoL2) CheckUserActiveForUpdate(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeRepoL2) AssignTicketAtomic(ctx context.Context, tx pgx.Tx, ticketID, bookingID, targetUserID uuid.UUID) (int64, error) {
+	return 1, nil
+}
+
 func newTestIdempotencyService(t *testing.T, repo PaymentObligationRepository) (*IdempotencyService, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)

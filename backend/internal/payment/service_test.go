@@ -79,6 +79,13 @@ func (f *fakeBookingReader) GetByIDForUpdate(_ context.Context, _ pgx.Tx, _ uuid
 	return f.snap, nil
 }
 
+func (f *fakeBookingReader) GetEventStartAt(_ context.Context, _ uuid.UUID) (time.Time, error) {
+	if f.err != nil {
+		return time.Time{}, f.err
+	}
+	return time.Now().UTC().Add(24 * time.Hour), nil
+}
+
 // fakeGateway implements adapter.PaymentGateway.
 type fakeGateway struct {
 	initiateErr error
@@ -214,6 +221,14 @@ func (m *memObligationRepo) UpdateStatusWithWebhook(_ context.Context, _ pgx.Tx,
 	now := time.Now().UTC()
 	o.WebhookReceivedAt = &now
 	return nil
+}
+
+func (m *memObligationRepo) CheckUserActiveForUpdate(_ context.Context, _ pgx.Tx, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+func (m *memObligationRepo) AssignTicketAtomic(_ context.Context, _ pgx.Tx, _, _, _ uuid.UUID) (int64, error) {
+	return 1, nil
 }
 
 // ============================================================

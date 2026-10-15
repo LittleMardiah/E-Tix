@@ -26,6 +26,7 @@ type TxBeginner interface {
 type BookingReader interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*BookingSnapshot, error)
 	GetByIDForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*BookingSnapshot, error)
+	GetEventStartAt(ctx context.Context, bookingID uuid.UUID) (time.Time, error)
 }
 
 // BookingSnapshot is the payment-service view of a bookings row.
@@ -370,4 +371,74 @@ func classifyWebhookStatus(s string) string {
 		// PENDING, CHALLENGE, unknown — do not mutate DB.
 		return ""
 	}
+}
+
+// BulkAssign assigns a batch of tickets from the same booking to target users.
+//
+// Per ROADMAP FASE 4 §3.5:
+//   - Caller must be the booking leader.
+//   - Event must not have started yet (422 EVENT_ALREADY_STARTED).
+//   - Each target user must be ACTIVE (422 TARGET_USER_INACTIVE_OR_SUSPENDED).
+//   - Atomic all-or-nothing: any failure rolls back the whole batch.
+func (s *PaymentService) BulkAssign(ctx context.Context, userID uuid.UUID, req *BulkAssignRequest) (*BulkAssignResponse, error) {
+	if req.BookingID == uuid.Nil || len(req.Assignments) == 0 {
+		return nil, ErrInvalidMembers
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("payment: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	bk, err := s.booking.GetByIDForUpdate(ctx, tx, req.BookingID)
+	if err != nil {
+		return nil, err
+	}
+	if bk.LeaderUserID != userID {
+		return nil, ErrNotLeader
+	}
+
+	startAt, err := s.booking.GetEventStartAt(ctx, req.BookingID)
+	if err != nil {
+		return nil, err
+	}
+	if !startAt.After(time.Now().UTC()) {
+		return nil, ErrEventAlreadyStarted
+	}
+
+	results := make([]BulkAssignTicketResult, 0, len(req.Assignments))
+	for _, a := range req.Assignments {
+		active, err := s.repo.CheckUserActiveForUpdate(ctx, tx, a.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("payment: check user active: %w", err)
+		}
+		if !active {
+			return nil, ErrTargetUserInactive
+		}
+
+		n, err := s.repo.AssignTicketAtomic(ctx, tx, a.TicketID, req.BookingID, a.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("payment: assign ticket: %w", err)
+		}
+		if n == 0 {
+			return nil, ErrTicketAlreadyAssigned
+		}
+
+		results = append(results, BulkAssignTicketResult{
+			TicketID:   a.TicketID.String(),
+			AssignedTo: a.UserID.String(),
+			Status:     "SUCCESS",
+		})
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("payment: commit: %w", err)
+	}
+
+	return &BulkAssignResponse{
+		BookingID: req.BookingID.String(),
+		Assigned:  len(results),
+		Tickets:   results,
+	}, nil
 }

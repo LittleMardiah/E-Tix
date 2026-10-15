@@ -30,6 +30,15 @@ type PaymentObligationRepository interface {
 
 	// UpdateStatusWithWebhook sets status + webhook_received_at atomically.
 	UpdateStatusWithWebhook(ctx context.Context, tx pgx.Tx, id uuid.UUID, status string) error
+
+	// CheckUserActiveForUpdate returns true if the target user is ACTIVE.
+	// Not-found → (false, nil) so callers can return 422 uniformly.
+	CheckUserActiveForUpdate(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (bool, error)
+
+	// AssignTicketAtomic sets owner_user_id + is_assigned=TRUE on a ticket
+	// belonging to bookingID that is currently unassigned. Returns rows
+	// affected (0 means the ticket was already assigned or not eligible).
+	AssignTicketAtomic(ctx context.Context, tx pgx.Tx, ticketID, bookingID, targetUserID uuid.UUID) (int64, error)
 }
 
 // PostgresPaymentObligationRepository is the PostgreSQL implementation.
@@ -159,4 +168,28 @@ func (r *PostgresPaymentObligationRepository) UpdateStatusWithWebhook(ctx contex
 		SET status = $1, webhook_received_at = NOW(), updated_at = NOW()
 		WHERE id = $2`, status, id)
 	return err
+}
+
+func (r *PostgresPaymentObligationRepository) CheckUserActiveForUpdate(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (bool, error) {
+	var status string
+	err := tx.QueryRow(ctx, `SELECT status::text FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&status)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	return status == "ACTIVE", nil
+}
+
+func (r *PostgresPaymentObligationRepository) AssignTicketAtomic(ctx context.Context, tx pgx.Tx, ticketID, bookingID, targetUserID uuid.UUID) (int64, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE tickets
+		SET owner_user_id = $1, is_assigned = TRUE, updated_at = NOW()
+		WHERE id = $2 AND booking_id = $3 AND is_assigned = FALSE`,
+		targetUserID, ticketID, bookingID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }

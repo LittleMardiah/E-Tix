@@ -216,3 +216,59 @@ func buildStatusResponse(bookingID uuid.UUID, obs []PaymentObligation) *BookingS
 		TicketsGenerated: anyTicketGen,
 	}
 }
+
+// BulkAssign handles POST /payments/bulk/assign.
+//
+// Headers: Authorization (JWT, booking leader), X-Idempotency-Key (required).
+func (h *PaymentHandler) BulkAssign(c *gin.Context) {
+	userIDStr := c.GetString("user_id")
+	if userIDStr == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing authentication context")
+		return
+	}
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid user id")
+		return
+	}
+
+	if c.GetHeader("X-Idempotency-Key") == "" {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "X-Idempotency-Key header is required")
+		return
+	}
+
+	var req BulkAssignRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+
+	resp, err := h.svc.BulkAssign(c.Request.Context(), userID, &req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidMembers):
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid assignments payload")
+		case errors.Is(err, ErrNotLeader):
+			writeError(c, http.StatusForbidden, "FORBIDDEN", "caller is not the booking leader")
+		case errors.Is(err, ErrBookingNotFound):
+			writeError(c, http.StatusNotFound, "NOT_FOUND", "booking not found")
+		case errors.Is(err, ErrEventAlreadyStarted):
+			writeError(c, http.StatusUnprocessableEntity, "EVENT_ALREADY_STARTED", "event has already started")
+		case errors.Is(err, ErrTargetUserInactive):
+			writeError(c, http.StatusUnprocessableEntity, "TARGET_USER_INACTIVE_OR_SUSPENDED", "target user is inactive or suspended")
+		case errors.Is(err, ErrTicketAlreadyAssigned):
+			writeError(c, http.StatusConflict, "CONFLICT", "ticket already assigned or ineligible")
+		default:
+			h.logger.Error("bulk assign failed", zap.Error(err))
+			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    resp,
+		"error":   nil,
+		"meta":    paymentMeta(),
+	})
+}

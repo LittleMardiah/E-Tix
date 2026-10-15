@@ -3,6 +3,7 @@ package payment
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -39,6 +40,14 @@ func (a *bookingReaderAdapter) GetByIDForUpdate(ctx context.Context, tx pgx.Tx, 
 		return nil, translateBookingErr(err)
 	}
 	return toBookingSnapshot(bk), nil
+}
+
+func (a *bookingReaderAdapter) GetEventStartAt(ctx context.Context, bookingID uuid.UUID) (time.Time, error) {
+	t, err := a.repo.GetEventStartAt(ctx, bookingID)
+	if err != nil {
+		return time.Time{}, translateBookingErr(err)
+	}
+	return t, nil
 }
 
 func translateBookingErr(err error) error {

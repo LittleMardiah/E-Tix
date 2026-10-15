@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -30,6 +31,10 @@ type BookingRepository interface {
 	// GetByIDForUpdate reads a booking FOR UPDATE inside the caller's tx.
 	// Callers MUST commit or rollback tx; the row lock is held until then.
 	GetByIDForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Booking, error)
+
+	// GetEventStartAt returns the event's start timestamp (event_date +
+	// event_start_time, UTC) for the booking's linked event.
+	GetEventStartAt(ctx context.Context, bookingID uuid.UUID) (time.Time, error)
 }
 
 type PostgresBookingRepository struct {
@@ -151,4 +156,21 @@ func (r *PostgresBookingRepository) GetByIDForUpdate(ctx context.Context, tx pgx
 		return nil, fmt.Errorf("booking: get by id for update: %w", err)
 	}
 	return b, nil
+}
+
+func (r *PostgresBookingRepository) GetEventStartAt(ctx context.Context, bookingID uuid.UUID) (time.Time, error) {
+	var startAt time.Time
+	err := r.db.QueryRow(ctx, `
+		SELECT (e.event_date + e.event_start_time)::timestamptz
+		FROM events e
+		JOIN bookings b ON b.event_id = e.id
+		WHERE b.id = $1`, bookingID,
+	).Scan(&startAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return time.Time{}, ErrBookingNotFound
+		}
+		return time.Time{}, fmt.Errorf("booking: get event start: %w", err)
+	}
+	return startAt.UTC(), nil
 }

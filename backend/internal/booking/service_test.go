@@ -91,6 +91,10 @@ func (f *fakeRepo) GetByIDForUpdate(_ context.Context, _ pgx.Tx, _ uuid.UUID) (*
 	return nil, ErrBookingNotFound
 }
 
+func (f *fakeRepo) GetEventStartAt(_ context.Context, _ uuid.UUID) (time.Time, error) {
+	return time.Now().UTC().Add(24 * time.Hour), nil
+}
+
 // fakePublisher implements DelayedPublisher.
 type fakePublisher struct {
 	calls []publishCall
