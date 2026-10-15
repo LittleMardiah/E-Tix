@@ -93,7 +93,17 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to init queue token service", zap.Error(err))
 	}
-	captchaSvc := queue.NewMockCaptchaService(true)
+	var captchaSvc queue.CaptchaService
+	if cfg.TestMode == "true" {
+		// Dev/CI: mock auto-pass for `test_pass` solution only, NOT for
+		// arbitrary input. Never enable autoPass=true in any deployed binary.
+		captchaSvc = queue.NewMockCaptchaService(false)
+	} else {
+		if cfg.TurnstileSecretKey == "" {
+			logger.Fatal("TURNSTILE_SECRET_KEY required when TEST_MODE != true")
+		}
+		captchaSvc = queue.NewTurnstileCaptchaService(cfg.TurnstileSecretKey)
+	}
 	eventRepo := queue.NewPostgresEventRepository(pgPool)
 	queueSvc := queue.NewQueueService(fanScoreSvc, queueTokenSvc, captchaSvc, eventRepo, rdb)
 	queueHandler := queue.NewQueueHandler(queueSvc, logger)
@@ -163,6 +173,11 @@ func main() {
 
 	router.GET("/queue/status",
 		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		queue.IngressMiddleware(queue.IngressConfig{
+			FanScore:         fanScoreSvc,
+			QueueTokenIssuer: queueTokenSvc,
+			Publisher:        mq,
+		}),
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser),
 		queueHandler.GetStatus)
 	router.POST("/queue/verify-captcha",

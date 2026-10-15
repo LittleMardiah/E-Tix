@@ -35,8 +35,13 @@ type Config struct {
 	// signature validation (in addition to Midtrans SHA512 formula).
 	PaymentGatewayWebhookSecret string
 
-	// TestMode enables MockPaymentAdapter (dev/CI). "true" → mock, else real.
+	// TestMode enables MockPaymentAdapter + MockCaptchaService (dev/CI).
+	// "true" → mock, else real provider. See main.go wiring.
 	TestMode string
+
+	// TurnstileSecretKey is the Cloudflare Turnstile siteverify secret.
+	// Only used when TestMode != "true".
+	TurnstileSecretKey string
 
 	TwilioAccountSID string
 	TwilioAuthToken  string
@@ -85,6 +90,7 @@ func Load() (*Config, error) {
 		MidtransIsProduction:        os.Getenv("MIDTRANS_IS_PRODUCTION"),
 		PaymentGatewayWebhookSecret: os.Getenv("PAYMENT_GATEWAY_WEBHOOK_SECRET"),
 		TestMode:                    os.Getenv("TEST_MODE"),
+		TurnstileSecretKey:          os.Getenv("TURNSTILE_SECRET_KEY"),
 
 		TwilioAccountSID: os.Getenv("TWILIO_ACCOUNT_SID"),
 		TwilioAuthToken:  os.Getenv("TWILIO_AUTH_TOKEN"),

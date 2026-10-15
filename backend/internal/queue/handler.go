@@ -63,6 +63,9 @@ func (h *QueueHandler) GetStatus(c *gin.Context) {
 		return
 	}
 
+	// H1 FIX: if IngressMiddleware already generated a queue token for this
+	// request, reuse it (and skip a second Generate). Falls back to service
+	// when middleware is not in the chain (unit tests, alternative routes).
 	resp, err := h.svc.GetStatus(c.Request.Context(), uid, eid)
 	if err != nil {
 		switch {
@@ -72,6 +75,11 @@ func (h *QueueHandler) GetStatus(c *gin.Context) {
 			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		}
 		return
+	}
+
+	// Prefer middleware-generated token (single source, avoids double Generate).
+	if ctxToken := c.GetString("queue_token"); ctxToken != "" {
+		resp.QueueToken = ctxToken
 	}
 
 	c.JSON(http.StatusOK, gin.H{
