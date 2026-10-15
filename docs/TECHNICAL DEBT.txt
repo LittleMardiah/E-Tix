@@ -347,3 +347,51 @@ Rencana Fix: Pipeline GETBIT via Redis MGET batched, atau fetch raw byte
 Trigger: profil latency p95 > 100ms di staging/prod.
 Referensi: docs/AUDIT FASE 3, H1 fix.
 
+
+---
+
+ID: TD-F0-01
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: /metrics Prometheus endpoint tidak ada. Retro-audit cmd/api/main.go
+  menemukan 0 route /metrics. Monitoring (Prometheus + Grafana) skip FASE 0
+  E8 (per ROADMAP FASE 0 §4 E8), tapi sampai sekarang belum di-wire meski
+  api_server sudah live.
+Root Cause: FASE 0 skip monitoring (task T35-T38).
+Rencana Fix: Tambah /metrics endpoint (prometheus/client_golang) + instrument
+  http_request_duration_seconds, http_requests_total, circuit_breaker_state,
+  payment_reconciliation_pending (per SECURITY_SPEC §9.3).
+Trigger: FASE 6 (analytics) atau FASE 9 (portfolio polish).
+Referensi: docs/AUDIT TOTAL FASE 0-3, opencode review 2026-10-16.
+
+ID: TD-F0-02
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: SetTrustedProxies([]string{}) = trust NONE. Di production
+  (Render.com + Cloudflare), ClientIP() akan return IP Cloudflare, bukan IP
+  client asli → rate limit IP tidak efektif (semua client dianggap 1 IP).
+  Saat ini aman (fix H2), tapi butuh env TRUSTED_PROXIES untuk prod.
+Root Cause: Production proxy IP range belum di-set (deferred sampai cloud
+  provisioning FASE 7).
+Rencana Fix: Env TRUSTED_PROXIES (comma-separated) + parse di config.go +
+  SetTrustedProxies(parsed) di main.go. Default dev = empty (safe).
+Trigger: FASE 7 (staging deploy) atau saat flash sale pertama.
+Referensi: docs/AUDIT TOTAL FASE 0-4, opencode review 2026-10-16.
+
+ID: TD-F0-03
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: Env vars Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+  SendGrid (SENDGRID_API_KEY), Sentry (SENTRY_DSN) di-load di config.go
+  tapi tidak dipakai (0 referensi). Notification service masih pakai
+  LogNotification (dev fallback, lihat auth/notification.go).
+Root Cause: Notifikasi production + observability deferred ke fase lanjutan.
+Rencana Fix: Wire Twilio/SendGrid di NotificationService saat FASE 5
+  (fallback PIN SMS/Email) atau FASE 6 (notif gateway). Sentry wire di
+  FASE 9 polish.
+Trigger: FASE 5 (fallback PIN) untuk SMS/Email; FASE 9 untuk Sentry.
+Referensi: docs/AUDIT TOTAL FASE 0-4, opencode review 2026-10-16.
+

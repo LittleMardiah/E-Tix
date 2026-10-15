@@ -954,3 +954,54 @@ Cross-cutting lessons:
 END OF RETRO-AUDIT LESSON
 ================================================================================
 
+
+================================================================================
+## AUDIT BLIND SPOT FOUND — cmd/api/main.go (2026-10-16)
+================================================================================
+
+Konteks: deep audit packages `cmd/*` + `config/*` + `middleware/*` (FASE 0-1
+legacy) via OpenCode. Nemukan 2 HIGH + 3 MED + 7 LOW yang retro-audit
+FASE 0-4 SEBELUMNYA miss.
+
+Root cause blind spot: retro-audit FASE 0-4 fokus behavioral per fitur
+(auth, queue, booking, payment, worker), tapi TIDAK AUDIT wire file
+`cmd/api/main.go` sebagai high-risk file. Padahal di situ semua dependency
+init + middleware chain + worker start + route registration.
+
+Findings utama:
+1. H1 (CRITICAL): fanWorker.Run dipanggil 2×.
+   - FASE 2 asli: `go func() { _ = fanWorker.Run(ctx) }()` (line 89).
+   - FASE 4 P4b wire script ADD 3 worker goroutine (fan + booking-expiry +
+     reconciliation) TANPA cek bahwa fanWorker sudah di-start.
+   - Dampak: 2 goroutine Consume("fan_score") = double-consume, race ack/nack.
+   - Fix: hapus dup di FASE 2 line, comment penjelasan.
+   - ROOT CAUSE: script wire FASE 4 pakai `if X not in s` guard yang
+     FALSE-POSITIVE (X = "bookingExpiryWorker.Run", bukan "fanWorker.Run"),
+     jadi append tanpa verify existing.
+
+2. H2 (HIGH): `gin.New()` tanpa `SetTrustedProxies` → default trust ALL
+   (0.0.0.0/0) → `c.ClientIP()` bisa di-spoof via X-Forwarded-For →
+   rate limit IP (auth login 5/min) di-bypass.
+   - Fix: SetTrustedProxies([]string{}) = trust none (dev-safe).
+   - Production: butuh TRUSTED_PROXIES env → TD-F0-02.
+
+3. M1 (MED): CORS origin tanpa `http(s)://` scheme → gin-contrib/cors
+   `Validate` panic di startup. Fix: validate prefix di parseOrigins.
+
+4. M4 (MED): DB_MAX_CONNECTIONS + DB_STATEMENT_TIMEOUT di-load config tapi
+   0 reference di db/postgres.go (hardcoded 15 / 3000ms). Fix:
+   NewDBPoolWithOptions + wire.
+
+Lesson (pattern ke-4 Reviewer):
+- Setiap wire main.go: WAJIB `grep -c "X.Run\|NewXWorker"` SEBELUM append.
+- `cmd/api/main.go` = HIGH-RISK FILE. Treat sebagai auditor target utama,
+  bukan sekadar "glue".
+- Rule baru: retro-audit per fase WAJIB include main.go behavioral read
+  (imports + func main + worker start + route list + middleware chain).
+
+Commit retro-audit: 902151e (H1,H2,M1) + pending F3 (M4).
+
+================================================================================
+END OF AUDIT BLIND SPOT LESSON
+================================================================================
+
