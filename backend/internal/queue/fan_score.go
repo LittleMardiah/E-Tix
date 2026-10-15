@@ -10,6 +10,7 @@ import (
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 const (
@@ -42,7 +43,11 @@ func (s *FanScoreService) GetBaseScore(ctx context.Context, userID uuid.UUID) (i
 				return score, nil
 			}
 		} else if !errors.Is(err, goredis.Nil) {
-			return 0, err
+			// H10 FIX: Redis error (not cache-miss) → fall through to DB.
+			// Previous behavior returned error and turned Redis outages
+			// into ingress 500s.
+			zap.L().Warn("fan_score: redis read failed, falling back to DB",
+				zap.String("user_id", userID.String()), zap.Error(err))
 		}
 	}
 
@@ -78,6 +83,11 @@ func (s *FanScoreService) GetDynamicScore(ctx context.Context, userID uuid.UUID)
 
 	score, perr := strconv.Atoi(val)
 	if perr != nil {
+		// H13 FIX: surface corrupted cache entries instead of silently
+		// treating them as 0.
+		zap.L().Warn("fan_score: corrupt dynamic score in redis",
+			zap.String("user_id", userID.String()),
+			zap.String("raw", val), zap.Error(perr))
 		return 0, nil
 	}
 

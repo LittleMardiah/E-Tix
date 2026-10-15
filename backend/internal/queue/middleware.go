@@ -9,8 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-
-	"github.com/LittleMardiah/E-Tix/backend/internal/auth"
 )
 
 type QueueTokenIssuer interface {
@@ -23,7 +21,6 @@ type MessagePublisher interface {
 
 type IngressConfig struct {
 	FanScore         *FanScoreService
-	Blacklist        *auth.TokenBlacklistService
 	QueueTokenIssuer QueueTokenIssuer
 	IPBlacklistCheck func(ctx context.Context, ip string) (bool, error)
 	Publisher        MessagePublisher
@@ -55,8 +52,17 @@ func IngressMiddleware(cfg IngressConfig) gin.HandlerFunc {
 			ip := c.ClientIP()
 			blocked, berr := cfg.IPBlacklistCheck(ctx, ip)
 			if berr != nil {
-				zap.L().Warn("ingress ip blacklist check failed", zap.String("ip", ip), zap.Error(berr))
-			} else if blocked {
+				// H8 FIX: fail-closed. If we cannot verify the IP is not
+				// blacklisted, reject rather than proceed.
+				zap.L().Error("ingress ip blacklist check failed",
+					zap.String("ip", ip), zap.Error(berr))
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+					"success": false,
+					"error":   "SERVICE_UNAVAILABLE",
+				})
+				return
+			}
+			if blocked {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"success": false,
 					"error":   "BLACKLISTED",
@@ -94,7 +100,7 @@ func IngressMiddleware(cfg IngressConfig) gin.HandlerFunc {
 				UserID:     uid.String(),
 				IP:         c.ClientIP(),
 				FinalScore: score,
-				Timestamp:  time.Now(),
+				Timestamp:  time.Now().UTC(),
 			}
 			payload, merr := json.Marshal(meta)
 			if merr != nil {

@@ -160,10 +160,9 @@ func TestIngress_IPBlacklist_Err(t *testing.T) {
 
 	w := doJSON(t, router, http.MethodGet, "/ingress", testUserID, "")
 
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, captured, "fan_score")
-	assert.Contains(t, captured, "tier")
-	assert.Contains(t, captured, "queue_token")
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.NotContains(t, captured, "fan_score")
+	assert.NotContains(t, captured, "tier")
 }
 
 func TestIngress_FanScoreError(t *testing.T) {

@@ -74,7 +74,8 @@ func (s *QueueTokenService) Validate(tokenString string) (*QueueTokenClaims, err
 			return nil, fmt.Errorf("queue_token: unexpected signing method %q", t.Header["alg"])
 		}
 		return s.pub, nil
-	}, jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}))
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
+		jwt.WithIssuer(s.issuer))
 	if err != nil {
 		return nil, fmt.Errorf("queue_token: parse: %w", err)
 	}
