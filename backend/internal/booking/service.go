@@ -135,6 +135,10 @@ func (s *BookingService) LockSeats(ctx context.Context, userID, eventID, section
 		}
 		return nil, ErrSeatsNotAvailable
 	}
+	// H8 FIX: require explicit SUCCESS from Lua; any other status (e.g. "") must not fall through to CreateBooking.
+	if lockResult.Status != "SUCCESS" {
+		return nil, fmt.Errorf("booking: unexpected lock status %q", lockResult.Status)
+	}
 
 	booking := &Booking{
 		ID:            bookingID,
