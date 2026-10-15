@@ -56,6 +56,10 @@ func doBookingRequest(t *testing.T, router *gin.Engine, method, path, userID, qu
 	if queueToken != "" {
 		req.Header.Set(testQueueTokenHdr, queueToken)
 	}
+	// H4: POST /seats requires X-Idempotency-Key (per API CONTRACT §9.1).
+	if method == http.MethodPost {
+		req.Header.Set("X-Idempotency-Key", "test-idem-"+uuid.NewString())
+	}
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -65,7 +69,7 @@ func doBookingRequest(t *testing.T, router *gin.Engine, method, path, userID, qu
 func newTestBookingHandler(t *testing.T, repo BookingRepository, rdb *redis.Client, pub DelayedPublisher) (*BookingHandler, *queue.QueueTokenService) {
 	t.Helper()
 	svc, qt := newTestService(t, repo, rdb, pub)
-	return NewBookingHandler(svc, zap.NewNop()), qt
+	return NewBookingHandler(svc, rdb, zap.NewNop()), qt
 }
 
 // ============================================================

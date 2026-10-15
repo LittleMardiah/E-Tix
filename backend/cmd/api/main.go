@@ -114,7 +114,7 @@ func main() {
 		logger.Fatal("failed to load lua scripts", zap.Error(err))
 	}
 	bookingSvc := booking.NewBookingService(bookingRepo, rdb, luaScripts, queueTokenSvc, mq)
-	bookingHandler := booking.NewBookingHandler(bookingSvc, logger)
+	bookingHandler := booking.NewBookingHandler(bookingSvc, rdb, logger)
 
 	paymentRepo := payment.NewPostgresPaymentObligationRepository(pgPool)
 	paymentIdem := payment.NewIdempotencyService(rdb, paymentRepo)
