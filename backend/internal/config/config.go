@@ -118,6 +118,14 @@ func Load() (*Config, error) {
 	if cfg.DatabaseURL == "" {
 		missing = append(missing, "DATABASE_URL")
 	}
+	// M4 FIX: fail-fast on ALL infra URLs, not just DB. Previously missing
+	// REDIS_URL / RABBITMQ_URL blew up later in main.go with less context.
+	if cfg.RedisURL == "" {
+		missing = append(missing, "REDIS_URL")
+	}
+	if cfg.RabbitMQURL == "" {
+		missing = append(missing, "RABBITMQ_URL")
+	}
 	if cfg.JWTPrivateKey == "" && cfg.JWTPrivateKeyPath == "" {
 		missing = append(missing, "JWT_PRIVATE_KEY")
 	}

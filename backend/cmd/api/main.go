@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,7 +55,19 @@ func main() {
 
 	ctx := context.Background()
 
-	pgPool, err := db.NewDBPool(ctx, cfg.DatabaseURL)
+	dbMaxConns := 0
+	if v := cfg.DBMaxConnections; v != "" {
+		if n, perr := strconv.Atoi(v); perr == nil {
+			dbMaxConns = n
+		} else {
+			logger.Warn("invalid DB_MAX_CONNECTIONS; using default",
+				zap.String("value", v), zap.Error(perr))
+		}
+	}
+	pgPool, err := db.NewDBPoolWithOptions(ctx, cfg.DatabaseURL, db.PoolOptions{
+		MaxConns:         dbMaxConns,
+		StatementTimeout: cfg.DBStatementTimeout,
+	})
 	if err != nil {
 		logger.Fatal("failed to init postgres pool", zap.Error(err))
 	}
