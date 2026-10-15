@@ -106,13 +106,53 @@ func TestSecurity_RateLimit_Login(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 }
 
+// TestSecurity_BcryptCost12 verifies the app's Register path actually uses
+// cost=12. Previous version hashed with bcrypt directly (tautological —
+// tested the stdlib, not the app). We now drive the service.
 func TestSecurity_BcryptCost12(t *testing.T) {
-	password := "TestPass123!"
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	// Ensure local Redis and a service to drive Register.
+	rdb := setupTestRedis(t)
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
-	cost, err := bcrypt.Cost(hash)
+	jwtSvc := auth.NewJWTServiceWithKeys(priv, &priv.PublicKey, "test-issuer")
+	blacklist := auth.NewTokenBlacklistService(rdb)
+
+	// Capture the hash written to the repository via a minimal fake.
+	fakeRepo := &captureRepo{}
+	svc := auth.NewAuthService(fakeRepo, jwtSvc, rdb, nil, blacklist)
+
+	_, err = svc.Register(context.Background(), &auth.RegisterRequest{
+		Email:    "bcrypt-cost-test@example.com",
+		Phone:    "+6281111199999",
+		Name:     "Bcrypt Cost",
+		Password: "TestPass123!",
+		Role:     "customer",
+	})
 	require.NoError(t, err)
-	assert.Equal(t, 12, cost)
+	require.NotNil(t, fakeRepo.lastUser)
+	require.NotEmpty(t, fakeRepo.lastUser.PasswordHash)
+
+	cost, err := bcrypt.Cost([]byte(fakeRepo.lastUser.PasswordHash))
+	require.NoError(t, err)
+	assert.Equal(t, 12, cost, "app Register must use bcrypt cost 12")
+}
+
+// captureRepo implements auth.UserRepository; captures the last user created.
+type captureRepo struct {
+	lastUser *auth.User
+}
+
+func (c *captureRepo) CreateUser(_ context.Context, u *auth.User) error {
+	c.lastUser = u
+	return nil
+}
+
+func (c *captureRepo) GetUserByEmail(_ context.Context, _ string) (*auth.User, error) {
+	return nil, auth.ErrUserNotFound
+}
+
+func (c *captureRepo) GetUserByID(_ context.Context, _ uuid.UUID) (*auth.User, error) {
+	return nil, auth.ErrUserNotFound
 }
 
 func TestSecurity_RefreshTokenReplay(t *testing.T) {
@@ -145,8 +185,14 @@ func TestSecurity_RefreshTokenReplay(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, blacklisted)
 
-	_, err = jwtSvc.ParseRefreshToken(refreshToken)
-	assert.NoError(t, err)
+	// MED FIX: previous assertion `ParseRefreshToken → NoError` only proved
+	// crypto parse works — it did NOT test replay rejection. Now we drive
+	// the actual AuthService.RefreshToken path with a blacklisted jti and
+	// assert the sentinel.
+	svc := auth.NewAuthService(nil, jwtSvc, rdb, nil, blacklist)
+	_, err = svc.RefreshToken(ctx, refreshToken)
+	require.Error(t, err, "replayed refresh token must be rejected")
+	assert.ErrorIs(t, err, auth.ErrTokenBlacklisted)
 }
 
 func TestSecurity_TokenTypeMismatch(t *testing.T) {
