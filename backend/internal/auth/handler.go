@@ -195,7 +195,11 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	authHeader := c.GetHeader("Authorization")
 	accessToken := strings.TrimPrefix(authHeader, "Bearer ")
 
-	_ = h.svc.Logout(c.Request.Context(), accessToken, req.RefreshToken)
+	// B7 FIX: surface revoke failure so the client can retry.
+	if err := h.svc.Logout(c.Request.Context(), accessToken, req.RefreshToken); err != nil {
+		c.JSON(http.StatusInternalServerError, errorResponse("INTERNAL_ERROR", "logout failed"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

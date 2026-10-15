@@ -53,7 +53,14 @@ func AuthMiddleware(jwt *JWTService, blacklist *TokenBlacklistService) gin.Handl
 			return
 		}
 
-		blacklisted, _ := cfg.blacklist.IsBlacklisted(c.Request.Context(), claims.ID)
+		// B1 FIX: fail-closed. If Redis is unavailable we cannot prove the
+		// token is not revoked, so reject (503) rather than accept.
+		blacklisted, bErr := cfg.blacklist.IsBlacklisted(c.Request.Context(), claims.ID)
+		if bErr != nil {
+			log.Printf("[ERROR] auth: blacklist check failed: %v", bErr)
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, errorResponse("SERVICE_UNAVAILABLE", "auth dependency unavailable"))
+			return
+		}
 		if blacklisted {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, errorResponse("TOKEN_BLACKLISTED", "token has been revoked"))
 			return
@@ -98,7 +105,11 @@ func RateLimitMiddlewareScoped(rdb *redis.Client, limit int, window time.Duratio
 
 		cnt, err := rdb.IncrWithTTL(c.Request.Context(), key, window)
 		if err != nil {
-			log.Printf("[WARN] rate limit: redis error for key %q: %v", key, err)
+			// B6 (accepted trade-off): rate limit fails OPEN to keep the API
+			// available; but log at ERROR so an outage is visible. Combined
+			// with B1 (fail-closed blacklist), a Redis outage will reject
+			// auth'd requests with 503 before this is reached.
+			log.Printf("[ERROR] rate limit: redis error, failing open for key %q: %v", key, err)
 			c.Next()
 			return
 		}

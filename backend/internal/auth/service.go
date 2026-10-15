@@ -242,11 +242,18 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*R
 		return nil, ErrInvalidCredentials
 	}
 
-	blacklisted, err := s.blacklist.IsBlacklisted(ctx, claims.ID)
-	if err != nil {
-		return nil, fmt.Errorf("auth: check blacklist: %w", err)
+	// B2 FIX: Atomic claim. SET NX closes the TOCTOU window where two
+	// concurrent refresh calls both passed the pre-check before either
+	// wrote the blacklist entry → session forking / replay.
+	ttl := time.Until(claims.ExpiresAt.Time)
+	if ttl <= 0 {
+		ttl = time.Second
 	}
-	if blacklisted {
+	first, err := s.blacklist.MarkRotated(ctx, claims.ID, ttl)
+	if err != nil {
+		return nil, fmt.Errorf("auth: claim refresh token: %w", err)
+	}
+	if !first {
 		return nil, ErrTokenBlacklisted
 	}
 
@@ -265,10 +272,6 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*R
 
 	if user.Status != "ACTIVE" {
 		return nil, ErrForbidden
-	}
-
-	if err := s.blacklist.AddToBlacklist(ctx, claims.ID, time.Until(claims.ExpiresAt.Time)); err != nil {
-		return nil, fmt.Errorf("auth: blacklist old refresh token: %w", err)
 	}
 
 	tier, _ := ComputeLoyaltyTier(user.BaseScore, user.TotalPurchases)

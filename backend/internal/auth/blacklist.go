@@ -37,3 +37,19 @@ func (s *TokenBlacklistService) IsBlacklisted(ctx context.Context, jti string) (
 	}
 	return val != "", nil
 }
+
+// MarkRotated atomically claims a refresh token's jti as rotated.
+//
+// Returns (true, nil) if this caller is the FIRST to claim the jti.
+// Returns (false, nil) if the jti was already claimed (replay).
+// Returns (false, err) on Redis failure.
+//
+// Use this instead of IsBlacklisted+AddToBlacklist for refresh rotation:
+// SET NX is atomic, closing the TOCTOU race where two concurrent refresh
+// calls both pass the pre-check before either writes.
+func (s *TokenBlacklistService) MarkRotated(ctx context.Context, jti string, ttl time.Duration) (bool, error) {
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	return s.rdb.SetNX(ctx, blacklistPrefix+jti, "1", ttl)
+}
