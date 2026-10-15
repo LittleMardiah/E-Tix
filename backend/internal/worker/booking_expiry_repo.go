@@ -63,3 +63,12 @@ func (r *PgxBookingExpiryRepo) InsertAdminAction(ctx context.Context, tx pgx.Tx,
 		adminID, action, resourceType, resourceID, "auto expire", reason)
 	return err
 }
+
+func (r *PgxBookingExpiryRepo) InsertAdminActionStandalone(ctx context.Context, adminID uuid.UUID, action, resourceType string, resourceID uuid.UUID, reason string) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO admin_actions (admin_id, action_type, target_resource_type,
+			target_resource_id, description, reason)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		adminID, action, resourceType, resourceID, "worker standalone audit", reason)
+	return err
+}

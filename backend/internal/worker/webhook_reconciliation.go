@@ -18,7 +18,7 @@ import (
 // ListPendingOlderThan is served by payment.PaymentObligationRepository (w.repo),
 // so it does not need to be duplicated here.
 type reconciliationRepo interface {
-	ReconcileUpdate(ctx context.Context, tx pgx.Tx, obligationID uuid.UUID, status string, note string) error
+	ReconcileUpdate(ctx context.Context, tx pgx.Tx, obligationID uuid.UUID, status string, note string) (int64, error)
 	InsertAdminAction(ctx context.Context, tx pgx.Tx, adminID uuid.UUID, action, resourceType string, resourceID uuid.UUID, reason string) error
 }
 
@@ -117,6 +117,10 @@ func (w *WebhookReconciliationWorker) reconcileOne(ctx context.Context, o *payme
 	if err != nil {
 		return fmt.Errorf("reconciliation: get status: %w", err)
 	}
+	// L-3: guard against nil status (interface contract doesn't forbid it).
+	if status == nil {
+		return fmt.Errorf("reconciliation: nil status response")
+	}
 
 	var newStatus string
 	switch status.TransactionStatus {
@@ -125,7 +129,6 @@ func (w *WebhookReconciliationWorker) reconcileOne(ctx context.Context, o *payme
 	case "deny", "cancel", "expire", "failure":
 		newStatus = payment.StatusFailed
 	default:
-		// pending / unknown → skip.
 		return nil
 	}
 
@@ -135,9 +138,19 @@ func (w *WebhookReconciliationWorker) reconcileOne(ctx context.Context, o *payme
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := w.recon.ReconcileUpdate(ctx, tx, o.ID, newStatus, "reconciliation_cycle"); err != nil {
+	// M-2: only insert audit row when the UPDATE actually changed a row.
+	// This prevents fake MANUAL_PAID audits when the webhook already won
+	// the race and flipped the obligation out of PENDING.
+	affected, err := w.recon.ReconcileUpdate(ctx, tx, o.ID, newStatus, "reconciliation_cycle")
+	if err != nil {
 		return fmt.Errorf("reconciliation: update: %w", err)
 	}
+	if affected == 0 {
+		w.logger.Info("reconciliation: no-op (state changed)",
+			zap.String("obligation_id", o.ID.String()))
+		return nil
+	}
+
 	if err := w.recon.InsertAdminAction(ctx, tx, w.systemUser,
 		"MANUAL_PAID", "payment_obligation", o.ID,
 		"RECONCILED_"+newStatus); err != nil {

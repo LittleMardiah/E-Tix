@@ -122,7 +122,11 @@ func main() {
 
 	systemUserUUID := uuid.MustParse("00000000-0000-0000-0000-000000000000")
 	if cfg.SystemUserUUID != "" {
-		if id, pErr := uuid.Parse(cfg.SystemUserUUID); pErr == nil {
+		id, pErr := uuid.Parse(cfg.SystemUserUUID)
+		if pErr != nil {
+			logger.Warn("SystemUserUUID parse failed; using zero UUID fallback",
+				zap.String("raw", cfg.SystemUserUUID), zap.Error(pErr))
+		} else {
 			systemUserUUID = id
 		}
 	}

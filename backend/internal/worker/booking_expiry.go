@@ -33,6 +33,7 @@ type bookingExpiryRepo interface {
 	GetPaymentStatusForUpdate(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) (string, error)
 	MarkBookingExpired(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) (int64, error)
 	InsertAdminAction(ctx context.Context, tx pgx.Tx, adminID uuid.UUID, action, resourceType string, resourceID uuid.UUID, reason string) error
+	InsertAdminActionStandalone(ctx context.Context, adminID uuid.UUID, action, resourceType string, resourceID uuid.UUID, reason string) error
 }
 
 // seatReleaser releases Redis bitmap bits for a booking.
@@ -222,41 +223,83 @@ func (w *BookingExpiryWorker) refundPaidObligations(ctx context.Context, booking
 			zap.String("booking_id", bookingID.String()), zap.Error(err))
 		return
 	}
-	// Note: at this point obligations were already flipped to EXPIRED, so
-	// those that were PAID before expiry were NOT captured by MarkExpired.
-	// The mock/real gateway refund is a no-op here when nothing matches;
-	// real refunds are triggered from the pre-expiry snapshot if needed.
-	// Kept simple for MVP: refund only obligations that are still PAID.
 	for _, o := range obs {
-		if o.Status != payment.StatusPaid || o.ExternalTransactionID == nil {
+		if o.Status != payment.StatusPaid {
 			continue
 		}
-		if err := w.refundWithRetry(ctx, *o.ExternalTransactionID, o.Amount); err != nil {
+		if o.ExternalTransactionID == nil || *o.ExternalTransactionID == "" {
+			// M-1: log so money-loss path is visible; not silent.
+			w.logger.Warn("booking expiry: PAID obligation missing external_transaction_id",
+				zap.String("obligation_id", o.ID.String()),
+				zap.String("booking_id", bookingID.String()))
+			w.recordRefundFailure(ctx, o.ID, bookingID, "MISSING_EXTERNAL_TX_ID")
+			continue
+		}
+
+		refundID, err := w.refundWithRetry(ctx, *o.ExternalTransactionID, o.Amount)
+		if err != nil {
+			// H-2: persist failure to admin_actions so it's traceable.
 			w.logger.Error("booking expiry: refund failed after retries",
 				zap.String("obligation_id", o.ID.String()), zap.Error(err))
+			w.recordRefundFailure(ctx, o.ID, bookingID, "REFUND_FAILED_RETRY_EXHAUSTED")
 			continue
 		}
+
+		// M-1: record refund_tx_id on the obligation.
+		if err := w.markRefunded(ctx, o.ID, refundID); err != nil {
+			w.logger.Warn("booking expiry: mark refunded failed",
+				zap.String("obligation_id", o.ID.String()), zap.Error(err))
+		}
 		w.logger.Info("booking expiry: refunded obligation",
-			zap.String("obligation_id", o.ID.String()))
+			zap.String("obligation_id", o.ID.String()),
+			zap.String("refund_id", refundID))
 	}
 }
 
-func (w *BookingExpiryWorker) refundWithRetry(ctx context.Context, externalTxID, amount string) error {
+// recordRefundFailure writes a standalone admin_action for an unresolved refund.
+// Best-effort — a DB blip here does not block worker progress.
+func (w *BookingExpiryWorker) recordRefundFailure(ctx context.Context, obligationID, bookingID uuid.UUID, reason string) {
+	if err := w.repo.InsertAdminActionStandalone(ctx, w.systemUser,
+		"MANUAL_REFUND", "payment_obligation", obligationID, reason); err != nil {
+		w.logger.Error("booking expiry: refund failure audit failed",
+			zap.String("obligation_id", obligationID.String()), zap.Error(err))
+	}
+}
+
+// markRefunded flips an obligation to REFUNDED with its gateway refund id.
+func (w *BookingExpiryWorker) markRefunded(ctx context.Context, obligationID uuid.UUID, refundID string) error {
+	tx, err := w.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := w.obligations.MarkRefunded(ctx, tx, obligationID, refundID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (w *BookingExpiryWorker) refundWithRetry(ctx context.Context, externalTxID, amount string) (string, error) {
 	delays := []time.Duration{100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond}
 	var lastErr error
 	for i, d := range delays {
-		if _, err := w.refund.Refund(ctx, externalTxID, amount); err == nil {
-			return nil
-		} else {
-			lastErr = err
+		refundID, err := w.refund.Refund(ctx, externalTxID, amount)
+		if err == nil {
+			return refundID, nil
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(d):
+		lastErr = err
+
+		// L-1: no sleep after the last attempt — it would be dead time.
+		if i == len(delays)-1 {
+			break
 		}
 		w.logger.Warn("booking expiry: refund retry",
 			zap.Int("attempt", i+1), zap.String("tx", externalTxID))
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(d):
+		}
 	}
-	return lastErr
+	return "", lastErr
 }
