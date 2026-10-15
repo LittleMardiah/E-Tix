@@ -86,7 +86,8 @@ func main() {
 
 	blacklistRepo := worker.NewPgxBlacklistRepo(pgPool)
 	fanWorker := worker.NewFanScoreWorker(mq, rdb, blacklistRepo, logger)
-	go func() { _ = fanWorker.Run(context.Background()) }()
+	// NOTE: fanWorker.Run is started once below (in the worker goroutine section),
+	// not here. Prior duplicate start caused a second consumer on "fan_score".
 
 	fanScoreSvc := queue.NewFanScoreService(rdb, userRepo)
 	queueTokenSvc, err := queue.NewQueueTokenService(cfg.JWTPrivateKeyPath, cfg.JWTPublicKeyPath, "e-tix-flash-queue")
@@ -159,6 +160,13 @@ func main() {
 	}
 
 	router := gin.New()
+	// H2 FIX: gin default trusts ALL proxies (0.0.0.0/0) → c.ClientIP() can be
+	// spoofed via X-Forwarded-For, breaking per-IP rate limits (auth login 5/min).
+	// Empty list = trust no proxy = use direct RemoteAddr. Production proxy
+	// configuration deferred to TD-F0-02 (TRUSTED_PROXIES env).
+	if err := router.SetTrustedProxies([]string{}); err != nil {
+		logger.Warn("failed to set trusted proxies", zap.Error(err))
+	}
 	router.Use(middleware.RecoveryMiddleware(logger))
 	router.Use(middleware.LoggerMiddleware(logger))
 	router.Use(middleware.CORSMiddleware(parseOrigins(cfg.CORSOrigins), logger))

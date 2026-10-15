@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -16,6 +17,20 @@ func CORSMiddleware(origins []string, logger *zap.Logger) gin.HandlerFunc {
 		logger.Warn("no origins configured; CORS disabled")
 		return func(c *gin.Context) {
 			c.Next()
+		}
+	}
+
+	// M1 FIX: validate each origin. gin-contrib/cors Validate panics on any
+	// origin lacking http(s):// scheme. Reject cleanly instead of crashing.
+	for _, o := range origins {
+		if o == "*" {
+			logger.Warn("CORS: wildcard origin with AllowCredentials=true will be rejected by browsers")
+			continue
+		}
+		if !strings.HasPrefix(o, "http://") && !strings.HasPrefix(o, "https://") {
+			logger.Error("CORS: invalid origin (missing http(s):// scheme); CORS disabled",
+				zap.String("origin", o))
+			return func(c *gin.Context) { c.Next() }
 		}
 	}
 
