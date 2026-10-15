@@ -3,10 +3,12 @@ package booking
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
@@ -183,6 +185,11 @@ func (s *BookingService) GetSeatAvailability(ctx context.Context, eventID, secti
 		return nil, ErrSectionNotFound
 	}
 
+	// H1 FIX: read BOTH tickets (paid) and Redis bitmap (in-flight lock).
+	// Precedence: TAKEN (paid ticket row) > LOCKED (Redis bit=1) > AVAILABLE.
+	// Without the Redis read, seats held by other users in the 180s lock
+	// window were reported AVAILABLE — contradicting API CONTRACT §8.3 and
+	// LOGIC FLOW §199 which define LOCKED as "bit=1, TTL 3 min".
 	taken, err := s.repo.GetTakenSeats(ctx, sectionID)
 	if err != nil {
 		return nil, err
@@ -192,12 +199,23 @@ func (s *BookingService) GetSeatAvailability(ctx context.Context, eventID, secti
 		takenMap[p] = struct{}{}
 	}
 
+	lockedBits, err := s.readLockedBitmap(ctx, eventID, sectionID, sec.LayoutVersion, sec.TotalSeats)
+	if err != nil {
+		// Best-effort: fall back to tickets-only (previous behavior) on
+		// Redis failure rather than 500'ing the entire seat map.
+		zap.L().Warn("booking: read bitmap failed; falling back to tickets-only",
+			zap.String("section_id", sectionID.String()), zap.Error(err))
+		lockedBits = nil
+	}
+
 	seats := make([]SeatStatus, 0, sec.TotalSeats)
 	available := 0
 	for pos := 1; pos <= sec.TotalSeats; pos++ {
 		status := "AVAILABLE"
 		if _, ok := takenMap[pos]; ok {
 			status = "TAKEN"
+		} else if lockedBits[pos] {
+			status = "LOCKED"
 		} else {
 			available++
 		}
@@ -241,4 +259,42 @@ func (s *BookingService) ReleaseSeatsForExpiry(ctx context.Context, bookingID uu
 		return fmt.Errorf("booking: release: eval script: %w", err)
 	}
 	return nil
+}
+
+// readLockedBitmap returns map[position]bool of Redis bitmap bits set to 1
+// for the section's lock key. Position is 1-based (matches SeatStatus.Position);
+// Redis offset is 0-based (pos-1).
+//
+// Redis SETBIT uses MSB-first ordering within each byte.
+// Key absence is treated as all-zero.
+func (s *BookingService) readLockedBitmap(ctx context.Context, eventID, sectionID uuid.UUID, layoutVersion, totalSeats int) (map[int]bool, error) {
+	key := fmt.Sprintf("seats:%s:%s:v%d", eventID, sectionID, layoutVersion)
+	raw, err := s.rdb.Get(ctx, key).Bytes()
+	if err != nil {
+		if errors.Is(err, goredis.Nil) {
+			return map[int]bool{}, nil
+		}
+		return nil, err
+	}
+	out := make(map[int]bool)
+	for pos := 1; pos <= totalSeats; pos++ {
+		if bitAt(raw, pos-1) == 1 {
+			out[pos] = true
+		}
+	}
+	return out, nil
+}
+
+// bitAt reads bit at idx (0-based) from a Redis-encoded bitmap byte slice.
+// Redis SETBIT: bit 0 = MSB of byte 0.
+func bitAt(raw []byte, idx int) int {
+	byteIdx := idx / 8
+	if byteIdx >= len(raw) {
+		return 0
+	}
+	bitIdx := 7 - (idx % 8)
+	if raw[byteIdx]&(1<<uint(bitIdx)) != 0 {
+		return 1
+	}
+	return 0
 }
