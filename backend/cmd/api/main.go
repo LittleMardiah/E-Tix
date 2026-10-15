@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/auth"
@@ -119,6 +120,17 @@ func main() {
 	paymentSvc := payment.NewPaymentService(pgPool, paymentRepo, paymentBookingReader, paymentGateway, paymentIdem)
 	paymentHandler := payment.NewPaymentHandler(paymentSvc, paymentRepo, paymentBookingReader, paymentIdem, logger)
 
+	systemUserUUID := uuid.MustParse("00000000-0000-0000-0000-000000000000")
+	if cfg.SystemUserUUID != "" {
+		if id, pErr := uuid.Parse(cfg.SystemUserUUID); pErr == nil {
+			systemUserUUID = id
+		}
+	}
+
+	bookingExpiryRepo := worker.NewPgxBookingExpiryRepo(pgPool)
+	refundAdapter := worker.NewGatewayRefundAdapter(paymentGateway)
+	bookingExpiryWorker := worker.NewBookingExpiryWorker(mq, pgPool, bookingExpiryRepo, paymentRepo, bookingSvc, refundAdapter, systemUserUUID, logger)
+
 	catalogRepo := event.NewPostgresEventRepository(pgPool)
 	catalogSvc := event.NewEventService(catalogRepo)
 	catalogHandler := event.NewEventHandler(catalogSvc)
@@ -219,6 +231,17 @@ func main() {
 	})
 
 	addr := ":" + port
+	go func() {
+		if err := fanWorker.Run(context.Background()); err != nil {
+			logger.Error("fan worker stopped", zap.Error(err))
+		}
+	}()
+	go func() {
+		if err := bookingExpiryWorker.Run(context.Background()); err != nil {
+			logger.Error("booking expiry worker stopped", zap.Error(err))
+		}
+	}()
+
 	logger.Info("starting server",
 		zap.String("environment", cfg.Environment),
 		zap.String("addr", addr),
