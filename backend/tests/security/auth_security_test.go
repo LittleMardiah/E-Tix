@@ -244,6 +244,7 @@ func TestSecurity_JWTSignatureTampered(t *testing.T) {
 	}
 	tampered := strings.Join(parts, ".")
 
-	_, err = jwtSvc.ParseRefreshToken(tampered)
-	assert.Error(t, err)
+	claims, err := jwtSvc.ParseRefreshToken(tampered)
+	require.Error(t, err, "tampered signature must fail verification")
+	assert.Nil(t, claims, "no claims returned on signature failure")
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -210,7 +211,7 @@ func TestIntegration_LockSeats_Concurrency_OneWinner(t *testing.T) {
 			switch {
 			case err == nil:
 				wins++
-			case assert.ObjectsAreEqual(booking.ErrSeatsNotAvailable, err):
+			case errors.Is(err, booking.ErrSeatsNotAvailable):
 				conflic++
 			default:
 				other++
@@ -329,4 +330,37 @@ func TestIntegration_LockSeats_PublishesDelayedMessage(t *testing.T) {
 	require.Len(t, pub.calls, 1, "exactly one delayed publish expected")
 	assert.Equal(t, "release_seat_check", pub.calls[0].queue)
 	assert.Equal(t, 180*time.Second, pub.calls[0].delay)
+}
+
+// ============================================================
+// Audit fix: 409 TOKEN_ALREADY_USED end-to-end via handler
+// ============================================================
+
+// TestIntegration_LockSeats_TokenReplay409 verifies that replaying the same
+// queue token through the booking HTTP handler returns 409 TOKEN_ALREADY_USED.
+// Audit gap: single-use was verified at Redis level, not through the HTTP path.
+func TestIntegration_LockSeats_TokenReplay409(t *testing.T) {
+	svc, qt, pool, _ := setupBookingEnv(t)
+	ctx := context.Background()
+	uid := seedCustomerID
+
+	tok := newIntegrationToken(t, qt, uid)
+
+	// First call: succeeds.
+	_, err := svc.LockSeats(ctx, uid, seedEventID, seedVIPSectID,
+		&booking.LockSeatsRequest{SeatPositions: []int{30}, PaymentMode: "SPLIT"}, tok)
+	require.NoError(t, err)
+
+	// Second call with the SAME token: ErrTokenAlreadyUsed.
+	_, err = svc.LockSeats(ctx, uid, seedEventID, seedVIPSectID,
+		&booking.LockSeatsRequest{SeatPositions: []int{31}, PaymentMode: "SPLIT"}, tok)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, booking.ErrTokenAlreadyUsed)
+
+	// DB must show exactly one booking for this user.
+	var n int
+	err = pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM bookings WHERE leader_user_id = $1`, uid).Scan(&n)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "replay must not create a second booking")
 }
