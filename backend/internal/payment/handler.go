@@ -129,17 +129,28 @@ func (h *PaymentHandler) GetBookingStatus(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+
+	// Step 1: verify booking exists (distinguish 404 from 403 from 200-empty).
+	bk, err := h.booking.GetByID(ctx, bookingID)
+	if err != nil {
+		if errors.Is(err, ErrBookingNotFound) {
+			writeError(c, http.StatusNotFound, "NOT_FOUND", "booking not found")
+			return
+		}
+		h.logger.Error("get booking failed", zap.Error(err))
+		writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		return
+	}
+
+	// Step 2: list obligations (may be empty — payment not initiated yet).
 	obligations, err := h.repo.ListByBooking(ctx, bookingID)
 	if err != nil {
 		h.logger.Error("list obligations failed", zap.Error(err))
 		writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		return
 	}
-	if len(obligations) == 0 {
-		writeError(c, http.StatusNotFound, "NOT_FOUND", "booking not found")
-		return
-	}
 
+	// Step 3: access control — leader OR member.
 	isMember := false
 	for _, o := range obligations {
 		if o.UserID == userID {
@@ -147,16 +158,12 @@ func (h *PaymentHandler) GetBookingStatus(c *gin.Context) {
 			break
 		}
 	}
-
-	if !isMember {
-		// Not a member — must be leader to view.
-		bk, bkErr := h.booking.GetByID(ctx, bookingID)
-		if bkErr != nil || bk.LeaderUserID != userID {
-			writeError(c, http.StatusForbidden, "FORBIDDEN", "caller is neither leader nor member")
-			return
-		}
+	if !isMember && bk.LeaderUserID != userID {
+		writeError(c, http.StatusForbidden, "FORBIDDEN", "caller is neither leader nor member")
+		return
 	}
 
+	// Step 4: build response (empty obligations → 200 with empty array).
 	resp := buildStatusResponse(bookingID, obligations)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
