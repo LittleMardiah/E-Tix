@@ -17,6 +17,9 @@ type EventRepository interface {
 	ListEvents(ctx context.Context, filter ListFilter) ([]Event, int, error)
 	GetEventByID(ctx context.Context, id uuid.UUID) (*Event, error)
 	GetSectionsByEventID(ctx context.Context, eventID uuid.UUID) ([]Section, error)
+	// GetSectionsByEventIDs batches the per-event section lookup into a single
+	// query. Used by EventService.List to avoid N+1 on catalog pages.
+	GetSectionsByEventIDs(ctx context.Context, eventIDs []uuid.UUID) (map[uuid.UUID][]Section, error)
 }
 
 // ListFilter carries validated catalog list filters.
@@ -227,4 +230,34 @@ func scanEventWithOrganizer(s rowScanner) (Event, error) {
 	ev.BannerURL = banner.String
 	ev.EventEndTime = endDate.String
 	return ev, nil
+}
+
+// GetSectionsByEventIDs fetches sections for multiple events in one query,
+// grouped by event_id. Empty input returns an empty (non-nil) map.
+func (r *PostgresEventRepository) GetSectionsByEventIDs(ctx context.Context, eventIDs []uuid.UUID) (map[uuid.UUID][]Section, error) {
+	out := make(map[uuid.UUID][]Section, len(eventIDs))
+	if len(eventIDs) == 0 {
+		return out, nil
+	}
+	q := fmt.Sprintf("SELECT %s %s WHERE s.event_id = ANY($1) ORDER BY s.event_id, s.price ASC", sectionColumns, sectionJoin)
+	rows, err := r.db.Query(ctx, q, eventIDs)
+	if err != nil {
+		return nil, fmt.Errorf("query sections by events: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var sec Section
+		if err := rows.Scan(
+			&sec.ID, &sec.EventID, &sec.Name, &sec.Price,
+			&sec.TotalSeats, &sec.LayoutVersion, &sec.AvailableSeats,
+		); err != nil {
+			return nil, fmt.Errorf("scan section: %w", err)
+		}
+		out[sec.EventID] = append(out[sec.EventID], sec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sections: %w", err)
+	}
+	return out, nil
 }

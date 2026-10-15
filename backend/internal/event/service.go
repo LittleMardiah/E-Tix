@@ -30,13 +30,21 @@ func (s *EventService) List(ctx context.Context, filter ListFilter) (*ListEvents
 		return nil, fmt.Errorf("list events: %w", err)
 	}
 
+	// H5 FIX: batch section fetch instead of N+1. One query for the whole
+	// page regardless of event count.
 	summaries := make([]EventSummary, 0, len(events))
-	for _, ev := range events {
-		sections, err := s.repo.GetSectionsByEventID(ctx, ev.ID)
-		if err != nil {
-			return nil, fmt.Errorf("get sections for event %s: %w", ev.ID, err)
+	if len(events) > 0 {
+		ids := make([]uuid.UUID, 0, len(events))
+		for _, ev := range events {
+			ids = append(ids, ev.ID)
 		}
-		summaries = append(summaries, buildEventSummary(ev, sections))
+		sectionsByEvent, err := s.repo.GetSectionsByEventIDs(ctx, ids)
+		if err != nil {
+			return nil, fmt.Errorf("get sections batch: %w", err)
+		}
+		for _, ev := range events {
+			summaries = append(summaries, buildEventSummary(ev, sectionsByEvent[ev.ID]))
+		}
 	}
 
 	totalPages := 0
