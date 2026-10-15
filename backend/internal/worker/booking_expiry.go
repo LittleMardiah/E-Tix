@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -21,10 +22,16 @@ type BookingExpiryPayload struct {
 	BookingID string `json:"booking_id"`
 }
 
+// errPoison marks messages that will never succeed on redelivery (JSON/UUID
+// parse errors). These are discarded (Nack requeue=false). All other errors
+// are treated as transient and requeued (Nack requeue=true).
+var errPoison = errors.New("worker: poison message")
+
 // bookingExpiryRepo is the minimum surface needed by BookingExpiryWorker.
 type bookingExpiryRepo interface {
 	GetPaymentStatus(ctx context.Context, bookingID uuid.UUID) (string, error)
-	MarkBookingExpired(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) error
+	GetPaymentStatusForUpdate(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) (string, error)
+	MarkBookingExpired(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) (int64, error)
 	InsertAdminAction(ctx context.Context, tx pgx.Tx, adminID uuid.UUID, action, resourceType string, resourceID uuid.UUID, reason string) error
 }
 
@@ -85,8 +92,10 @@ func (w *BookingExpiryWorker) Run(ctx context.Context) error {
 	}
 	for delivery := range deliveries {
 		if perr := w.processMessage(ctx, delivery.Body); perr != nil {
-			w.logger.Error("booking expiry message failed", zap.Error(perr))
-			if nerr := w.conn.Nack(delivery, false); nerr != nil {
+			requeue := !errors.Is(perr, errPoison)
+			w.logger.Error("booking expiry message failed",
+				zap.Error(perr), zap.Bool("requeue", requeue))
+			if nerr := w.conn.Nack(delivery, requeue); nerr != nil {
 				w.logger.Error("booking expiry nack failed", zap.Error(nerr))
 			}
 			continue
@@ -106,14 +115,14 @@ func (w *BookingExpiryWorker) ProcessOne(ctx context.Context, body []byte) error
 func (w *BookingExpiryWorker) processMessage(ctx context.Context, body []byte) error {
 	var p BookingExpiryPayload
 	if err := json.Unmarshal(body, &p); err != nil {
-		return fmt.Errorf("booking expiry: unmarshal: %w", err)
+		return fmt.Errorf("%w: unmarshal: %v", errPoison, err)
 	}
 	if p.BookingID == "" {
-		return fmt.Errorf("booking expiry: empty booking_id")
+		return fmt.Errorf("%w: empty booking_id", errPoison)
 	}
 	bookingID, err := uuid.Parse(p.BookingID)
 	if err != nil {
-		return fmt.Errorf("booking expiry: parse booking_id: %w", err)
+		return fmt.Errorf("%w: parse booking_id: %v", errPoison, err)
 	}
 
 	status, err := w.repo.GetPaymentStatus(ctx, bookingID)
@@ -142,14 +151,43 @@ func (w *BookingExpiryWorker) rollback(ctx context.Context, bookingID uuid.UUID)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// 1. Flip PENDING → EXPIRED.
-	if _, err := w.obligations.MarkExpiredByBooking(ctx, tx, bookingID); err != nil {
-		return fmt.Errorf("booking expiry: mark expired: %w", err)
+	// H-1 FIX: Re-check booking state INSIDE tx with FOR UPDATE. This
+	// closes the race window between the outer lazy-check and commit
+	// (webhook may have promoted the booking to PAID in between).
+	// Without this, we would release seats for a PAID booking (oversell).
+	status, err := w.repo.GetPaymentStatusForUpdate(ctx, tx, bookingID)
+	if err != nil {
+		return fmt.Errorf("booking expiry: re-check status: %w", err)
+	}
+	if status != payment.StatusPending {
+		w.logger.Info("booking expiry: no-op (state changed inside tx)",
+			zap.String("booking_id", bookingID.String()),
+			zap.String("status", status))
+		return nil // tx will be rolled back by defer (no writes yet)
 	}
 
-	// 2. Mark booking EXPIRED.
-	if err := w.repo.MarkBookingExpired(ctx, tx, bookingID); err != nil {
+	// 1. Flip PENDING → EXPIRED. Guard RowsAffected: no PENDING means
+	// something raced; abort without releasing seats.
+	expired, err := w.obligations.MarkExpiredByBooking(ctx, tx, bookingID)
+	if err != nil {
+		return fmt.Errorf("booking expiry: mark expired: %w", err)
+	}
+	if expired == 0 {
+		w.logger.Warn("booking expiry: no PENDING obligations to expire",
+			zap.String("booking_id", bookingID.String()))
+		// Fall through: booking itself still needs EXPIRED.
+	}
+
+	// 2. Mark booking EXPIRED with RowsAffected guard.
+	affected, err := w.repo.MarkBookingExpired(ctx, tx, bookingID)
+	if err != nil {
 		return fmt.Errorf("booking expiry: mark booking expired: %w", err)
+	}
+	if affected == 0 {
+		// Another writer beat us; abort all writes and skip seat release.
+		w.logger.Info("booking expiry: booking no longer PENDING; aborting",
+			zap.String("booking_id", bookingID.String()))
+		return nil // deferred Rollback discards the partial UPDATE
 	}
 
 	// 3. Audit.

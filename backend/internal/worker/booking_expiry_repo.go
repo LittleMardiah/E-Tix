@@ -31,12 +31,28 @@ func (r *PgxBookingExpiryRepo) GetPaymentStatus(ctx context.Context, bookingID u
 	return status, nil
 }
 
-func (r *PgxBookingExpiryRepo) MarkBookingExpired(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) error {
-	_, err := tx.Exec(ctx, `
+func (r *PgxBookingExpiryRepo) GetPaymentStatusForUpdate(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) (string, error) {
+	var status string
+	err := tx.QueryRow(ctx,
+		`SELECT payment_status::text FROM bookings WHERE id = $1 FOR UPDATE`, bookingID).Scan(&status)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", fmt.Errorf("worker: booking not found")
+		}
+		return "", err
+	}
+	return status, nil
+}
+
+func (r *PgxBookingExpiryRepo) MarkBookingExpired(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) (int64, error) {
+	tag, err := tx.Exec(ctx, `
 		UPDATE bookings
 		SET payment_status = 'EXPIRED', updated_at = NOW()
 		WHERE id = $1 AND payment_status = 'PENDING'`, bookingID)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (r *PgxBookingExpiryRepo) InsertAdminAction(ctx context.Context, tx pgx.Tx, adminID uuid.UUID, action, resourceType string, resourceID uuid.UUID, reason string) error {
