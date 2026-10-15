@@ -218,3 +218,37 @@ Rencana Fix: Implementasi Circuit Breaker (gobreaker) di service layer saat
   FASE 4-8, lalu tulis chaos test + verifikasi fallback DB Queue → 5 menit.
 Referensi: ROADMAP FASE 3.txt §4 E9-S2-T27, docs/AUDIT FASE 3.md §2 E9.
 
+
+---
+
+ID: TD-F4-02
+Tanggal: 2026-10-15
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Batch starvation di WebhookReconciliationWorker. Query
+  `ListPendingOlderThan` pakai ORDER BY created_at ASC LIMIT 100 tanpa
+  attempt counter. Obligation yang GetStatus-nya selalu gagal (network
+  timeout, gateway down) tetap di kepala batch setiap cycle → obligation
+  baru tidak pernah tersentuh.
+Root Cause: Tidak ada retry-count tracking + tidak ada dead-letter.
+Rencana Fix: Tambah kolom `reconcile_attempts INTEGER DEFAULT 0` di
+  payment_obligations, atau tabel `reconciliation_dead_letter`. Worker
+  increment attempts; obligation dengan attempts >= 5 di-skip.
+  Trigger resolve: saat pertama kali worker fail > 3 cycle berturut-turut
+  di staging atau produksi.
+Referensi: docs/AUDIT FASE 4.md §4, opencode review 2026-10-15.
+
+ID: TD-F4-03
+Tanggal: 2026-10-15
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Graceful shutdown untuk worker goroutines. Saat ini 3 worker
+  (fanScore, bookingExpiry, reconciliation) dijalankan dengan
+  `context.Background()` di main.go. Tidak ada signal handler (SIGTERM /
+  SIGINT) → worker mid-tx mati saat Render restart.
+Root Cause: Wiring pakai hardcoded context.Background(), bukan root ctx.
+Rencana Fix: signal.NotifyContext(context.Background(), os.Interrupt,
+  syscall.SIGTERM) → pass ke semua worker.Run(ctx). Drain dengan 30s timeout
+  sebelum router shutdown.
+Referensi: docs/AUDIT FASE 4.md §4, opencode review 2026-10-15.
+

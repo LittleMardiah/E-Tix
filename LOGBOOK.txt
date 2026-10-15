@@ -798,3 +798,123 @@ Tests: 20 unit + 3 integration booking + 5 repository integration = 28 test
 ================================================================================
 END OF FASE 3 CLOSURE
 ================================================================================
+
+================================================================================
+## FASE 4 — GROUP SPLIT-PAY ENGINE (F003) — CLOSURE (2026-10-15)
+================================================================================
+
+Timeline commit FASE 4:
+- c73a922  feat(fase-4): payment foundation — model + repo + gateway iface + mock (P1a)
+- 3c23c60  feat(fase-4): config — Midtrans + webhook secret + test mode (P1a-ext)
+- 1afad87  feat(fase-4): midtrans adapter + status + mock getStatus (P1b)
+- (fix)    fix(fase-4): midtrans order_id uniqueness + guard + doc (P1b-fix)
+- 73207b7  feat(fase-4): payment idempotency L1+L2 service + tests (P1c)
+- 5975eeb  feat(fase-4): booking repo GetByID + GetByIDForUpdate (P2a-1)
+- 6198f2c  feat(fase-4): InitiatePayments service SPLIT+BULK (P2a-2)
+- 5a19110  refactor(fase-4): PaymentService.db → TxBeginner iface (P2a-3a)
+- c27d305  test(fase-4): InitiatePayments tests (P2a-3b)
+- f7ff1ee  feat(fase-4): payment handler initiate + status (P2b-1)
+- 48f4e48  feat(fase-4): booking adapter + wire routes (P2b-2)
+- 470b562  feat(fase-4): webhook receiver + non-final status (P3a)
+- 26c0154  fix(fase-4): GetBookingStatus 404/403 disambiguate (retro A.1)
+- 97003fd  feat(fase-4): BulkAssign service + handler + guard (P3b-1)
+- ca746b9  fix(fase-4): BulkAssign TZ cast + lock order + doc (retro HIGH-1/MED-4/MED-6)
+- 3c8873e  feat(fase-4): BulkAssign idempotency L1 (retro MED-2)
+- 812aa3d  test(fase-4): BulkAssign unit tests — 11 cases (P3b-2)
+- 4d6e23b  feat(fase-4): booking ReleaseSeatsForExpiry + payment helpers (P4a)
+- 68c9c87  feat(fase-4): BookingExpiryWorker + repo + refund adapter (P4b)
+- 29b2539  feat(fase-4): WebhookReconciliationWorker + repo + status (P4c)
+- 2f5accd  fix(fase-4): BookingExpiryWorker race guard + poison/transient (retro H-1/H-3)
+- 615f86a  fix(fase-4): refund audit + reconciliation RowsAffected (retro H-2/M-1/M-2/L)
+- 4a30575  refactor(fase-4): worker db → TxBeginner iface (P4f-1)
+- f4b8633  test(fase-4): BookingExpiryWorker tests (P4f-2a)
+- (pending) test(fase-4): WebhookReconciliationWorker tests (P4f-2b)
+
+Total: 25 commit.
+
+================================================================================
+## LEARNING CHECKPOINTS (FASE 4)
+================================================================================
+
+1. OpenCode retro-review = VALUE. Catch 3 HIGH + 5 MED yang Reviewer
+   miss saat manual write:
+   - H-1 (oversell race webhook vs expiry)
+   - H-3 (transient message discarded via Nack false)
+   - HIGH-1 (TZ cast `(date + time)::timestamptz` = UTC vs WIB 7h offset)
+   - MED-4 (deadlock lock order target users)
+   Pattern: setelah OpenCode review HIGH dari P1b (order_id), gua skip
+   review di P2/P3a, dan OpenCode catch lagi di P4b/P4c. Lesson:
+   BACKFILL review setelah setiap commit milestone.
+
+2. Bug pattern "guard check pakai pemakaian var bukan definisi":
+   - firstID/firstKey P2a
+   - c.JSON block P3b-1
+   - systemUserUUID P4b
+   3x kejadian. Guard `if "X" not in s` FALSE kalau X sudah muncul di
+   wire line. Fix: cek definisi (`var X` / `X :=`).
+
+3. Bug pattern "anchor match pakai tab padahal file spaces":
+   - P4f-1 (indent 5 spasi, gua tulis tab)
+   5x kejadian. Fix: SELALU `cat -A` dulu, atau pakai `sed -i Ns/.*/NEW/`
+   line-based (bukan pattern-based).
+
+4. Bug pattern "fake interface signature mismatch":
+   - InsertAdminAction (7 args vs 8 args, 2x kejadian P4f-2a/P4f-2b)
+   Root cause: tulis fake dari memori, bukan dari interface source. Fix:
+   `grep -A2 "InterfaceName" file.go` → baca exact → baru tulis.
+
+5. Interface extraction untuk testability = pattern kunci:
+   - booking: DelayedPublisher (P4a FASE 3)
+   - payment: TxBeginner (P2a-3a FASE 4)
+   - worker: TxBeginner (P4f-1 FASE 4)
+   Zero production code change, hanya injection point.
+
+6. Timezone handling = serious concern. `(date + time)::timestamptz`
+   interpret wall-clock in DB session TZ. DB = UTC, event = WIB →
+   7h offset. Fix: explicit `AT TIME ZONE 'Asia/Jakarta'`.
+
+7. Poison vs transient message: distinguish untuk Nack(requeue).
+   Poison (JSON/UUID invalid) → discard. Transient (DB down) → requeue.
+   Sentinel `errPoison` + `errors.Is` check di Run loop.
+
+8. Race window antara outer lazy-check dan dalam tx: SELALU re-check
+   state FOR UPDATE di dalam tx sebelum commit. H-1 regression case.
+
+================================================================================
+## TD REGISTER — FASE 4
+================================================================================
+
+NEW:
+- TD-F4-02 (MED): Batch starvation di reconciliation worker.
+- TD-F4-03 (MED): Graceful shutdown ctx untuk 3 goroutine worker.
+
+FIXED (retro review):
+- H-1, H-2, H-3 (workers)
+- MED-1, MED-2, MED-6 (BulkAssign)
+- L-1, L-2, L-3 (LOW)
+
+Reference: docs/TECHNICAL DEBT.txt.
+
+================================================================================
+## FASE 4 STATUS: CLOSED — COVERAGE 30.4% (PAYMENT) + 48% (WORKER)
+================================================================================
+
+Functional guarantee:
+  ✅ Split-Pay + Bulk mode
+  ✅ Idempotency L1 Redis + L2 Postgres
+  ✅ Webhook signature validation (Midtrans SHA512 + dual-source)
+  ✅ Non-final status handling (PENDING → ACK 200 no-mutate)
+  ✅ Bulk assign atomic + event-not-started + deterministic lock order
+  ✅ BookingExpiryWorker + re-check in tx (H-1 oversell fixed)
+  ✅ WebhookReconciliationWorker
+  ✅ Refund retry 3x + audit on fail
+  ✅ Poison vs transient message handling
+
+Tests: 24 payment (11 BulkAssign + 8 Initiate + 5 idempotency) + 20 worker
+  = 44 test PASS. Zero flake.
+
+Coverage: 30.4% payment + 48% worker (target aspirational 90% deferred FASE 9).
+
+================================================================================
+END OF FASE 4 CLOSURE
+================================================================================
