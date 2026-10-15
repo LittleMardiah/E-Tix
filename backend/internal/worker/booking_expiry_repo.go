@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -23,7 +24,7 @@ func (r *PgxBookingExpiryRepo) GetPaymentStatus(ctx context.Context, bookingID u
 	err := r.db.QueryRow(ctx,
 		`SELECT payment_status::text FROM bookings WHERE id = $1`, bookingID).Scan(&status)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return "", fmt.Errorf("worker: booking not found")
 		}
 		return "", err
@@ -36,7 +37,7 @@ func (r *PgxBookingExpiryRepo) GetPaymentStatusForUpdate(ctx context.Context, tx
 	err := tx.QueryRow(ctx,
 		`SELECT payment_status::text FROM bookings WHERE id = $1 FOR UPDATE`, bookingID).Scan(&status)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return "", fmt.Errorf("worker: booking not found")
 		}
 		return "", err

@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -99,7 +100,7 @@ func (r *PostgresPaymentObligationRepository) GetByID(ctx context.Context, id uu
 	row := r.db.QueryRow(ctx, `SELECT `+obligationColumns+` FROM payment_obligations WHERE id = $1`, id)
 	o, err := scanObligation(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrObligationNotFound
 		}
 		return nil, err
@@ -111,7 +112,7 @@ func (r *PostgresPaymentObligationRepository) GetByExternalTxID(ctx context.Cont
 	row := r.db.QueryRow(ctx, `SELECT `+obligationColumns+` FROM payment_obligations WHERE external_transaction_id = $1`, txID)
 	o, err := scanObligation(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrWebhookNotFound
 		}
 		return nil, err
@@ -123,7 +124,7 @@ func (r *PostgresPaymentObligationRepository) GetByIdempotencyKey(ctx context.Co
 	row := r.db.QueryRow(ctx, `SELECT `+obligationColumns+` FROM payment_obligations WHERE idempotency_key = $1`, key)
 	o, err := scanObligation(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // caller treats nil, nil as cache-miss
 		}
 		return nil, err
@@ -154,7 +155,7 @@ func (r *PostgresPaymentObligationRepository) GetByIDForUpdate(ctx context.Conte
 	row := tx.QueryRow(ctx, `SELECT `+obligationColumns+` FROM payment_obligations WHERE id = $1 FOR UPDATE`, id)
 	o, err := scanObligation(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrObligationNotFound
 		}
 		return nil, err
@@ -166,7 +167,7 @@ func (r *PostgresPaymentObligationRepository) GetByExternalTxIDForUpdate(ctx con
 	row := tx.QueryRow(ctx, `SELECT `+obligationColumns+` FROM payment_obligations WHERE external_transaction_id = $1 FOR UPDATE`, txID)
 	o, err := scanObligation(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrWebhookNotFound
 		}
 		return nil, err
@@ -186,7 +187,7 @@ func (r *PostgresPaymentObligationRepository) CheckUserActiveForUpdate(ctx conte
 	var status string
 	err := tx.QueryRow(ctx, `SELECT status::text FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&status)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
 		}
 		return false, err

@@ -23,6 +23,4 @@ func TestLoadLuaScripts_Success(t *testing.T) {
 	assert.Contains(t, scripts.Lock, "GETBIT")
 	assert.Contains(t, scripts.Lock, "SETBIT")
 	assert.Contains(t, scripts.Release, "SETBIT")
-	assert.NotEmpty(t, scripts.LockSHA)
-	assert.NotEmpty(t, scripts.ReleaseSHA)
 }

@@ -3,6 +3,7 @@ package booking
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -52,7 +53,7 @@ func (r *PostgresBookingRepository) GetSectionByID(ctx context.Context, sectionI
 		FROM sections WHERE id = $1`, sectionID,
 	).Scan(&s.ID, &s.EventID, &s.Name, &s.Price, &s.TotalSeats, &s.LayoutVersion)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrSectionNotFound
 		}
 		return nil, fmt.Errorf("booking: get section: %w", err)
@@ -138,7 +139,7 @@ func (r *PostgresBookingRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	row := r.db.QueryRow(ctx, `SELECT `+bookingColumns+` FROM bookings WHERE id = $1`, id)
 	b, err := scanBooking(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrBookingNotFound
 		}
 		return nil, fmt.Errorf("booking: get by id: %w", err)
@@ -150,7 +151,7 @@ func (r *PostgresBookingRepository) GetByIDForUpdate(ctx context.Context, tx pgx
 	row := tx.QueryRow(ctx, `SELECT `+bookingColumns+` FROM bookings WHERE id = $1 FOR UPDATE`, id)
 	b, err := scanBooking(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrBookingNotFound
 		}
 		return nil, fmt.Errorf("booking: get by id for update: %w", err)
@@ -171,7 +172,7 @@ func (r *PostgresBookingRepository) GetEventStartAt(ctx context.Context, booking
 		WHERE b.id = $1`, bookingID,
 	).Scan(&startAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return time.Time{}, ErrBookingNotFound
 		}
 		return time.Time{}, fmt.Errorf("booking: get event start: %w", err)
