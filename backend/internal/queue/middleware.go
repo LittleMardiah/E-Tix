@@ -84,8 +84,11 @@ func IngressMiddleware(cfg IngressConfig) gin.HandlerFunc {
 		c.Set("fan_score", score)
 		c.Set("tier", tier)
 
+		// H5 FIX: gate token generation on ChallengeRequiredScoreThreshold.
+		// Middleware and Service.GetStatus share the same gate; the middleware
+		// just pre-computes it so downstream handlers can read from context.
 		queueToken := ""
-		if cfg.QueueTokenIssuer != nil {
+		if score >= ChallengeRequiredScoreThreshold && cfg.QueueTokenIssuer != nil {
 			token, terr := cfg.QueueTokenIssuer.Generate(uid, tier, score)
 			if terr != nil {
 				zap.L().Warn("ingress queue token generation failed", zap.String("user_id", uid.String()), zap.Error(terr))
@@ -94,6 +97,7 @@ func IngressMiddleware(cfg IngressConfig) gin.HandlerFunc {
 			}
 		}
 		c.Set("queue_token", queueToken)
+		c.Set("challenge_required", score < ChallengeRequiredScoreThreshold)
 
 		if cfg.Publisher != nil {
 			meta := FanScoreMetadata{

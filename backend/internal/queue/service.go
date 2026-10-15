@@ -57,9 +57,16 @@ func (s *QueueService) GetStatus(ctx context.Context, userID uuid.UUID, eventID 
 		return nil, err
 	}
 
-	token, err := s.queueToken.Generate(userID, tier, score)
-	if err != nil {
-		return nil, err
+	// H5 FIX: gate queue token issuance on ChallengeRequiredScoreThreshold.
+	// Below threshold → no token; client must POST /queue/verify-captcha first.
+	// Without this, /queue/status trivially bypassed CAPTCHA for any user.
+	challengeRequired := score < ChallengeRequiredScoreThreshold
+	var token string
+	if !challengeRequired {
+		token, err = s.queueToken.Generate(userID, tier, score)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Position estimation SIMPLE (MVP): deterministic hash-based dummy.
@@ -75,6 +82,7 @@ func (s *QueueService) GetStatus(ctx context.Context, userID uuid.UUID, eventID 
 		TierLabel:            s.fanScore.TierLabel(tier),
 		LoyaltyScore:         score,
 		QueueToken:           token,
+		ChallengeRequired:    challengeRequired,
 	}, nil
 }
 

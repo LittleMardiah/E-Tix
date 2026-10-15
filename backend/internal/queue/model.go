@@ -15,7 +15,8 @@ type QueueStatusResponse struct {
 	Tier                 string `json:"tier"`
 	TierLabel            string `json:"tier_label"`
 	LoyaltyScore         int    `json:"loyalty_score"`
-	QueueToken           string `json:"queue_token"`
+	QueueToken           string `json:"queue_token,omitempty"`
+	ChallengeRequired    bool   `json:"challenge_required"`
 }
 
 type FanScoreMetadata struct {
