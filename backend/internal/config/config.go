@@ -69,8 +69,10 @@ func Load() (*Config, error) {
 
 		RabbitMQURL: os.Getenv("RABBITMQ_URL"),
 
-		JWTPrivateKey: os.Getenv("JWT_PRIVATE_KEY or JWT_PRIVATE_KEY_PATH"),
-		JWTPublicKey:  os.Getenv("JWT_PUBLIC_KEY or JWT_PUBLIC_KEY_PATH"),
+		// Inline PEM keys (legacy) — read straight from env. If empty, the
+		// path-based fields below take over (see main.go wiring).
+		JWTPrivateKey: os.Getenv("JWT_PRIVATE_KEY"),
+		JWTPublicKey:  os.Getenv("JWT_PUBLIC_KEY"),
 
 		JWTPrivateKeyPath: os.Getenv("JWT_PRIVATE_KEY_PATH"),
 		JWTPublicKeyPath:  os.Getenv("JWT_PUBLIC_KEY_PATH"),
