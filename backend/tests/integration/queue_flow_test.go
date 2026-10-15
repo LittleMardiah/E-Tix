@@ -237,3 +237,23 @@ func TestQueueFlow_GetStatus_EventOnSale(t *testing.T) {
 	assert.NotEmpty(t, out.Data.Tier)
 	assert.NotEmpty(t, out.Data.QueueToken)
 }
+
+// ============================================================
+// Invalid CAPTCHA integration case (audit gap fix)
+// ============================================================
+
+// TestQueueFlow_VerifyCaptcha_Invalid asserts that an invalid CAPTCHA solution
+// is rejected with 401 and does not return a queue token. Uses the same
+// setup pattern as TestQueueFlow_VerifyCaptcha_HappyPath.
+func TestQueueFlow_VerifyCaptcha_Invalid(t *testing.T) {
+	e := setupQueueEnv(t)
+	user := e.createUser(t)
+	token := e.accessToken(t, user)
+
+	body := `{"challenge_id":"x","solution":"definitely_wrong"}`
+	w := e.doRequest(t, http.MethodPost, "/queue/verify-captcha", body, token)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	// Response must NOT leak a queue token on failure.
+	assert.NotContains(t, w.Body.String(), `"queue_token":"eyJ`)
+}
