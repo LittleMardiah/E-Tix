@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/payment"
@@ -26,6 +25,12 @@ type BookingExpiryPayload struct {
 // parse errors). These are discarded (Nack requeue=false). All other errors
 // are treated as transient and requeued (Nack requeue=true).
 var errPoison = errors.New("worker: poison message")
+
+// TxBeginner abstracts the transaction opener for testability. In production
+// it is *pgxpool.Pool; in unit tests, a fake returning a stub pgx.Tx.
+type TxBeginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
 
 // bookingExpiryRepo is the minimum surface needed by BookingExpiryWorker.
 type bookingExpiryRepo interface {
@@ -53,7 +58,7 @@ type refundGateway interface {
 // cancelled; at delivery time we re-read booking state and act accordingly.
 type BookingExpiryWorker struct {
 	conn        *queue.Connection
-	db          *pgxpool.Pool
+	db          TxBeginner
 	repo        bookingExpiryRepo
 	obligations payment.PaymentObligationRepository
 	releaser    seatReleaser
@@ -65,7 +70,7 @@ type BookingExpiryWorker struct {
 // NewBookingExpiryWorker wires the worker.
 func NewBookingExpiryWorker(
 	conn *queue.Connection,
-	db *pgxpool.Pool,
+	db TxBeginner,
 	repo bookingExpiryRepo,
 	obligations payment.PaymentObligationRepository,
 	releaser seatReleaser,

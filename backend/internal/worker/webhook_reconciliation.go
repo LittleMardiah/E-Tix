@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/payment"
@@ -33,7 +32,7 @@ type statusFetcher interface {
 // Runs on a 10-minute ticker; each cycle processes up to 100 oldest PENDING
 // obligations older than 10 minutes.
 type WebhookReconciliationWorker struct {
-	db         *pgxpool.Pool
+	db         TxBeginner
 	repo       payment.PaymentObligationRepository
 	recon      reconciliationRepo
 	fetcher    statusFetcher
@@ -47,7 +46,7 @@ type WebhookReconciliationWorker struct {
 
 // NewWebhookReconciliationWorker wires the worker with sensible defaults.
 func NewWebhookReconciliationWorker(
-	db *pgxpool.Pool,
+	db TxBeginner,
 	repo payment.PaymentObligationRepository,
 	recon reconciliationRepo,
 	fetcher statusFetcher,
