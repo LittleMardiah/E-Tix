@@ -90,6 +90,7 @@ func (s *BookingService) LockSeats(ctx context.Context, userID, eventID, section
 		"user_id":        userID.String(),
 		"seat_positions": req.SeatPositions,
 		"total_amount":   totalAmount.String(),
+		"layout_version": sec.LayoutVersion, // H3: captured at lock time
 	})
 	if err != nil {
 		return nil, fmt.Errorf("booking: marshal booking data: %w", err)
@@ -245,11 +246,23 @@ func (s *BookingService) ReleaseSeatsForExpiry(ctx context.Context, bookingID uu
 	if err != nil {
 		return fmt.Errorf("booking: release: get by id: %w", err)
 	}
+	// H3 FIX: prefer layout_version captured at lock time (stored in
+	// booking:{id} mapping). Fallback to current section version only
+	// when mapping missing (pre-H3 locks / Redis eviction). Without this,
+	// a seat-map redesign between lock and release targets the wrong key.
+	layoutVersion, lerr := s.readLockLayoutVersion(ctx, bookingID)
+	if lerr != nil {
+		zap.L().Warn("booking: release: read lock layout_version failed",
+			zap.String("booking_id", bookingID.String()), zap.Error(lerr))
+	}
 	sec, err := s.repo.GetSectionByID(ctx, bk.SectionID)
 	if err != nil {
 		return fmt.Errorf("booking: release: get section: %w", err)
 	}
-	key := fmt.Sprintf("seats:%s:%s:v%d", bk.EventID, bk.SectionID, sec.LayoutVersion)
+	if layoutVersion == 0 {
+		layoutVersion = sec.LayoutVersion
+	}
+	key := fmt.Sprintf("seats:%s:%s:v%d", bk.EventID, bk.SectionID, layoutVersion)
 	seatsJSON, err := json.Marshal(bk.SeatPositions)
 	if err != nil {
 		return fmt.Errorf("booking: release: marshal seats: %w", err)
@@ -297,4 +310,24 @@ func bitAt(raw []byte, idx int) int {
 		return 1
 	}
 	return 0
+}
+
+// readLockLayoutVersion reads layout_version from the booking:{id} mapping
+// captured at lock time. Returns (0, nil) on cache miss — callers fall back
+// to the current section version.
+func (s *BookingService) readLockLayoutVersion(ctx context.Context, bookingID uuid.UUID) (int, error) {
+	raw, err := s.rdb.Get(ctx, "booking:"+bookingID.String()).Result()
+	if err != nil {
+		if errors.Is(err, goredis.Nil) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	var data struct {
+		LayoutVersion int `json:"layout_version"`
+	}
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		return 0, err
+	}
+	return data.LayoutVersion, nil
 }
