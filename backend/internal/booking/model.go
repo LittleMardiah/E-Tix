@@ -16,6 +16,7 @@ var ErrInvalidPaymentMode = errors.New("booking: invalid payment mode")
 var ErrMaxGroupSeatsExceeded = errors.New("booking: max group seats exceeded")
 var ErrSeatOutOfRange = errors.New("booking: seat out of range")
 var ErrEmptySeatPositions = errors.New("booking: seat positions empty")
+var ErrDuplicateSeatPosition = errors.New("booking: duplicate seat position")
 var ErrBookingNotFound = errors.New("booking: not found")
 var ErrQueueTokenInvalid = errors.New("booking: queue token invalid")
 

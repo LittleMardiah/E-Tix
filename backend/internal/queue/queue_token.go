@@ -103,3 +103,14 @@ func NewQueueTokenServiceWithKeys(privateKey *rsa.PrivateKey, publicKey *rsa.Pub
 	}
 	return &QueueTokenService{priv: privateKey, pub: publicKey, issuer: issuer}
 }
+
+// Refund clears the single-use marker for a jti. Callers use this when a
+// downstream step fails before any durable side-effect occurred (e.g. Lua
+// lock returned CONFLICT — no booking was created), so the caller can retry
+// with the same token without re-queueing.
+//
+// H6 FIX: Without this, a user who loses a seat race also loses their queue
+// token and must start the queue over.
+func (s *QueueTokenService) Refund(ctx context.Context, rdb *redis.Client, jti string) error {
+	return rdb.Del(ctx, queueTokenUsedPrefix+jti).Err()
+}

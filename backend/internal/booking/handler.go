@@ -112,6 +112,8 @@ func (h *BookingHandler) LockSeats(c *gin.Context) {
 			writeError(c, http.StatusNotFound, "NOT_FOUND", "section not found")
 		case errors.Is(err, ErrSeatsNotAvailable):
 			writeError(c, http.StatusConflict, "CONFLICT", "seats no longer available")
+		case errors.Is(err, ErrDuplicateSeatPosition):
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "duplicate seat positions")
 		case errors.Is(err, ErrEmptySeatPositions):
 			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "seat_positions cannot be empty")
 		case errors.Is(err, ErrSeatOutOfRange):

@@ -46,6 +46,17 @@ func (s *BookingService) LockSeats(ctx context.Context, userID, eventID, section
 		return nil, ErrInvalidPaymentMode
 	}
 
+	// H7 FIX: reject duplicate seat positions before locking.
+	// Without this, [5,5] passes conflict check (both read bit 0),
+	// then charges twice for one bit (total_amount = 2× price).
+	seen := make(map[int]struct{}, len(req.SeatPositions))
+	for _, pos := range req.SeatPositions {
+		if _, dup := seen[pos]; dup {
+			return nil, ErrDuplicateSeatPosition
+		}
+		seen[pos] = struct{}{}
+	}
+
 	claims, err := s.queueToken.Validate(queueToken)
 	if err != nil {
 		return nil, ErrQueueTokenInvalid
@@ -114,6 +125,14 @@ func (s *BookingService) LockSeats(ctx context.Context, userID, eventID, section
 		return nil, fmt.Errorf("booking: parse lock result: %w", err)
 	}
 	if lockResult.Status == "CONFLICT" {
+		// H6 FIX: refund queue token. Token was consumed by MarkUsed earlier;
+		// on CONFLICT no booking exists, so the marker can be safely removed.
+		// Caller can retry with the same token (e.g. pick a different seat)
+		// without re-queueing.
+		if refundErr := s.queueToken.Refund(ctx, s.rdb, claims.ID); refundErr != nil {
+			zap.L().Warn("booking: refund queue token failed",
+				zap.String("jti", claims.ID), zap.Error(refundErr))
+		}
 		return nil, ErrSeatsNotAvailable
 	}
 
