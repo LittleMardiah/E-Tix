@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"regexp"
 	"strings"
@@ -100,6 +101,14 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 			return nil, err
 		}
 		return nil, fmt.Errorf("auth: create user: %w", err)
+	}
+
+	// B4 FIX: issue OTP on register so /auth/verify-otp is reachable.
+	// Failure is non-fatal: the account exists and can request a new OTP
+	// later (future /auth/resend-otp); a flaky notifier must not block
+	// registration.
+	if _, otpErr := s.GenerateOTP(ctx, user.ID, user.Email); otpErr != nil {
+		log.Printf("[WARN] auth: OTP issue on register failed for user %s: %v", user.ID, otpErr)
 	}
 
 	accessToken, err := s.jwt.GenerateAccessToken(user, "TIER_3")

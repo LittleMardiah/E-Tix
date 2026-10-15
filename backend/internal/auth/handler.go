@@ -3,12 +3,14 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
 )
@@ -43,12 +45,17 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	ctx := c.Request.Context()
 	cacheKey := registerIdempotencyPrefix + idempotencyKey
 
+	// B8 FIX: log Redis read errors instead of swallowing them.
+	// (Read error is treated as cache-miss; the DB unique constraint on
+	// email/phone is the ultimate guard, so this is not correctness-critical.)
 	if cached, err := h.redis.GetString(ctx, cacheKey); err == nil && cached != "" {
 		var stored cachedResponse
 		if jsonErr := json.Unmarshal([]byte(cached), &stored); jsonErr == nil && len(stored.Body) > 0 {
 			c.Data(stored.Status, gin.MIMEJSON, stored.Body)
 			return
 		}
+	} else if err != nil && !errors.Is(err, goredis.Nil) {
+		log.Printf("[WARN] auth: register idempotency read failed: %v", err)
 	}
 
 	var req RegisterRequest
