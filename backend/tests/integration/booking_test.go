@@ -275,3 +275,58 @@ func TestIntegration_LockSeats_PartialConflict_RollbackAll(t *testing.T) {
 	b4, _ := rdb.GetBit(ctx, key, 4).Result()
 	assert.Equal(t, int64(1), b4, "pre-locked seat 5 must remain locked")
 }
+
+// ============================================================
+// Audit fix: assert fakeDelayedPublisher.calls after LockSeats
+// ============================================================
+
+// TestIntegration_LockSeats_PublishesDelayedMessage verifies LockSeats
+// publishes exactly one RELEASE_SEAT_CHECK message with the 180s TTL.
+// Audit gap: previous tests injected fakeDelayedPublisher but never
+// inspected its calls.
+func TestIntegration_LockSeats_PublishesDelayedMessage(t *testing.T) {
+	dbURL := os.Getenv("TEST_DB_URL")
+	if dbURL == "" {
+		t.Skip("TEST_DB_URL not set; skipping integration")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dbURL)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	require.NoError(t, pool.Ping(ctx))
+
+	seed, err := os.ReadFile("../fixtures/seed.sql")
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, string(seed))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM bookings WHERE leader_user_id = $1`, seedCustomerID)
+	})
+
+	mr := miniredis.RunT(t)
+	rdb := &redis.Client{Client: goredis.NewClient(&goredis.Options{Addr: mr.Addr()})}
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	lockLua, err := os.ReadFile("../../internal/booking/scripts/lock_seats.lua")
+	require.NoError(t, err)
+	releaseLua, err := os.ReadFile("../../internal/booking/scripts/release_seats.lua")
+	require.NoError(t, err)
+	scripts := &booking.LuaScripts{Lock: string(lockLua), Release: string(releaseLua)}
+
+	qt := newIntegrationQueueToken(t)
+	pub := &fakeDelayedPublisher{}
+	repo := booking.NewPostgresBookingRepository(pool)
+	svc := booking.NewBookingService(repo, rdb, scripts, qt, pub)
+
+	tok := newIntegrationToken(t, qt, seedCustomerID)
+	_, err = svc.LockSeats(ctx, seedCustomerID, seedEventID, seedVIPSectID,
+		&booking.LockSeatsRequest{SeatPositions: []int{20, 21}, PaymentMode: "SPLIT"}, tok)
+	require.NoError(t, err)
+
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	require.Len(t, pub.calls, 1, "exactly one delayed publish expected")
+	assert.Equal(t, "release_seat_check", pub.calls[0].queue)
+	assert.Equal(t, 180*time.Second, pub.calls[0].delay)
+}

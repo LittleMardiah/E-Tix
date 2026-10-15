@@ -241,3 +241,37 @@ func TestLogout_Blacklist(t *testing.T) {
 		assert.Truef(t, blacklisted, "%s token jti should be blacklisted", name)
 	}
 }
+
+// TestRegister_DuplicatePhone verifies the phone uniqueness path
+// (auth.ErrPhoneExists). Audit gap: only email duplicate was covered.
+func TestRegister_DuplicatePhone(t *testing.T) {
+	env := setupAuthEnv(t)
+
+	phone := "+6281234567899"
+	_ = phone // used below
+
+	req1 := &auth.RegisterRequest{
+		Email:    "dup-phone-1@test.local",
+		Phone:    phone,
+		Name:     "Dup Phone 1",
+		Password: "TestPass123!",
+		Role:     "customer",
+	}
+	_, err := env.svc.Register(env.ctx, req1)
+	require.NoError(t, err, "first registration should succeed")
+
+	t.Cleanup(func() {
+		_, _ = env.pool.Exec(env.ctx, "DELETE FROM users WHERE phone = $1", phone)
+	})
+
+	req2 := &auth.RegisterRequest{
+		Email:    "dup-phone-2@test.local",
+		Phone:    phone, // same phone
+		Name:     "Dup Phone 2",
+		Password: "TestPass123!",
+		Role:     "customer",
+	}
+	_, err = env.svc.Register(env.ctx, req2)
+	require.Error(t, err, "duplicate phone must be rejected")
+	assert.ErrorIs(t, err, auth.ErrPhoneExists)
+}
