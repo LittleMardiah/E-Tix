@@ -395,3 +395,40 @@ Rencana Fix: Wire Twilio/SendGrid di NotificationService saat FASE 5
 Trigger: FASE 5 (fallback PIN) untuk SMS/Email; FASE 9 untuk Sentry.
 Referensi: docs/AUDIT TOTAL FASE 0-4, opencode review 2026-10-16.
 
+
+---
+
+ID: TD-F0-04
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: CI coverage output misleading. `go test -cover ./tests/integration/...`
+  melaporkan "100.0% of statements" untuk package integration, padahal package
+  itu isinya HANYA file _test.go — jadi cover yang dilaporkan adalah "coverage
+  of the test package itself", bukan production code. Real coverage butuh
+  `-coverpkg=./internal/...`.
+Root Cause: Test folder terpisah dari source package (tests/integration/),
+  jadi `-cover` default mengukur package test, bukan package under test.
+Rencana Fix: Update .github/workflows/test.yml → integration job pakai
+  `go test -tags integration -coverpkg=./internal/... -cover ./tests/...`
+  + upload ke CodeCov dengan flag=integration.
+Trigger: FASE 5 (saat FASE 5 test integration ditambah) atau FASE 9 (polish).
+Referensi: docs/AUDIT TOTAL FASE 0-4 test quality audit, opencode review
+  2026-10-16.
+
+ID: TD-F0-05
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: Concurrency test di booking_test.go (TestIntegration_LockSeats_
+  Concurrency_OneWinner) pakai seedCustomerID SAMA untuk semua N=10 racers.
+  Test hanya membuktikan Redis bitmap atomicity (benar), tapi TIDAK test
+  per-user token uniqueness atau group semantics (mis. user A vs user B
+  rebutan seat → A menang, B kalah).
+Root Cause: Setup simplicity MVP.
+Rencana Fix: Generate N distinct users (via seed.sql atau in-test INSERT)
+  + N distinct queue tokens. Verify per-user winner + loser attribution.
+Trigger: FASE 5 saat booking queue token binding jadi critical, atau FASE 9.
+Referensi: docs/AUDIT TOTAL FASE 0-4 test quality audit, opencode review
+  2026-10-16.
+

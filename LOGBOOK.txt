@@ -1005,3 +1005,51 @@ Commit retro-audit: 902151e (H1,H2,M1) + pending F3 (M4).
 END OF AUDIT BLIND SPOT LESSON
 ================================================================================
 
+
+================================================================================
+## AUDIT BLIND SPOT FOUND — TEST QUALITY (2026-10-16)
+================================================================================
+
+Konteks: setelah retro-audit cmd/config/middleware (FASE 0-1 legacy),
+User minta deep audit test quality. OpenCode audit 7 test file (integration +
+security + queue unit).
+
+Hasil: 3 HIGH + 7 MED + 5 LOW. Total: 15 findings.
+
+### HIGH
+1. RLS bypass test absent (0 grep match `RLS|BYPASSRLS|request.jwt` di tests/).
+   → Fixed: rls_test.go (2 test: isolation + admin bypass via SET LOCAL ROLE
+     + auth.uid()/auth.jwt() GUC simulation).
+2. Invalid CAPTCHA integration case absent (queue_flow_test.go).
+   → Fixed: TestQueueFlow_VerifyCaptcha_Invalid.
+
+### MED (7, all fixed)
+3. TestSecurity_RefreshTokenReplay — `assert.NoError(ParseRefreshToken)` bukan
+   replay rejection; drive RefreshToken service → ErrorIs ErrTokenBlacklisted.
+4. TestSecurity_BcryptCost12 — tautological (stdlib vs app); drive Register
+   + inspect hash cost.
+5. No duplicate phone test → added.
+6. fakeDelayedPublisher injected tapi assertions call count = 0 → added.
+7. HTTP 409 TOKEN_ALREADY_USED e2e → added.
+8. assert.ObjectsAreEqual(err sentinel) → errors.Is.
+9. Tampered JWT assert.Error generik → claims nil + require.Error.
+
+### LOW → TD-F0-04, TD-F0-05
+10. Coverage `100%` di integration package = vanity (test package only);
+    need `-coverpkg`.
+11. Concurrency test single-user (bukan multi-user).
+
+### Lesson
+- Blind spot: test names + PASS status ≠ test quality. Wajib baca assertion
+  body untuk verify behavior (bukan cosmetic like `assert.Equal(200, w.Code)`).
+- 3 pilar audit wajib:
+  (a) Wire file (cmd/api/main.go) — dependency order + dup callsites
+  (b) Test quality — assertion behavioral
+  (c) Adapter edge — response parsing edge cases (belum diaudit)
+- Retro-audit FASE 0-4 sebelumnya hanya cover (a) partial. Test quality audit
+  tutup (b). Adapter edge audit (c) pending.
+
+================================================================================
+END OF AUDIT BLIND SPOT TEST QUALITY
+================================================================================
+
