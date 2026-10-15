@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // Midtrans base URLs (Core API v2).
@@ -168,6 +170,25 @@ func (m *MidtransPaymentAdapter) Initiate(ctx context.Context, req InitiateReque
 	}
 	if resp.TransactionID == "" {
 		return nil, fmt.Errorf("midtrans: empty transaction_id in response")
+	}
+
+	// H2: reject known failure states early. "pending"/"capture"/"settlement"
+	// are accepted (Midtrans VA returns "pending" on successful charge).
+	switch strings.ToLower(strings.TrimSpace(resp.TransactionStatus)) {
+	case "deny", "cancel", "expire", "failure":
+		return nil, fmt.Errorf("midtrans: charge rejected, transaction_status=%q", resp.TransactionStatus)
+	}
+
+	// H3: cross-check amount numerically ("1000000.00" vs "1000000").
+	if resp.GrossAmount != "" && req.Amount != "" {
+		got, gerr := decimal.NewFromString(strings.TrimSpace(resp.GrossAmount))
+		want, werr := decimal.NewFromString(strings.TrimSpace(req.Amount))
+		if gerr != nil || werr != nil {
+			return nil, fmt.Errorf("midtrans: parse amount (got=%q want=%q)", resp.GrossAmount, req.Amount)
+		}
+		if !got.Equal(want) {
+			return nil, fmt.Errorf("midtrans: amount mismatch (got=%s want=%s)", got, want)
+		}
 	}
 
 	paymentLink := "VA " + strings.ToUpper(midtransDefaultBank) + ": unavailable"
