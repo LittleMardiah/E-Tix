@@ -92,3 +92,13 @@ func (s *QueueTokenService) Validate(tokenString string) (*QueueTokenClaims, err
 func (s *QueueTokenService) MarkUsed(ctx context.Context, rdb *redis.Client, jti string) (bool, error) {
 	return rdb.SetNX(ctx, queueTokenUsedPrefix+jti, "1", 300*time.Second)
 }
+
+// NewQueueTokenServiceWithKeys is the test-friendly constructor: it accepts
+// pre-generated RSA keys directly, avoiding the need for PEM files on disk.
+// Mirrors auth.NewJWTServiceWithKeys.
+func NewQueueTokenServiceWithKeys(privateKey *rsa.PrivateKey, publicKey *rsa.PublicKey, issuer string) *QueueTokenService {
+	if issuer == "" {
+		issuer = "e-tix-flash-queue"
+	}
+	return &QueueTokenService{priv: privateKey, pub: publicKey, issuer: issuer}
+}

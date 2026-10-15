@@ -22,9 +22,10 @@ import (
 
 const (
 	integrationDefaultPassword = "Passw0rd!"
-	integrationPrivKeyPath     = "../../keys/jwt_private.pem"
-	integrationPubKeyPath      = "../../keys/jwt_public.pem"
-	integrationIssuer          = "etix-integration-test"
+	// NOTE: key paths removed — integration tests now generate in-memory RSA
+	// keys via generateIntegrationKeys(t). PEM files are gitignored and
+	// absent on CI. See keys_helper.go.
+	integrationIssuer = "etix-integration-test"
 )
 
 type authEnv struct {
@@ -59,8 +60,8 @@ func setupAuthEnv(t *testing.T) *authEnv {
 	mr := miniredis.RunT(t)
 	client := &redis.Client{Client: goredis.NewClient(&goredis.Options{Addr: mr.Addr()})}
 
-	jwtSvc, err := auth.NewJWTService(integrationPrivKeyPath, integrationPubKeyPath, integrationIssuer)
-	require.NoError(t, err)
+	key := generateIntegrationKeys(t)
+	jwtSvc := auth.NewJWTServiceWithKeys(key, &key.PublicKey, integrationIssuer)
 
 	repo := auth.NewPostgresUserRepository(pool)
 	blacklist := auth.NewTokenBlacklistService(client)

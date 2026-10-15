@@ -57,14 +57,13 @@ func setupQueueEnv(t *testing.T) *queueEnv {
 	mr := miniredis.RunT(t)
 	client := &redis.Client{Client: goredis.NewClient(&goredis.Options{Addr: mr.Addr()})}
 
-	jwtSvc, err := auth.NewJWTService(integrationPrivKeyPath, integrationPubKeyPath, integrationIssuer)
-	require.NoError(t, err)
+	key := generateIntegrationKeys(t)
+	jwtSvc := auth.NewJWTServiceWithKeys(key, &key.PublicKey, integrationIssuer)
 
 	userRepo := auth.NewPostgresUserRepository(pool)
 	blacklist := auth.NewTokenBlacklistService(client)
 	fanScore := queue.NewFanScoreService(client, userRepo)
-	queueToken, err := queue.NewQueueTokenService(integrationPrivKeyPath, integrationPubKeyPath, "etix-integration-queue")
-	require.NoError(t, err)
+	queueToken := queue.NewQueueTokenServiceWithKeys(key, &key.PublicKey, "etix-integration-queue")
 	captcha := queue.NewMockCaptchaService(false)
 	eventRepo := queue.NewPostgresEventRepository(pool)
 	queueSvc := queue.NewQueueService(fanScore, queueToken, captcha, eventRepo, client)
