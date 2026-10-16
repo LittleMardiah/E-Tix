@@ -19,6 +19,7 @@ import (
 	"github.com/LittleMardiah/E-Tix/backend/internal/db"
 	"github.com/LittleMardiah/E-Tix/backend/internal/event"
 	"github.com/LittleMardiah/E-Tix/backend/internal/middleware"
+	"github.com/LittleMardiah/E-Tix/backend/internal/notification"
 	"github.com/LittleMardiah/E-Tix/backend/internal/payment"
 	paymentadapter "github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
 	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
@@ -148,6 +149,9 @@ func main() {
 	ticketRepo := ticket.NewPostgresTicketRepository(pgPool)
 	ticketSvc := ticket.NewTicketService(ticketRepo, redis.NewQRStore(rdb.Client))
 	ticketHandler := ticket.NewTicketHandler(ticketSvc)
+
+	ticketNotifier := notification.NewLogTicketNotification(logger)
+	ticketNotifyWorker := worker.NewTicketNotificationWorker(pgPool, ticketNotifier, rdb, logger, 0)
 
 	systemUserUUID := uuid.MustParse("00000000-0000-0000-0000-000000000000")
 	if cfg.SystemUserUUID != "" {
@@ -306,6 +310,11 @@ func main() {
 	go func() {
 		if err := reconciliationWorker.Run(context.Background()); err != nil {
 			logger.Error("reconciliation worker stopped", zap.Error(err))
+		}
+	}()
+	go func() {
+		if err := ticketNotifyWorker.Run(context.Background()); err != nil {
+			logger.Error("ticket notify worker stopped", zap.Error(err))
 		}
 	}()
 
