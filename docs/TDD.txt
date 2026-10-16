@@ -2043,8 +2043,8 @@ func (h *GateHandler) ScanQR(c *gin.Context) {
         return
     }
     
-    valid, decodedTicketID, err := VerifyDynamicQR(req.QRData, ticket.QRSecretKey)
-    if err != nil || !valid {
+    decodedTicketID, err := VerifyDynamicQR(req.QRData, ticket.OwnerUserID, ticket.QRSecretKey)
+    if err != nil {
         h.repo.InsertScan(ctx, &TicketScan{
             ScanID:          req.ScanID,
             TicketID:        req.TicketID,

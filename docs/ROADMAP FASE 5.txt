@@ -356,7 +356,7 @@ PATCH /tickets/{id}/assign FLOW:
 
 HMAC QR VERIFICATION HELPER (dipakai FASE 6, tapi generate di sini):
 
-  Function VerifyDynamicQR(qrToken, secretKey):
+  Function VerifyDynamicQR(qrToken, ownerUserID, secretKey):
     Step 1: Decode base64 → data
     Step 2: Split "|" → [ticketID, signature]
     Step 3: Parse ticketID as UUID

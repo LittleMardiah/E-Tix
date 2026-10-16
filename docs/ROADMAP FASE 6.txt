@@ -303,7 +303,7 @@ QR SCAN FLOW:
     Step 3: SELECT ticket BY id = req.TicketID
               - If not found → INSERT scan (INVALID) + 404
     Step 4: Verify HMAC:
-              - valid, decodedTicketID = VerifyDynamicQR(req.QRData, ticket.qr_secret_key)
+              - decodedTicketID, err = VerifyDynamicQR(req.QRData, ticket.OwnerUserID, ticket.QRSecretKey)
               - If !valid → INSERT scan (INVALID) + 401
               - If decodedTicketID != req.TicketID → INSERT scan (INVALID) + 401
     Step 5: Status branch:
@@ -424,7 +424,7 @@ FEEDBACK LOOP WORKER (FLAG #2):
 
 QR VERIFY HELPER (shared dengan FASE 5):
 
-  Function VerifyDynamicQR(qrToken, secretKey):
+  Function VerifyDynamicQR(qrToken, ownerUserID, secretKey):
     Step 1: Decode base64 → split "|"
     Step 2: Parse ticketID
     Step 3: currentBlock = NOW().Unix() / 30
