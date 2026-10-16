@@ -2,14 +2,12 @@ package queue
 
 import (
 	"context"
-	"errors"
 	"strconv"
 	"time"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/auth"
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
 	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -42,7 +40,7 @@ func (s *FanScoreService) GetBaseScore(ctx context.Context, userID uuid.UUID) (i
 			if score, perr := strconv.Atoi(val); perr == nil {
 				return score, nil
 			}
-		} else if !errors.Is(err, goredis.Nil) {
+		} else if err != nil {
 			// H10 FIX: Redis error (not cache-miss) → fall through to DB.
 			// Previous behavior returned error and turned Redis outages
 			// into ingress 500s.

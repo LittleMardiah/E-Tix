@@ -2,10 +2,7 @@ package auth
 
 import (
 	"context"
-	"errors"
 	"time"
-
-	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
 )
@@ -29,9 +26,6 @@ func (s *TokenBlacklistService) AddToBlacklist(ctx context.Context, jti string, 
 
 func (s *TokenBlacklistService) IsBlacklisted(ctx context.Context, jti string) (bool, error) {
 	val, err := s.rdb.GetString(ctx, blacklistPrefix+jti)
-	if errors.Is(err, goredis.Nil) {
-		return false, nil
-	}
 	if err != nil {
 		return false, err
 	}

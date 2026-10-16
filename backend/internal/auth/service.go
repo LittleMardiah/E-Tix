@@ -14,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 
@@ -451,9 +450,6 @@ func (s *AuthService) VerifyOTP(ctx context.Context, userID uuid.UUID, code stri
 	}
 
 	stored, err := s.rdb.GetString(ctx, otpKey(userID))
-	if errors.Is(err, goredis.Nil) {
-		return ErrOTPExpired
-	}
 	if err != nil {
 		return fmt.Errorf("auth: get otp: %w", err)
 	}

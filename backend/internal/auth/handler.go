@@ -10,7 +10,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
 )
@@ -54,7 +53,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			c.Data(stored.Status, gin.MIMEJSON, stored.Body)
 			return
 		}
-	} else if err != nil && !errors.Is(err, goredis.Nil) {
+	} else if err != nil {
 		log.Printf("[WARN] auth: register idempotency read failed: %v", err)
 	}
 

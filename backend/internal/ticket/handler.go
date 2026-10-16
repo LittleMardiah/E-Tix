@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // TicketHandler holds HTTP handlers for ticket endpoints.
@@ -241,7 +242,9 @@ func (h *TicketHandler) Assign(c *gin.Context) {
 
 	resp := gin.H{"success": true, "data": ticket, "error": nil, "meta": ticketMeta()}
 	body, _ := json.Marshal(resp)
-	_ = h.svc.CacheSet(c.Request.Context(), cacheKey, string(body), assignIdempotencyTTL)
+	if err := h.svc.CacheSet(c.Request.Context(), cacheKey, string(body), assignIdempotencyTTL); err != nil {
+		zap.L().Warn("assign: cache set failed", zap.Error(err))
+	}
 
 	c.Data(http.StatusOK, "application/json", body)
 }

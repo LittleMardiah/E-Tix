@@ -10,7 +10,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
@@ -151,7 +150,7 @@ func (h *BookingHandler) LockSeats(c *gin.Context) {
 			c.Data(stored.Status, gin.MIMEJSON, stored.Body)
 			return
 		}
-	} else if cErr != nil && !errors.Is(cErr, goredis.Nil) {
+	} else if cErr != nil {
 		h.logger.Warn("booking: idempotency read failed", zap.Error(cErr))
 	}
 

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
 )
@@ -61,9 +60,6 @@ func NewIdempotencyService(rdb *redis.Client, repo PaymentObligationRepository) 
 func (s *IdempotencyService) LookupL1(ctx context.Context, hash string) ([]byte, bool, error) {
 	body, err := s.rdb.GetString(ctx, IdempotencyL1Prefix+hash)
 	if err != nil {
-		if errors.Is(err, goredis.Nil) {
-			return nil, false, nil
-		}
 		return nil, false, err
 	}
 	if body == "" {
