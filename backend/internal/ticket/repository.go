@@ -19,6 +19,8 @@ type TicketRepository interface {
 	GetByID(ctx context.Context, ticketID uuid.UUID) (*TicketDetail, error)
 	GetByIDForUpdate(ctx context.Context, tx pgx.Tx, ticketID uuid.UUID) (*Ticket, error)
 	UpdateAssign(ctx context.Context, tx pgx.Tx, ticketID, targetUserID uuid.UUID) (int64, error)
+	GetUserStatusAndBlacklist(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (status string, blacklisted bool, err error)
+	MarkFallbackPINUsed(ctx context.Context, tx pgx.Tx, ticketID uuid.UUID) (int64, error)
 }
 
 // PostgresTicketRepository is the pgx-backed implementation.
@@ -155,11 +157,49 @@ func (r *PostgresTicketRepository) GetByIDForUpdate(ctx context.Context, tx pgx.
 func (r *PostgresTicketRepository) UpdateAssign(ctx context.Context, tx pgx.Tx, ticketID, targetUserID uuid.UUID) (int64, error) {
 	tag, err := tx.Exec(ctx, `
 		UPDATE tickets
-		SET owner_user_id = $1, is_assigned = TRUE, updated_at = NOW()
+		SET owner_user_id = $1,
+		    original_owner_user_id = owner_user_id,
+		    is_assigned = TRUE,
+		    updated_at = NOW()
 		WHERE id = $2 AND is_assigned = FALSE`,
 		targetUserID, ticketID)
 	if err != nil {
 		return 0, fmt.Errorf("assign ticket: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// GetUserStatusAndBlacklist returns the target user status and whether the
+// user ID is blacklisted (type='user_id'). ROADMAP E6-S1-T14d/e. E8 admin
+// can extend to set type='user_id' entries.
+func (r *PostgresTicketRepository) GetUserStatusAndBlacklist(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (string, bool, error) {
+	var status string
+	var blacklisted bool
+	err := tx.QueryRow(ctx, `
+		SELECT u.status::text, EXISTS (
+			SELECT 1 FROM blacklist b
+			WHERE b.type = 'user_id' AND b.value = u.id::text
+		)
+		FROM users u
+		WHERE u.id = $1`, userID).Scan(&status, &blacklisted)
+	if err != nil {
+		return "", false, fmt.Errorf("get user status/blacklist: %w", err)
+	}
+	return status, blacklisted, nil
+}
+
+// MarkFallbackPINUsed marks a ticket's fallback PIN as consumed (single-use).
+// Idempotent via WHERE fallback_pin_used = FALSE.
+func (r *PostgresTicketRepository) MarkFallbackPINUsed(ctx context.Context, tx pgx.Tx, ticketID uuid.UUID) (int64, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE tickets
+		SET fallback_pin_used = TRUE,
+		    fallback_pin_used_at = NOW(),
+		    updated_at = NOW()
+		WHERE id = $1 AND fallback_pin_used = FALSE`,
+		ticketID)
+	if err != nil {
+		return 0, fmt.Errorf("mark fallback pin used: %w", err)
 	}
 	return tag.RowsAffected(), nil
 }

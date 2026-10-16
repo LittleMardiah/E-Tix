@@ -1,6 +1,9 @@
 package ticket
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -169,4 +172,76 @@ func (h *TicketHandler) GetQR(c *gin.Context) {
 		"error":   nil,
 		"meta":    ticketMeta(),
 	})
+}
+
+const assignIdempotencyTTL = 24 * time.Hour
+
+// Assign handles PATCH /tickets/{ticket_id}/assign.
+// Requires X-Idempotency-Key (L1 Redis, 24h TTL). Cache key = sha256(clientKey + ":" + ownerID + ":" + ticketID).
+func (h *TicketHandler) Assign(c *gin.Context) {
+	idemKey := c.GetHeader("X-Idempotency-Key")
+	if idemKey == "" {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "X-Idempotency-Key required")
+		return
+	}
+
+	ownerIDStr := c.GetString("user_id")
+	if ownerIDStr == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing authentication context")
+		return
+	}
+	ownerID, err := uuid.Parse(ownerIDStr)
+	if err != nil {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid user id")
+		return
+	}
+
+	ticketID, err := uuid.Parse(c.Param("ticket_id"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid ticket id")
+		return
+	}
+
+	var req AssignRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid body")
+		return
+	}
+	if req.UserID == uuid.Nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "user_id required")
+		return
+	}
+
+	sum := sha256.Sum256([]byte(idemKey + ":" + ownerID.String() + ":" + ticketID.String()))
+	cacheKey := "idem:assign:" + hex.EncodeToString(sum[:])
+
+	if cached, _ := h.svc.CacheGet(c.Request.Context(), cacheKey); cached != "" {
+		c.Data(http.StatusOK, "application/json", []byte(cached))
+		return
+	}
+
+	ticket, err := h.svc.Assign(c.Request.Context(), ownerID, ticketID, req.UserID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTicketNotFound):
+			writeError(c, http.StatusNotFound, "NOT_FOUND", "ticket not found")
+		case errors.Is(err, ErrTicketForbidden):
+			writeError(c, http.StatusForbidden, "FORBIDDEN", "not ticket owner")
+		case errors.Is(err, ErrTicketAlreadyAssigned), errors.Is(err, ErrAssignConflict):
+			writeError(c, http.StatusConflict, "CONFLICT", "ticket already assigned")
+		case errors.Is(err, ErrTicketNotConfirmed):
+			writeError(c, http.StatusUnprocessableEntity, "UNPROCESSABLE_ENTITY", "ticket not confirmed")
+		case errors.Is(err, ErrTargetUserInactive):
+			writeError(c, http.StatusUnprocessableEntity, "UNPROCESSABLE_ENTITY", "target user inactive or blacklisted")
+		default:
+			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		}
+		return
+	}
+
+	resp := gin.H{"success": true, "data": ticket, "error": nil, "meta": ticketMeta()}
+	body, _ := json.Marshal(resp)
+	_ = h.svc.CacheSet(c.Request.Context(), cacheKey, string(body), assignIdempotencyTTL)
+
+	c.Data(http.StatusOK, "application/json", body)
 }
