@@ -60,16 +60,41 @@ func main() {
 		v, _, _ := m.Version()
 		fmt.Printf("migrated to version %d\n", v)
 	case "down":
-		if err := m.Down(); err != nil {
-			if err == migrate.ErrNoChange {
-				fmt.Println("no change")
-				os.Exit(0)
+		// Support `down N` (partial) via m.Steps(-N). Without N, revert ALL
+		// with explicit warning (destructive).
+		if len(args) >= 2 {
+			var n int
+			if _, err := fmt.Sscanf(args[1], "%d", &n); err != nil {
+				fmt.Fprintf(os.Stderr, "error: invalid step count %q: %v\n", args[1], err)
+				os.Exit(1)
 			}
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			if n <= 0 {
+				fmt.Fprintf(os.Stderr, "error: step count must be > 0, got %d\n", n)
+				os.Exit(1)
+			}
+			if err := m.Steps(-n); err != nil {
+				if err == migrate.ErrNoChange {
+					fmt.Println("no change")
+					os.Exit(0)
+				}
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			v, _, _ := m.Version()
+			fmt.Printf("migrated to version %d (down %d)\n", v, n)
+		} else {
+			fmt.Fprintln(os.Stderr, "WARNING: 'down' without N reverts ALL migrations")
+			if err := m.Down(); err != nil {
+				if err == migrate.ErrNoChange {
+					fmt.Println("no change")
+					os.Exit(0)
+				}
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			v, _, _ := m.Version()
+			fmt.Printf("migrated to version %d (down all)\n", v)
 		}
-		v, _, _ := m.Version()
-		fmt.Printf("migrated to version %d\n", v)
 	case "version":
 		v, dirty, err := m.Version()
 		if err != nil {
