@@ -60,3 +60,9 @@ type QRResponse struct {
 type AssignRequest struct {
 	UserID uuid.UUID `json:"user_id"`
 }
+
+// QRPayload is the decoded QR shape used by the verifier (FASE 6 gate).
+type QRPayload struct {
+	TicketID  uuid.UUID
+	Signature string
+}
