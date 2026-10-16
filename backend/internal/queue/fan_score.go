@@ -75,10 +75,11 @@ func (s *FanScoreService) GetDynamicScore(ctx context.Context, userID uuid.UUID)
 
 	val, err := s.rdb.GetString(ctx, dynamicScoreKey(userID))
 	if err != nil {
-		if errors.Is(err, goredis.Nil) {
-			return 0, nil
-		}
 		return 0, err
+	}
+	if val == "" {
+		// Cache miss — GetString returns ("", nil) on miss (see client.go).
+		return 0, nil
 	}
 
 	score, perr := strconv.Atoi(val)

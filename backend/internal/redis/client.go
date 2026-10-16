@@ -35,10 +35,14 @@ func (c *Client) SetValue(ctx context.Context, key, value string, ttl time.Durat
 	return c.Client.Set(ctx, key, value, ttl).Err()
 }
 
+// GetString returns the string value at key. Cache miss (redis.Nil) is
+// returned as ("", nil) — wrapper convenience so callers don't need to
+// distinguish miss vs provider error. Use the embedded *goredis.Client
+// directly if strict miss semantics are required.
 func (c *Client) GetString(ctx context.Context, key string) (string, error) {
 	val, err := c.Client.Get(ctx, key).Result()
 	if err == goredis.Nil {
-		return "", goredis.Nil
+		return "", nil
 	}
 	return val, err
 }
