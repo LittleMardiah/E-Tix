@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -57,4 +58,27 @@ func (c *Client) IncrWithTTL(ctx context.Context, key string, ttl time.Duration)
 
 func (c *Client) EvalScript(ctx context.Context, script string, keys []string, args ...interface{}) (interface{}, error) {
 	return c.Client.Eval(ctx, script, keys, args...).Result()
+}
+
+// KVItem is a single key/value pair for batch operations.
+type KVItem struct {
+	Key   string
+	Value string
+}
+
+// PipelineSet writes multiple key/value pairs in a single Redis pipeline
+// (one round-trip). Used by high-throughput batch writers (e.g. QR
+// regeneration worker).
+func (c *Client) PipelineSet(ctx context.Context, items []KVItem, ttl time.Duration) error {
+	if len(items) == 0 {
+		return nil
+	}
+	pipe := c.Pipeline()
+	for _, it := range items {
+		pipe.Set(ctx, it.Key, it.Value, ttl)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("pipeline set: %w", err)
+	}
+	return nil
 }

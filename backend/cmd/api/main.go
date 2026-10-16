@@ -152,6 +152,7 @@ func main() {
 
 	ticketNotifier := notification.NewLogTicketNotification(logger)
 	ticketNotifyWorker := worker.NewTicketNotificationWorker(pgPool, ticketNotifier, rdb, logger, 0)
+	qrRegenWorker := worker.NewQRRegenerationWorker(pgPool, rdb, logger, 0)
 
 	systemUserUUID := uuid.MustParse("00000000-0000-0000-0000-000000000000")
 	if cfg.SystemUserUUID != "" {
@@ -319,6 +320,11 @@ func main() {
 	go func() {
 		if err := ticketNotifyWorker.Run(context.Background()); err != nil {
 			logger.Error("ticket notify worker stopped", zap.Error(err))
+		}
+	}()
+	go func() {
+		if err := qrRegenWorker.Run(context.Background()); err != nil {
+			logger.Error("qr regen worker stopped", zap.Error(err))
 		}
 	}()
 
