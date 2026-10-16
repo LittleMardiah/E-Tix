@@ -41,12 +41,12 @@ type TicketListItem struct {
 }
 
 // TicketDetail is the shape used in GET /tickets/{id}.
+// OwnerUserID is promoted from the embedded Ticket (no shadow field).
 type TicketDetail struct {
 	Ticket
 	EventID     uuid.UUID `json:"event_id"`
 	EventName   string    `json:"event_name"`
 	SectionName string    `json:"section_name"`
-	OwnerUserID uuid.UUID `json:"owner_user_id"`
 }
 
 // QRResponse is the shape for GET /tickets/{id}/qr.

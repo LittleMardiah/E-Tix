@@ -112,7 +112,7 @@ func (r *PostgresTicketRepository) ListByOwner(ctx context.Context, ownerID uuid
 // GetByID returns a ticket by ID with event and section names joined in.
 func (r *PostgresTicketRepository) GetByID(ctx context.Context, ticketID uuid.UUID) (*TicketDetail, error) {
 	q := fmt.Sprintf(`
-		SELECT %s, e.id, e.name, s.name, t.owner_user_id
+		SELECT %s, e.id, e.name, s.name
 		FROM tickets t
 		JOIN sections s ON s.id = t.section_id
 		JOIN events e ON e.id = s.event_id
@@ -120,13 +120,13 @@ func (r *PostgresTicketRepository) GetByID(ctx context.Context, ticketID uuid.UU
 
 	var td TicketDetail
 	err := r.pool.QueryRow(ctx, q, ticketID).Scan(
-		&td.Ticket.ID, &td.Ticket.BookingID, &td.Ticket.PaymentObligationID,
-		&td.Ticket.OwnerUserID, &td.Ticket.SectionID, &td.Ticket.SeatPosition,
-		&td.Ticket.Status, &td.Ticket.IsAssigned, &td.Ticket.QRSecretKey,
-		&td.Ticket.LastQRGeneratedAt, &td.Ticket.FallbackPIN, &td.Ticket.FallbackPINUsed,
-		&td.Ticket.FallbackPINUsedAt, &td.Ticket.OriginalOwnerUserID,
-		&td.Ticket.ResaleTransactionID, &td.Ticket.CreatedAt, &td.Ticket.UpdatedAt,
-		&td.EventID, &td.EventName, &td.SectionName, &td.OwnerUserID,
+		&td.ID, &td.BookingID, &td.PaymentObligationID,
+		&td.OwnerUserID, &td.SectionID, &td.SeatPosition,
+		&td.Status, &td.IsAssigned, &td.QRSecretKey,
+		&td.LastQRGeneratedAt, &td.FallbackPIN, &td.FallbackPINUsed,
+		&td.FallbackPINUsedAt, &td.OriginalOwnerUserID,
+		&td.ResaleTransactionID, &td.CreatedAt, &td.UpdatedAt,
+		&td.EventID, &td.EventName, &td.SectionName,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
