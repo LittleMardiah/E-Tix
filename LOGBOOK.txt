@@ -1129,3 +1129,50 @@ Reference: R1 (root cause), R3 (zero hallucination), R8 (scope control),
 
 ================================================================================
 END OF INCIDENT
+
+================================================================================
+## FASE 5 — E2-A/B — Ticket Service + Handlers (2026-10-16)
+================================================================================
+
+Timeline commit:
+- 85789e6 feat(fase-5): ticket module skeleton — model + repository
+- b0e2e0b feat(fase-5): ticket service layer — ListByOwner + GetByID
+- 4f73622 feat(fase-5): ticket handlers (List + GetByID) + route wire
+
+### Learning checkpoints
+1. Adapter Handler pattern: `writeError()` helper + `ticketMeta()` helper 
+   (dengan uuid.NewString() request_id) konsisten dengan API_CONTRACT §3.1.
+2. `c.AbortWithStatusJSON` lebih proper dari `c.JSON` untuk error (chain abort).
+3. Page/limit parse error = 400, bukan ignore `_`.
+4. Init order: payment → ticket (dependent on pgPool only, clean).
+5. Route wire: 20 routes total, +2 new (existing preserved).
+
+### Deviation log (§11.5)
+[OVERRIDE-1] E2-A: Prompt path `../docs/ROADMAP FASE 5.txt` vs fallback 
+  `docs/ROADMAP FASE 5.txt` — dari `backend/`, kedua path tidak match 
+  actual (repo root). OpenCode koreksi ke `/mnt/d/AI Engineer/Ticket/docs/`.
+  Fix: prompt selanjutnya gunakan absolute path atau pwd-relative verified.
+
+[OVERRIDE-2] E2-B: Prompt PROSE STEP 3 = "Tambah di cmd/api/main.go: 
+  import, init, wire routes" — KONTRADIKSI dengan TAIL STEP 3b/4 = "STOP. 
+  JANGAN wire." OpenCode pilih prose (wire semua). Hasil verified clean 
+  (build/vet PASS, route count +2, init order OK).
+
+Root cause Reviewer (DeepSeek): prose besar + tail STOP tanpa sinkronisasi. 
+Pattern ke-3 hari ini (E1, E2-A hampir, E2-B jadi).
+
+Mitigasi (checklist pre-prompt baru WAJIB):
+[ ] SEBELUM kirim prompt: `grep -iE "stop|jangan|wire"` di prompt draft
+[ ] Prose section HARUS sinkron dengan STEP section (no contradiction)
+[ ] Kalau mau stop di mid-step, JANGAN tulis prose "do X" di atas
+
+### TicketDetail.OwnerUserID shadow concern
+- Struktur: `TicketDetail{ Ticket; ...; OwnerUserID uuid.UUID }` — outer 
+  field shadow embedded.
+- Scan di repo: `&td.Ticket.OwnerUserID` (dari ticketColumnsQualified) + 
+  `&td.OwnerUserID` (dari trailing t.owner_user_id) — REDUNDANT kolom.
+- Works (values identical), tapi fragile.
+- Register: TD-F5-01 (LOW, cleanup FASE 9).
+
+================================================================================
+END OF FASE 5 E2-A/B
