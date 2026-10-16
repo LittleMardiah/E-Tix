@@ -1995,7 +1995,7 @@ func (h *PaymentHandler) BulkAssign(c *gin.Context) {
 HMAC QR Verification Helper:
 
 go
-func VerifyDynamicQR(qrToken string, secretKey string) (bool, uuid.UUID, error) {
+func VerifyDynamicQR(qrToken string, ownerUserID uuid.UUID, secretKey string) (uuid.UUID, error) {
     data, err := base64.URLEncoding.DecodeString(qrToken)
     if err != nil {
         return false, uuid.Nil, err
@@ -2015,7 +2015,7 @@ func VerifyDynamicQR(qrToken string, secretKey string) (bool, uuid.UUID, error) 
     
     currentBlock := time.Now().Unix() / 30
     for _, block := range []int64{currentBlock - 1, currentBlock, currentBlock + 1} {
-        payload := fmt.Sprintf("%s|%d", ticketID.String(), block)
+        payload := fmt.Sprintf("%s|%s|%d", ticketID.String(), ownerUserID.String(), block)
         mac := hmac.New(sha256.New, []byte(secretKey))
         mac.Write([]byte(payload))
         expected := base64.URLEncoding.EncodeToString(mac.Sum(nil))

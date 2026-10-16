@@ -743,7 +743,7 @@ E3-S1-T6 [2 jam] — QR generator (HMAC-SHA256)
      - Latency < 5ms
 
 E3-S1-T7 [1.5 jam] — QR verifier (untuk FASE 6, tapi shared)
-   Deliverable: VerifyDynamicQR(qrToken, secretKey)
+   Deliverable: VerifyDynamicQR(qrToken, ownerUserID, secretKey)
    Sub-tasks:
      a. Decode base64 → split "|"
      b. Tolerance ±1 block (block-1, block, block+1)

@@ -1176,3 +1176,26 @@ Mitigasi (checklist pre-prompt baru WAJIB):
 
 ================================================================================
 END OF FASE 5 E2-A/B
+
+================================================================================
+## FASE 5 — E3-S1-T7 — Kontradiksi Resolution (2026-10-16)
+================================================================================
+
+Konteks: sebelum E3-S1-T7, gua (Reviewer) detect 3 kontradiksi foundation:
+1. Payload HMAC: E3-S1-T6 kode = `tid|owner|block`. TDD §6.4 = `tid|block`. 
+2. Verifier: LOGIC_FLOW §5.4 = Redis GET. TDD §6.4 = recompute HMAC.
+3. Signature: ROADMAP E3-S1-T7 = 2 param. Owner di payload butuh 3.
+
+Resolusi (Opsi B — Kode = source of truth, R2):
+- Payload = `tid|owner|block` (ikut E3-S1-T6 + LOGIC_FLOW §5.2).
+- Verifier = recompute HMAC lokal (offline-capable, no Redis).
+- Signature = 3 param `VerifyDynamicQR(qrToken, ownerUserID, secretKey)`.
+- Alasan: defense-in-depth owner di HMAC (tamper-proof), offline capable, 
+  caller FASE 6 punya owner via ticket fetch.
+- Fix: TDD §6.4 + ROADMAP E3-S1-T7 updated.
+
+Trade-off: 3-param verifier ≠ ROADMAP literal (2-param). Tapi schema/logic 
+konsisten + security lebih baik.
+
+================================================================================
+END OF RESOLUTION
