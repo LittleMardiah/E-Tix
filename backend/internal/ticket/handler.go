@@ -128,3 +128,45 @@ func (h *TicketHandler) GetByID(c *gin.Context) {
 		"meta":    ticketMeta(),
 	})
 }
+
+// GetQR handles GET /tickets/{ticket_id}/qr.
+func (h *TicketHandler) GetQR(c *gin.Context) {
+	ownerIDStr := c.GetString("user_id")
+	if ownerIDStr == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing authentication context")
+		return
+	}
+	ownerID, err := uuid.Parse(ownerIDStr)
+	if err != nil {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid user id")
+		return
+	}
+
+	ticketID, err := uuid.Parse(c.Param("ticket_id"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid ticket id")
+		return
+	}
+
+	resp, err := h.svc.GetQR(c.Request.Context(), ownerID, ticketID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTicketNotFound):
+			writeError(c, http.StatusNotFound, "NOT_FOUND", "ticket not found")
+		case errors.Is(err, ErrTicketForbidden):
+			writeError(c, http.StatusForbidden, "FORBIDDEN", "not ticket owner")
+		case errors.Is(err, ErrTicketNotActive):
+			writeError(c, http.StatusUnprocessableEntity, "UNPROCESSABLE_ENTITY", "ticket not active for QR")
+		default:
+			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    resp,
+		"error":   nil,
+		"meta":    ticketMeta(),
+	})
+}

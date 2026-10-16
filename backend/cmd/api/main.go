@@ -146,7 +146,7 @@ func main() {
 	paymentHandler := payment.NewPaymentHandler(paymentSvc, paymentRepo, paymentBookingReader, paymentIdem, logger)
 
 	ticketRepo := ticket.NewPostgresTicketRepository(pgPool)
-	ticketSvc := ticket.NewTicketService(ticketRepo)
+	ticketSvc := ticket.NewTicketService(ticketRepo, redis.NewQRStore(rdb.Client))
 	ticketHandler := ticket.NewTicketHandler(ticketSvc)
 
 	systemUserUUID := uuid.MustParse("00000000-0000-0000-0000-000000000000")
@@ -245,6 +245,10 @@ func main() {
 		auth.AuthMiddleware(jwtSvc, blacklistSvc),
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser),
 		ticketHandler.GetByID)
+	router.GET("/tickets/:ticket_id/qr",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser),
+		ticketHandler.GetQR)
 
 	router.GET("/events",
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
