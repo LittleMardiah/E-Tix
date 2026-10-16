@@ -1199,3 +1199,52 @@ konsisten + security lebih baik.
 
 ================================================================================
 END OF RESOLUTION
+
+================================================================================
+## FASE 5 — E6, E7 + Reviewer Mistakes (2026-10-16 Evening)
+================================================================================
+
+Timeline commit E6-E7:
+- ec7552c E5-A' ticket notification service + poller + SetValue wrapper
+- 93c1741 E5-B wire ticket notification worker
+- b737965 E6 PATCH assign — atomic + idempotency L1 + MarkFallbackPINUsed
+- fdc7968 E7 QR regeneration worker + PipelineSet + wire
+
+### Reviewer (DeepSeek) mistakes hari ini (20×)
+Pola sama: assume dari label/memori, tidak verify ground truth dulu.
+Contoh:
+- M4: prompt "fix M4" padahal sudah fixed di 902151e → revert
+- B2: asumsi filename `midtrans_adapter.go`, actual `midtrans.go` 
+  → klaim "hallucination" tanpa verify
+- Prompt C: asumsi `migrate down 1` support → **DB WIPE** (recoverable via `up`)
+- Prompt E4-A: include unused `go-redis` import → OpenCode koreksi
+- Prompt E5-A': minta `Set(...) error` yang shadow embedded `goredis.Client.Set`
+  → break 7+ file → OpenCode STOP → fix ke `SetValue`
+- Prompt E6-A: klaim "FASE 4 BulkAssign pattern (blacklist.type='user_id')" 
+  → 0 match di kode → OpenCode STOP
+- Prompt E6-B: `h := sha256.Sum256` shadow receiver → OpenCode fix `sum :=`
+- Prompt E7-A: STEP 1 dengan `cat` full file → OpenCode crash mid-way
+- Rule 1a: `notification|worker` cek → false-positive STOP (worker sudah import)
+
+### Mitigasi baru (WAJIB sebelum kirim prompt)
+1. Verify file paths: `git ls-files | grep <name>`
+2. Verify command behavior: `cat main.go` atau `--help`
+3. Verify pattern references: `grep -rn <pattern>` (jangan assume dari memori)
+4. Prose MATCH script (no contradiction)
+5. STEP 1 prompt: grep-only, max ~15 lines output (bukan cat full)
+6. ERE pattern: escape `\(`, `\)`, `\{`, `\}`
+
+### OpenCode self-fix (2x valid, in-scope)
+- E7-A: `c.Client.Pipeline()` → `c.Pipeline()` (staticcheck QF1008 
+  promoted selector). Logged §11.5.
+- E6-B: script bug `h := sha256` shadow → rename `sum :=`. Logged §11.5.
+
+### Lesson baru (untuk adopsi)
+1. Prompt dengan `cat file.go` full = output bloat = crash risk
+   → ganti `grep -c` / `head` / `sed -n 'A,Bp'`
+2. Promoted selector (embed): `c.Client.X()` → `c.X()` jika signature sama.
+   Kalau return type beda, WAJIB named method (`SetValue`).
+3. Prompt rule check harus spesifik (single pattern), bukan OR (`A|B`)
+
+================================================================================
+END OF FASE 5 EVENING CHECKPOINT
