@@ -1085,3 +1085,47 @@ Reference: R1 (root cause), R3 (zero hallucination), R8 (scope control).
 
 ================================================================================
 END OF INCIDENT
+
+================================================================================
+## INCIDENT — Block 3 DB Wipe + migrate down 1 Silent Revert (2026-10-16)
+================================================================================
+
+Timeline:
+1. Recon: local DB version=1 (dari awal FASE 0), sementara kode butuh
+   version=2 (migration 002_auth_security dari retro-audit commit 6e3d6cd).
+   → Applied 002 (Prompt B). Version 2, semua regression PASS.
+2. Prompt C (down 1): `migrate down 1` → silent revert ALL ke version 0.
+   Public schema kosong (0 tabel, 0 trigger, 0 enum).
+   Root cause: cmd/migrate/main.go hanya support `down` (all). args[1]
+   ("1") di-ignore silent. Bukan bug golang-migrate, bug custom wrapper.
+3. Recovery: `migrate up` → v2 recovered. 12 tabel, 7 trigger, A6/A7
+   intact, INT PASS.
+4. Fix 16f1808: cmd/migrate support `down N` (m.Steps(-N)) + WARNING
+   untuk `down` all + guard N>0.
+5. Prompt E: roundtrip verified. `down 1` → `(down 1)` output, v1,
+   A6 revert, A7 revert. `up` → v2, A6/A7 re-apply. INT PASS.
+   → Block 3 CLOSED.
+
+Reviewer (DeepSeek) mistakes hari ini (4×):
+1. M4: kirim prompt "fix M4" padahal sudah fixed di 902151e → revert.
+2. B2 filename: asumsi `midtrans_adapter.go`, actual `midtrans.go` →
+   klaim hallucination tanpa verify.
+3. Prompt C: asumsi `migrate down 1` support → DB wipe.
+4. Prompt C: klaim "backup aman (v2)" padahal backup v1 (06:24 sebelum
+   Prompt B).
+
+Pattern: assume dari label/docs tanpa verify ground truth (git ls-files,
+cat, ls). Melanggar prinsip yang ditulis sendiri di retro-audit FASE 0-4:
+"grep label ≠ audit".
+
+Mitigasi (pre-prompt checklist baru — WAJIB):
+[ ] File path referenced → git ls-files | grep <name>
+[ ] Command/tool behavior → cat main.go atau --help atau grep source
+[ ] Destructive action → verify backup content via grep (bukan ls size)
+[ ] Tidak bisa verify → SKIP prompt, tanya User.
+
+Reference: R1 (root cause), R3 (zero hallucination), R8 (scope control),
+§11.5 (override log).
+
+================================================================================
+END OF INCIDENT

@@ -432,3 +432,74 @@ Trigger: FASE 5 saat booking queue token binding jadi critical, atau FASE 9.
 Referensi: docs/AUDIT TOTAL FASE 0-4 test quality audit, opencode review
   2026-10-16.
 
+
+---
+
+ID: TD-F0-06
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: SEDANG
+Deskripsi: Local dev DB migration tidak auto-apply. Fresh checkout atau
+  setelah pull → DB bisa kosong atau stale (contoh: 2026-10-16 DB v1
+  padahal kode butuh v2 dari migration 002). Dev harus manual `migrate up`.
+Root Cause: Tidak ada script/bootstrap yang jalankan `migrate up` saat
+  setup dev. ROADMAP FASE 0 T13 setup binary migrate saja.
+Rencana Fix: Tambah `backend/scripts/dev_setup.sh` yang jalankan docker
+  compose + `go run ./cmd/migrate -database $DATABASE_URL up` + seed.
+  Update docs/LOCAL_SETUP.md. Atau pre-commit hook.
+Trigger: FASE 5 setup atau saat ada dev baru onboarding.
+Referensi: Insiden 2026-10-16 (migrate down 1 silent revert).
+
+ID: TD-F4-04
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: TINGGI
+Deskripsi: Adapter Midtrans (`internal/payment/adapter/`) 0 test
+  coverage. `adapter/*_test.go` tidak ada. Semua edge case (HTTP 5xx,
+  malformed JSON, timeout, status deny) tanpa regresi guard.
+Root Cause: FASE 4 fokus service + worker test, adapter dianggap
+  "thin wrapper".
+Rencana Fix: Buat `midtrans_test.go` — httptest.Server mock: 200 ok,
+  200 deny, 200 amount-mismatch, 4xx, 5xx, malformed JSON, timeout,
+  sig mismatch. Coverage target ≥80%.
+Trigger: FASE 5 mid-point atau FASE 9 polish.
+Referensi: Audit B2 2026-10-16, H1.
+
+ID: TD-F4-05
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Adapter Initiate/Refund/GetStatus tidak bedakan 5xx vs 4xx.
+  Error return generic `fmt.Errorf("http %d: %s")`. Retry policy
+  diputuskan di layer atas tanpa hint transience.
+Root Cause: MVP adapter thin wrapper, klasifikasi error di-defer.
+Rencana Fix: Return sentinel error `ErrTransientHTTP` (5xx + timeout)
+  vs `ErrPermanentHTTP` (4xx). Caller bisa retry transien.
+Trigger: saat webhook reconciliation retry policy rework.
+Referensi: Audit B2 2026-10-16, H4.
+
+ID: TD-F4-06
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: Adapter 4xx tidak parse structured Midtrans error body
+  (hanya truncate 200 byte). Debugging production lebih sulit.
+Root Cause: MVP minimal.
+Rencana Fix: Parse `error_messages[]` + `status_code` dari body 4xx.
+Trigger: FASE 9 polish atau saat debugging prod butuh.
+Referensi: Audit B2 2026-10-16, M1.
+
+ID: TD-F4-07
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: Adapter LOW findings gabungan: (a) timeout class tidak
+  beda dari connection refused, (b) malformed JSON tidak dibedakan
+  dari error parse lain, (c) Refund/GetStatus tidak cek required
+  field di response.
+Root Cause: MVP minimal.
+Rencana Fix: Batching improvements saat adapter tests (TD-F4-04)
+  dikerjakan.
+Trigger: bareng TD-F4-04.
+Referensi: Audit B2 2026-10-16, L1-L3.
+
