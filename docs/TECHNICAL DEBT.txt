@@ -503,3 +503,47 @@ Rencana Fix: Batching improvements saat adapter tests (TD-F4-04)
 Trigger: bareng TD-F4-04.
 Referensi: Audit B2 2026-10-16, L1-L3.
 
+
+---
+
+ID: TD-F5-04
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Concurrent PATCH /tickets/{id}/assign losers return 403 (ErrTicketForbidden)
+  bukan 409 (ErrAssignConflict). Root: owner check runs before IsAssigned check;
+  setelah winner commit, owner_user_id berubah → losers fail di owner check.
+  ROADMAP E6-S1-T14g ekspektasi 409 untuk concurrent conflict.
+Root Cause: Order check di TicketService.Assign — owner dulu, baru IsAssigned.
+Rencana Fix: Reorder check atau tambah special-case: jika owner check fail TAPI
+  original_owner_user_id == ownerID (artinya baru dipindah), return ErrAssignConflict.
+Trigger: FASE 6 atau saat API contract sync audit.
+Referensi: docs/AUDIT FASE 5, E9-B2 override log.
+
+ID: TD-F5-05
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Setelah GetString miss → ("", nil), 7 lokasi masih cek errors.Is(err, 
+  goredis.Nil). Sebagian dead (caller wrapper), sebagian valid (caller raw client).
+  Locations: auth/blacklist.go:32, auth/handler.go:57, auth/service.go:454,
+  booking/service.go:310, booking/service.go:344, payment/idempotency.go:64,
+  queue/fan_score.go:45.
+Root Cause: Wrapper semantic change (GetString Nil → nil) tanpa cleanup caller.
+Rencana Fix: Audit per-lokasi; hapus dead branch, biarkan raw-client branch.
+Trigger: FASE 9 polish atau saat refactor wrapper.
+Referensi: E9-B2 follow-up observasi.
+
+ID: TD-F5-06
+Tanggal: 2026-10-16
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Test TestIntegration_TicketNotification_DispatchesPIN seed key 
+  ticket_notify:last_seen sebelum RunOnce — tidak exercise cold-start miss path 
+  (root cause Bug #1). Regresi redis.Nil → error tidak akan ke-catch.
+Root Cause: Test ditulis dengan workaround setelah fix, bukan sebelum.
+Rencana Fix: Tambah test TestIntegration_TicketNotification_ColdStart: tidak 
+  seed key, assert RunOnce sukses + dispatch.
+Trigger: FASE 9 atau saat worker di-refactor.
+Referensi: E9-B2 override log.
+
