@@ -23,6 +23,7 @@ import (
 	paymentadapter "github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
 	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
+	"github.com/LittleMardiah/E-Tix/backend/internal/ticket"
 	"github.com/LittleMardiah/E-Tix/backend/internal/worker"
 )
 
@@ -144,6 +145,10 @@ func main() {
 	paymentSvc := payment.NewPaymentService(pgPool, paymentRepo, paymentBookingReader, paymentGateway, paymentIdem)
 	paymentHandler := payment.NewPaymentHandler(paymentSvc, paymentRepo, paymentBookingReader, paymentIdem, logger)
 
+	ticketRepo := ticket.NewPostgresTicketRepository(pgPool)
+	ticketSvc := ticket.NewTicketService(ticketRepo)
+	ticketHandler := ticket.NewTicketHandler(ticketSvc)
+
 	systemUserUUID := uuid.MustParse("00000000-0000-0000-0000-000000000000")
 	if cfg.SystemUserUUID != "" {
 		id, pErr := uuid.Parse(cfg.SystemUserUUID)
@@ -231,6 +236,15 @@ func main() {
 		auth.AuthMiddleware(jwtSvc, blacklistSvc),
 		auth.RateLimitMiddlewareScoped(rdb, 30, time.Minute, auth.RateLimitScopeUser),
 		paymentHandler.BulkAssign)
+
+	router.GET("/tickets",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser),
+		ticketHandler.List)
+	router.GET("/tickets/:ticket_id",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeUser),
+		ticketHandler.GetByID)
 
 	router.GET("/events",
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
