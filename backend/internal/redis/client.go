@@ -27,6 +27,13 @@ func (c *Client) SetNX(ctx context.Context, key, value string, ttl time.Duration
 	return c.Client.SetNX(ctx, key, value, ttl).Result()
 }
 
+// SetValue stores a value with an optional TTL (0 = no expiry). Returns
+// unwrapped error for ergonomic call sites. Named SetValue to avoid
+// shadowing the embedded goredis.Client.Set.
+func (c *Client) SetValue(ctx context.Context, key, value string, ttl time.Duration) error {
+	return c.Client.Set(ctx, key, value, ttl).Err()
+}
+
 func (c *Client) GetString(ctx context.Context, key string) (string, error) {
 	val, err := c.Client.Get(ctx, key).Result()
 	if err == goredis.Nil {
