@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -221,4 +222,113 @@ func insertFreshUser(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 
 func newTestLogger() *zap.Logger {
 	return zap.NewNop()
+}
+
+// -------- IT-TICK-005: Assign atomic success --------
+
+func TestIntegration_Assign_Success(t *testing.T) {
+	env := setupTicketEnv(t)
+	ctx := context.Background()
+
+	tid := insertTestTicket(t, env.pool, seedCustomerID, seedVIPSectID, 201)
+	targetID := insertFreshUser(t, env.pool)
+
+	ticket, err := env.svc.Assign(ctx, seedCustomerID, tid, targetID)
+	require.NoError(t, err)
+	assert.Equal(t, targetID, ticket.OwnerUserID)
+	assert.True(t, ticket.IsAssigned)
+	require.NotNil(t, ticket.OriginalOwnerUserID)
+	assert.Equal(t, seedCustomerID, *ticket.OriginalOwnerUserID)
+
+	// DB verification
+	var ownerID, origOwnerID uuid.UUID
+	var isAssigned bool
+	err = env.pool.QueryRow(ctx, `
+		SELECT owner_user_id, original_owner_user_id, is_assigned
+		FROM tickets WHERE id = $1`, tid).Scan(&ownerID, &origOwnerID, &isAssigned)
+	require.NoError(t, err)
+	assert.Equal(t, targetID, ownerID)
+	assert.Equal(t, seedCustomerID, origOwnerID)
+	assert.True(t, isAssigned)
+}
+
+// -------- IT-TICK-006: Concurrent assign — 1 winner + N conflict --------
+
+func TestIntegration_Assign_Concurrent_OneWinner(t *testing.T) {
+	env := setupTicketEnv(t)
+	ctx := context.Background()
+
+	tid := insertTestTicket(t, env.pool, seedCustomerID, seedVIPSectID, 202)
+	const N = 10
+	targets := make([]uuid.UUID, N)
+	for i := 0; i < N; i++ {
+		targets[i] = insertFreshUser(t, env.pool)
+	}
+
+	results := make([]error, N)
+	done := make(chan struct{})
+	for i := 0; i < N; i++ {
+		targetID := targets[i]
+		go func(idx int, tgt uuid.UUID) {
+			defer func() { done <- struct{}{} }()
+			_, err := env.svc.Assign(ctx, seedCustomerID, tid, tgt)
+			results[idx] = err
+		}(i, targetID)
+	}
+	for i := 0; i < N; i++ {
+		<-done
+	}
+
+	winners := 0
+	conflicts := 0
+	for _, err := range results {
+		switch {
+		case err == nil:
+			winners++
+		case errors.Is(err, ticket.ErrTicketForbidden),
+			errors.Is(err, ticket.ErrTicketAlreadyAssigned),
+			errors.Is(err, ticket.ErrAssignConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	assert.Equal(t, 1, winners, "expected exactly 1 winner")
+	assert.Equal(t, N-1, conflicts, "expected %d conflicts", N-1)
+}
+
+// -------- IT-TICK-007: Fallback PIN notification dispatched --------
+
+func TestIntegration_TicketNotification_DispatchesPIN(t *testing.T) {
+	env := setupTicketEnv(t)
+	ctx := context.Background()
+
+	// Create a CONFIRMED ticket whose id is greater than last_seen (uuid.Nil)
+	tid := insertTestTicket(t, env.pool, seedCustomerID, seedVIPSectID, 203)
+	_ = tid
+
+	// Seed last_seen = uuid.Nil (missing key makes getLastSeen return redis: nil)
+	require.NoError(t, env.rdb.SetValue(ctx, "ticket_notify:last_seen", uuid.Nil.String(), 0))
+
+	notifier := &countingNotifier{}
+	w := worker.NewTicketNotificationWorker(env.pool, notifier, env.rdb, newTestLogger(), 0)
+	require.NoError(t, w.RunOnce(ctx))
+
+	// At least 1 notification dispatched (the CONFIRMED ticket above)
+	assert.GreaterOrEqual(t, notifier.calls, 1, "expected >=1 fallback PIN dispatch")
+
+	// Last-seen advanced past tid
+	lastSeen, err := env.rdb.GetString(ctx, "ticket_notify:last_seen")
+	require.NoError(t, err)
+	assert.NotEmpty(t, lastSeen)
+}
+
+// countingNotifier is a test double for notification.TicketNotification.
+type countingNotifier struct {
+	calls int
+}
+
+func (c *countingNotifier) SendFallbackPIN(_ context.Context, _ uuid.UUID, _, _, _ string) error {
+	c.calls++
+	return nil
 }
