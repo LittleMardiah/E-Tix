@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/payment"
+	"github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
 	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
 )
 
@@ -292,6 +293,9 @@ func (w *BookingExpiryWorker) refundWithRetry(ctx context.Context, externalTxID,
 		refundID, err := w.refund.Refund(ctx, externalTxID, amount)
 		if err == nil {
 			return refundID, nil
+		}
+		if errors.Is(err, adapter.ErrPermanent) {
+			return "", err
 		}
 		lastErr = err
 
