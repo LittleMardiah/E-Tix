@@ -115,7 +115,7 @@ func (m *MidtransPaymentAdapter) doJSON(ctx context.Context, method, path string
 	}
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("midtrans: http do: %w", err)
+		return nil, 0, fmt.Errorf("%w: midtrans: http do: %w", ErrTransient, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
@@ -161,7 +161,7 @@ func (m *MidtransPaymentAdapter) Initiate(ctx context.Context, req InitiateReque
 		return nil, err
 	}
 	if status != http.StatusCreated && status != http.StatusOK {
-		return nil, fmt.Errorf("midtrans: charge http %d: %s", status, truncate(data, 200))
+		return nil, ClassifyHTTPError(status, data)
 	}
 
 	var resp midtransChargeResp
@@ -227,7 +227,7 @@ func (m *MidtransPaymentAdapter) Refund(ctx context.Context, req RefundRequest) 
 		return nil, err
 	}
 	if status != http.StatusOK && status != http.StatusCreated {
-		return nil, fmt.Errorf("midtrans: refund http %d: %s", status, truncate(data, 200))
+		return nil, ClassifyHTTPError(status, data)
 	}
 	var resp struct {
 		StatusCode         string `json:"status_code"`
@@ -254,7 +254,7 @@ func (m *MidtransPaymentAdapter) GetStatus(ctx context.Context, externalTxID str
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, fmt.Errorf("midtrans: status http %d: %s", status, truncate(data, 200))
+		return nil, ClassifyHTTPError(status, data)
 	}
 	var resp midtransChargeResp
 	if err := json.Unmarshal(data, &resp); err != nil {
@@ -306,13 +306,4 @@ func (m *MidtransPaymentAdapter) ValidateWebhookSignature(headers map[string]str
 		return fmt.Errorf("midtrans: signature mismatch")
 	}
 	return nil
-}
-
-// ---------- helpers ----------
-
-func truncate(b []byte, n int) string {
-	if len(b) <= n {
-		return string(b)
-	}
-	return string(b[:n]) + "..."
 }

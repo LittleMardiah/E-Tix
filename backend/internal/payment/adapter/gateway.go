@@ -5,6 +5,8 @@ package adapter
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 )
 
@@ -80,4 +82,30 @@ type PaymentGateway interface {
 	// back to the body signature field (Midtrans native: "signature_key";
 	// generic: "signature") — defensive dual-source, per ROADMAP FASE 4 §3.5.
 	ValidateWebhookSignature(headers map[string]string, payload []byte) error
+}
+
+// ErrTransient indicates a retryable failure (5xx, timeout, network).
+// Callers MAY retry with backoff.
+var ErrTransient = errors.New("gateway: transient error")
+
+// ErrPermanent indicates a non-retryable failure (4xx, validation).
+// Callers MUST NOT retry.
+var ErrPermanent = errors.New("gateway: permanent error")
+
+// ClassifyHTTPError wraps an HTTP response as either ErrTransient (5xx,
+// status==0 for network/timeout) or ErrPermanent (4xx). Callers use
+// errors.Is to decide retry policy.
+func ClassifyHTTPError(status int, body []byte) error {
+	if status == 0 || status >= 500 {
+		return fmt.Errorf("%w: http %d: %s", ErrTransient, status, truncateForErr(body))
+	}
+	return fmt.Errorf("%w: http %d: %s", ErrPermanent, status, truncateForErr(body))
+}
+
+func truncateForErr(b []byte) string {
+	const max = 200
+	if len(b) <= max {
+		return string(b)
+	}
+	return string(b[:max]) + "..."
 }
