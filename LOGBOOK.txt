@@ -1295,3 +1295,43 @@ Mitigasi adopsi: pre-prompt checklist (verify paths, verify behavior, prose=scri
 
 ================================================================================
 END OF FASE 5
+
+================================================================================
+## FASE 5 — POST-AUDIT ADAPTER HARDENING (2026-10-17)
+================================================================================
+
+Konteks: Setelah FASE 5 CLOSED, audit-B2 recon nemu adapter 0% test + 
+retry semantic bug (double-refund risk). Fixed sebelum FASE 6.
+
+Timeline commit:
+- 1527414 fix(adapter): ErrTransient/ErrPermanent classification + wrap %w
+- a0834b8 fix(worker): refundWithRetry skip ErrPermanent
+- fab30ae fix(adapter): field validation + classify malformed-200
+- <pending> test(adapter): baseline 17 cases, 79.7%
+
+### TD Closed
+- TD-F4-04 (0% test) → CLOSED (79.7% cov, Midtrans methods 92-100%)
+- TD-F4-05 (5xx retry) → CLOSED (classification + worker skip)
+- TD-F4-06 (4xx parse) → CLOSED (field validation)
+- TD-F4-07 (L1/L2/L3) → CLOSED
+- TD-F4-08 (NEW) → DEFERRED LOW (mock/ctor 0% coverage)
+
+### Refactor/deviations
+- doJSON network error wrap: %v → %w chain (ErrTransient + net err) — timeout 
+  class reachable via errors.Is(net.Error).
+- classify malformed-200: Initiate+Refund → ErrPermanent (prevent retry 
+  double-charge); GetStatus → ErrTransient (safe read-only).
+- truncate() helper removed (dead post-refactor, R14.7 fix-first).
+
+### Lesson
+- Reviewer (DeepSeek): tidak verify line count (`wc -l` before prompt). 
+  midtrans.go 318 vs prompt ~292.
+- BRE sed: `\(m \*X\)` = grouping, bukan literal. Use `sed -n 'A,Bp'` 
+  atau literal regex `(m \*X)` tanpa escape di basic regex.
+
+### FASE 6 Readiness
+Adapter clean (79.7%, sentinel + validation + retry semantic). Zero carry 
+risk untuk webhook receiver FASE 6.
+
+================================================================================
+END OF ADAPTER HARDENING

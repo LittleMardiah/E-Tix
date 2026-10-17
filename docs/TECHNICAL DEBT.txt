@@ -452,7 +452,7 @@ Referensi: Insiden 2026-10-16 (migrate down 1 silent revert).
 
 ID: TD-F4-04
 Tanggal: 2026-10-16
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-17)
 Prioritas: TINGGI
 Deskripsi: Adapter Midtrans (`internal/payment/adapter/`) 0 test
   coverage. `adapter/*_test.go` tidak ada. Semua edge case (HTTP 5xx,
@@ -467,7 +467,7 @@ Referensi: Audit B2 2026-10-16, H1.
 
 ID: TD-F4-05
 Tanggal: 2026-10-16
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-17)
 Prioritas: MEDIUM
 Deskripsi: Adapter Initiate/Refund/GetStatus tidak bedakan 5xx vs 4xx.
   Error return generic `fmt.Errorf("http %d: %s")`. Retry policy
@@ -480,7 +480,7 @@ Referensi: Audit B2 2026-10-16, H4.
 
 ID: TD-F4-06
 Tanggal: 2026-10-16
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-17)
 Prioritas: RENDAH
 Deskripsi: Adapter 4xx tidak parse structured Midtrans error body
   (hanya truncate 200 byte). Debugging production lebih sulit.
@@ -491,7 +491,7 @@ Referensi: Audit B2 2026-10-16, M1.
 
 ID: TD-F4-07
 Tanggal: 2026-10-16
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-17)
 Prioritas: RENDAH
 Deskripsi: Adapter LOW findings gabungan: (a) timeout class tidak
   beda dari connection refused, (b) malformed JSON tidak dibedakan
@@ -589,4 +589,21 @@ Rencana Fix: Rename atau tambah komentar `// UT-TICK-005` di fungsi test.
   Atau update STP v1.1 dengan ID baru.
 Trigger: FASE 9 atau saat audit traceability.
 Referensi: docs/AUDIT FASE 5, audit-C finding #7/#9.
+
+
+---
+
+ID: TD-F4-08
+Tanggal: 2026-10-17
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: Adapter coverage residual gaps: NewMidtransPaymentAdapter 0%, 
+  mock.go 0% (5 methods + ctor), Payout 100% (but runtime = not-implemented 
+  error path only). Mock adapter = dev-only, low impact. Constructor 
+  tested implicitly via integration.
+Root Cause: Test scope baseline minimal (17 test ctor-level not covered).
+Rencana Fix: Tambah TestNewMidtransPaymentAdapter (parse URL, prod/sandbox 
+  selection) + TestMockAdapter_* (5 methods + IsProduction config).
+Trigger: FASE 9 polish atau saat mock dipakai di test baru.
+Referensi: Fix-4 coverage report 2026-10-17.
 
