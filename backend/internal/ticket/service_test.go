@@ -290,10 +290,11 @@ func TestAssign_ErrorRollsBack(t *testing.T) {
 // ---------- service error branches (E9-A2 gate) ----------
 
 func TestGetQR_RepoError(t *testing.T) {
-	repo := &fakeRepo{detailErr: errors.New("db down")}
+	derr := errors.New("db down")
+	repo := &fakeRepo{detailErr: derr}
 	s, _ := newSvc(repo, newFakeQRStore())
 	_, err := s.GetQR(context.Background(), uuid.New(), uuid.New())
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, derr)
 }
 
 func TestGetQR_EmptySecretKey(t *testing.T) {
@@ -301,43 +302,47 @@ func TestGetQR_EmptySecretKey(t *testing.T) {
 	repo := &fakeRepo{detail: &TicketDetail{Ticket: Ticket{OwnerUserID: uid, Status: "CONFIRMED", QRSecretKey: ""}}}
 	s, _ := newSvc(repo, newFakeQRStore())
 	_, err := s.GetQR(context.Background(), uid, uuid.New())
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrQRSecretKeyRequired)
 }
 
 func TestAssign_BeginError(t *testing.T) {
-	s := NewTicketService(&fakeRepo{}, newFakeQRStore(), &fakeBeginner{err: errors.New("begin fail")})
+	beginErr := errors.New("begin fail")
+	s := NewTicketService(&fakeRepo{}, newFakeQRStore(), &fakeBeginner{err: beginErr})
 	_, err := s.Assign(context.Background(), uuid.New(), uuid.New(), uuid.New())
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, beginErr)
 }
 
 func TestAssign_ForUpdateError(t *testing.T) {
-	repo := &fakeRepo{forUpdateErr: errors.New("row gone")}
+	fuErr := errors.New("row gone")
+	repo := &fakeRepo{forUpdateErr: fuErr}
 	s, _ := newSvc(repo, newFakeQRStore())
 	_, err := s.Assign(context.Background(), uuid.New(), uuid.New(), uuid.New())
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, fuErr)
 }
 
 func TestAssign_UserStatusError(t *testing.T) {
 	owner := uuid.New()
+	userErr := errors.New("user query fail")
 	repo := &fakeRepo{
 		forUpdate: &Ticket{OwnerUserID: owner, Status: "CONFIRMED"},
-		userErr:   errors.New("user query fail"),
+		userErr:   userErr,
 	}
 	s, _ := newSvc(repo, newFakeQRStore())
 	_, err := s.Assign(context.Background(), owner, uuid.New(), uuid.New())
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, userErr)
 }
 
 func TestAssign_UpdateError(t *testing.T) {
 	owner := uuid.New()
+	upErr := errors.New("update fail")
 	repo := &fakeRepo{
 		forUpdate:  &Ticket{OwnerUserID: owner, Status: "CONFIRMED"},
 		userStatus: "ACTIVE",
-		updateErr:  errors.New("update fail"),
+		updateErr:  upErr,
 	}
 	s, _ := newSvc(repo, newFakeQRStore())
 	_, err := s.Assign(context.Background(), owner, uuid.New(), uuid.New())
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, upErr)
 }
 
 // ---------- Cache helpers ----------

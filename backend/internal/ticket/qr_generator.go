@@ -22,7 +22,7 @@ const QRTimestampBlockSeconds = 30
 // Verifier (E3-S1-T7) accepts ±1 block tolerance.
 func GenerateQRData(ticketID, ownerUserID uuid.UUID, qrSecretKey string, now time.Time) (string, error) {
 	if qrSecretKey == "" {
-		return "", fmt.Errorf("ticket: qr_secret_key is required")
+		return "", ErrQRSecretKeyRequired
 	}
 	block := now.Unix() / QRTimestampBlockSeconds
 	payload := fmt.Sprintf("%s|%s|%d", ticketID, ownerUserID, block)
@@ -40,6 +40,10 @@ func GenerateQRData(ticketID, ownerUserID uuid.UUID, qrSecretKey string, now tim
 // ErrInvalidQR is returned when a QR token fails validation (bad format,
 // bad signature, or outside the ±QRToleranceBlocks window).
 var ErrInvalidQR = errors.New("ticket: invalid or expired qr")
+
+// ErrQRSecretKeyRequired is returned when GenerateQRData is called with an
+// empty secret key.
+var ErrQRSecretKeyRequired = errors.New("ticket: qr_secret_key is required")
 
 // QRToleranceBlocks is the ± window (in blocks) accepted for verification.
 const QRToleranceBlocks = 1
