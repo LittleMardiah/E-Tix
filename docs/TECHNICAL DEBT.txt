@@ -547,3 +547,46 @@ Rencana Fix: Tambah test TestIntegration_TicketNotification_ColdStart: tidak
 Trigger: FASE 9 atau saat worker di-refactor.
 Referensi: E9-B2 override log.
 
+
+---
+
+ID: TD-F5-07
+Tanggal: 2026-10-17
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Content-Type inconsistency — ticket handler cache hit pakai c.Data
+  ("application/json", no charset) vs c.JSON ("application/json; charset=utf-8").
+  Cached response vs fresh response charset berbeda tipis. Client harus 
+  toleran; bukan bug tapi inconsistency.
+Root Cause: Design intentional (cache stores raw bytes → c.Data avoids re-serialize).
+Rencana Fix: Set explicit Content-Type header sebelum c.Data, atau cache JSON 
+  object (re-serialize via c.JSON). Trigger: FASE 9 polish atau saat client 
+  report issue.
+Referensi: docs/AUDIT FASE 5, audit-B finding #3.
+
+ID: TD-F5-08
+Tanggal: 2026-10-17
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Idempotency cache hit return stale meta.request_id + meta.timestamp 
+  dari request pertama. Behavior benar (idempotency), tapi tracing misleading.
+Root Cause: Cache menyimpan response body raw, bukan reconstruct envelope.
+Rencana Fix: Cache response tanpa meta, regenerate meta di handler, atau 
+  accept trade-off (spec idempotency = identical response).
+Trigger: FASE 9 polish.
+Referensi: docs/AUDIT FASE 5, audit-B finding #5.
+
+ID: TD-F5-09
+Tanggal: 2026-10-17
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Traceability gap STP ↔ test func. STP v1.1 §3.2 list UT-TICK-001..004 
+  (4) dan IT-TICK ID tidak explicit di header; ROADMAP FASE 5 expect 9 unit 
+  + 7 integration. Current test names pakai pattern TestRepo_*, 
+  TestIntegration_Ticket*, bukan UT-TICK-xxx/IT-TICK-xxx.
+Root Cause: Test naming konvensi beda; tidak strict map ke STP IDs.
+Rencana Fix: Rename atau tambah komentar `// UT-TICK-005` di fungsi test. 
+  Atau update STP v1.1 dengan ID baru.
+Trigger: FASE 9 atau saat audit traceability.
+Referensi: docs/AUDIT FASE 5, audit-C finding #7/#9.
+
