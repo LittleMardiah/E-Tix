@@ -179,16 +179,19 @@ func (m *MidtransPaymentAdapter) Initiate(ctx context.Context, req InitiateReque
 		return nil, fmt.Errorf("midtrans: charge rejected, transaction_status=%q", resp.TransactionStatus)
 	}
 
-	// H3: cross-check amount numerically ("1000000.00" vs "1000000").
-	if resp.GrossAmount != "" && req.Amount != "" {
-		got, gerr := decimal.NewFromString(strings.TrimSpace(resp.GrossAmount))
-		want, werr := decimal.NewFromString(strings.TrimSpace(req.Amount))
-		if gerr != nil || werr != nil {
-			return nil, fmt.Errorf("midtrans: parse amount (got=%q want=%q)", resp.GrossAmount, req.Amount)
-		}
-		if !got.Equal(want) {
-			return nil, fmt.Errorf("midtrans: amount mismatch (got=%s want=%s)", got, want)
-		}
+	// H3: cross-check amount numerically ("1000000.00" vs "1000000"). An
+	// empty gross_amount is a malformed response, not a reason to skip the
+	// cross-check (req.Amount is already validated non-empty).
+	if strings.TrimSpace(resp.GrossAmount) == "" {
+		return nil, fmt.Errorf("%w: midtrans: empty gross_amount in response", ErrPermanent)
+	}
+	got, gerr := decimal.NewFromString(strings.TrimSpace(resp.GrossAmount))
+	want, werr := decimal.NewFromString(strings.TrimSpace(req.Amount))
+	if gerr != nil || werr != nil {
+		return nil, fmt.Errorf("midtrans: parse amount (got=%q want=%q)", resp.GrossAmount, req.Amount)
+	}
+	if !got.Equal(want) {
+		return nil, fmt.Errorf("midtrans: amount mismatch (got=%s want=%s)", got, want)
 	}
 
 	paymentLink := "VA " + strings.ToUpper(midtransDefaultBank) + ": unavailable"
@@ -231,12 +234,15 @@ func (m *MidtransPaymentAdapter) Refund(ctx context.Context, req RefundRequest) 
 	}
 	var resp struct {
 		StatusCode         string `json:"status_code"`
-		RefundChargebackID int64  `json:"refund_chargeback_id"`
+		RefundChargebackID *int64 `json:"refund_chargeback_id"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("midtrans: unmarshal refund: %w", err)
 	}
-	return &RefundResponse{RefundID: fmt.Sprintf("midtrans-refund-%d", resp.RefundChargebackID)}, nil
+	if resp.RefundChargebackID == nil || *resp.RefundChargebackID == 0 {
+		return nil, fmt.Errorf("%w: midtrans: empty refund_chargeback_id in response", ErrPermanent)
+	}
+	return &RefundResponse{RefundID: fmt.Sprintf("midtrans-refund-%d", *resp.RefundChargebackID)}, nil
 }
 
 // Payout is not implemented in FASE 4 (used by FASE 7 resale).
@@ -259,6 +265,9 @@ func (m *MidtransPaymentAdapter) GetStatus(ctx context.Context, externalTxID str
 	var resp midtransChargeResp
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("midtrans: unmarshal status: %w", err)
+	}
+	if strings.TrimSpace(resp.TransactionStatus) == "" {
+		return nil, fmt.Errorf("%w: midtrans: empty transaction_status in response", ErrTransient)
 	}
 	return &StatusResponse{
 		TransactionStatus: resp.TransactionStatus,
