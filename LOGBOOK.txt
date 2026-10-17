@@ -1248,3 +1248,50 @@ Contoh:
 
 ================================================================================
 END OF FASE 5 EVENING CHECKPOINT
+
+================================================================================
+## FASE 5 — CLOSED (2026-10-17)
+================================================================================
+
+Durasi: 2026-10-14 s/d 2026-10-17 (~3.5 hari, session terpanjang)
+24/24 Task DONE. Status: CLOSED.
+
+Commit timeline (final 5):
+- da2dc93 test(fase-5): service + handler unit tests (75 cases, 77%)
+- f4b721c test(fase-5): integration tests (4/7)
+- 8601bb8 test(fase-5): integration tests (7/7)
+- 1ac9c0f refactor: dead Nil cleanup + Warn log (audit F4+F5)
+- <pending> test(fase-5): audit-C fix (sentinel + 95.6% coverage)
+
+### Audit 3-Fase (Hybrid OpenCode + Manual)
+- **Audit A (Security)**: PASS — 3 pass (PIN log, block reuse, HMAC), 2 LOW (idempotency err swallow)
+- **Audit B (Wire)**: PASS — 5 worker, 22 routes, envelope consistent, 2 LOW (c.Data charset, stale meta)
+- **Audit C (Test)**: PASS — coverage 76.7%→95.6%, 6 weak assert→0, missing edge test added
+
+### Fixes Applied
+- F4: Warn log CacheSet (obs gap)
+- F5: dead Nil branch × 7 file (post-wrapper semantic shift)
+- Audit-C-1: coverage 76.7→95.6% (repository_test.go +12 test)
+- Audit-C-3: 6 weak assert → ErrorIs
+- Audit-C-sentinel: ErrQRSecretKeyRequired (6th assert fixable)
+
+### TD baru FASE 5 close
+- TD-F5-04 (MED): concurrent assign 403 vs 409
+- TD-F5-05 (LOW): dead branch audit
+- TD-F5-06 (LOW): cold-start test gap
+- TD-F5-07 (LOW): content-type charset inconsistency
+- TD-F5-08 (LOW): stale meta.request_id
+- TD-F5-09 (LOW): STP↔test traceability
+
+### Self-Reflection Reviewer
+Session FASE 5 = 20+ mistakes. Pattern consistent: assume label/memory vs verify ground truth.
+Mitigasi adopsi: pre-prompt checklist (verify paths, verify behavior, prose=script, grep not cat).
+
+### FASE 5 Verdict
+- All 4 endpoints wired (GET list/detail/qr, PATCH assign)
+- HMAC QR + fallback PIN + notification worker + QR regen worker + assign atomic
+- Coverage 95.6%, all tests PASS, CI green
+- Zero HIGH findings post-audit
+
+================================================================================
+END OF FASE 5
