@@ -627,3 +627,22 @@ Rencana Fix: E3 service — BEGIN tx, SELECT ticket FOR UPDATE (via new method
 Trigger: E3-S1-T7 implementation.
 Referensi: E2-A audit 2026-10-18.
 
+
+---
+
+ID: TD-F6-02
+Tanggal: 2026-10-18
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: RBACMiddleware (internal/auth/rbac.go:9) ada tapi 0 usage baseline 
+  FASE 0-5. FASE 6 scan-qr = route PERTAMA yang butuh role gating. Chain 
+  order (Auth → RBAC → RateLimit) belum terstandar di project.
+Root Cause: FASE 0-5 endpoint pakai public / RLS owner-check / belum ada 
+  admin role-gated endpoint.
+Rencana Fix: 
+  - E2-B wire scan-qr pakai RBAC → jadi pattern referensi.
+  - FASE 8 admin routes wajib ikut (admin + event_organizer).
+  - Tambah test: request tanpa role → 401; wrong role → 403; correct role → pass.
+Trigger: E2-B (langsung) + FASE 8 admin implementation.
+Referensi: E2-B audit 2026-10-18.
+
