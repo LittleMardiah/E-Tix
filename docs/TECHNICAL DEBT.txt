@@ -607,3 +607,23 @@ Rencana Fix: Tambah TestNewMidtransPaymentAdapter (parse URL, prod/sandbox
 Trigger: FASE 9 polish atau saat mock dipakai di test baru.
 Referensi: Fix-4 coverage report 2026-10-17.
 
+
+---
+
+ID: TD-F6-01
+Tanggal: 2026-10-18
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: verify-pin concurrency race — GetTicketByFallbackPIN tanpa FOR 
+  UPDATE. Dua gate_staff scan PIN sama concurrent → kedua fetch OK → kedua 
+  INSERT scan VALID (scan_id beda → no PK conflict) → trigger USED fires 2× 
+  → analytics double-count. MarkFallbackPINUsed WHERE fallback_pin_used=FALSE 
+  guard tidak protect scan INSERT race.
+Root Cause: Repo method read-only tanpa lock. Locking diserahkan caller 
+  (belum ada caller E3).
+Rencana Fix: E3 service — BEGIN tx, SELECT ticket FOR UPDATE (via new method 
+  GetTicketByFallbackPINForUpdate atau overload), re-verify used=FALSE, 
+  INSERT scan, MarkFallbackPINUsed, COMMIT.
+Trigger: E3-S1-T7 implementation.
+Referensi: E2-A audit 2026-10-18.
+
