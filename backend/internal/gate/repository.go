@@ -2,10 +2,15 @@ package gate
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/LittleMardiah/E-Tix/backend/internal/ticket"
 )
 
 // ScanRecord is the DB-mapped row for ticket_scans INSERT.
@@ -65,4 +70,140 @@ type GateRepository interface {
 	// by offline sync conflict resolution — earliest scanned_at wins, tie-
 	// breaker smallest scan_id (deterministic winner rule).
 	EarliestValidScan(ctx context.Context, ticketID uuid.UUID) (*ScanRecord, error)
+}
+
+// ErrTicketNotFound is returned when no ticket matches the given lookup.
+var ErrTicketNotFound = ticket.ErrTicketNotFound
+
+// PostgresGateRepository is the pgx-backed implementation of GateRepository.
+type PostgresGateRepository struct {
+	pool *pgxpool.Pool
+}
+
+// NewPostgresGateRepository constructs a PostgresGateRepository.
+func NewPostgresGateRepository(pool *pgxpool.Pool) *PostgresGateRepository {
+	return &PostgresGateRepository{pool: pool}
+}
+
+const ticketLookupSQL = `
+	SELECT t.id, t.owner_user_id, u.name, s.name, t.seat_position,
+	       t.status::text, t.qr_secret_key, t.fallback_pin, t.fallback_pin_used
+	FROM tickets t
+	JOIN users u ON u.id = t.owner_user_id
+	JOIN sections s ON s.id = t.section_id`
+
+func scanTicketLookup(s interface{ Scan(...any) error }) (*TicketLookup, error) {
+	var tl TicketLookup
+	if err := s.Scan(
+		&tl.ID, &tl.OwnerUserID, &tl.OwnerName, &tl.SectionName, &tl.SeatPos,
+		&tl.Status, &tl.QRSecretKey, &tl.FallbackPIN, &tl.FallbackPINUsed,
+	); err != nil {
+		return nil, err
+	}
+	return &tl, nil
+}
+
+// GetTicketByID fetches ticket + owner + section names.
+func (r *PostgresGateRepository) GetTicketByID(ctx context.Context, ticketID uuid.UUID) (*TicketLookup, error) {
+	row := r.pool.QueryRow(ctx, ticketLookupSQL+` WHERE t.id = $1`, ticketID)
+	tl, err := scanTicketLookup(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTicketNotFound
+		}
+		return nil, fmt.Errorf("gate: get ticket: %w", err)
+	}
+	return tl, nil
+}
+
+// GetTicketByFallbackPIN returns the ticket matching the PIN if unused + CONFIRMED.
+func (r *PostgresGateRepository) GetTicketByFallbackPIN(ctx context.Context, pin string) (*TicketLookup, error) {
+	row := r.pool.QueryRow(ctx, ticketLookupSQL+
+		` WHERE t.fallback_pin = $1 AND t.fallback_pin_used = FALSE AND t.status::text = 'CONFIRMED'`, pin)
+	tl, err := scanTicketLookup(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTicketNotFound
+		}
+		return nil, fmt.Errorf("gate: get ticket by pin: %w", err)
+	}
+	return tl, nil
+}
+
+// InsertScan writes a ticket_scans row (idempotent via PK conflict no-op).
+func (r *PostgresGateRepository) InsertScan(ctx context.Context, scan *ScanRecord) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO ticket_scans (
+			id, ticket_id, gate_id, scanner_device_id, scanner_user_id,
+			scan_status, scan_method, scanned_at, ip_address
+		) VALUES ($1,$2,$3,$4,$5,$6::scan_status_enum,$7,$8,$9)
+		ON CONFLICT (id) DO NOTHING`,
+		scan.ID, scan.TicketID, scan.GateID, scan.ScannerDeviceID, scan.ScannerUserID,
+		scan.ScanStatus, scan.ScanMethod, scan.ScannedAt, scan.IPAddress,
+	)
+	if err != nil {
+		return fmt.Errorf("gate: insert scan: %w", err)
+	}
+	return nil
+}
+
+// UpdateTicketStatus marks a ticket as USED within a caller tx.
+func (r *PostgresGateRepository) UpdateTicketStatus(ctx context.Context, tx pgx.Tx, ticketID uuid.UUID, status string) error {
+	_, err := tx.Exec(ctx,
+		`UPDATE tickets SET status = $1::ticket_status_enum, updated_at = NOW() WHERE id = $2`,
+		status, ticketID)
+	if err != nil {
+		return fmt.Errorf("gate: update ticket status: %w", err)
+	}
+	return nil
+}
+
+// MarkFallbackPINUsed marks the ticket's fallback PIN as consumed (single-use).
+func (r *PostgresGateRepository) MarkFallbackPINUsed(ctx context.Context, tx pgx.Tx, ticketID uuid.UUID) (int64, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE tickets
+		SET fallback_pin_used = TRUE, fallback_pin_used_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND fallback_pin_used = FALSE`, ticketID)
+	if err != nil {
+		return 0, fmt.Errorf("gate: mark pin used: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// GetTicketByIDForUpdate locks a ticket row within a caller tx.
+func (r *PostgresGateRepository) GetTicketByIDForUpdate(ctx context.Context, tx pgx.Tx, ticketID uuid.UUID) (*TicketLookup, error) {
+	row := tx.QueryRow(ctx, ticketLookupSQL+` WHERE t.id = $1 FOR UPDATE`, ticketID)
+	tl, err := scanTicketLookup(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTicketNotFound
+		}
+		return nil, fmt.Errorf("gate: get ticket for update: %w", err)
+	}
+	return tl, nil
+}
+
+// EarliestValidScan returns the earliest VALID scan for a ticket (or nil, nil
+// if none). Deterministic tie-breaker: smallest scan_id (UUID ASC).
+func (r *PostgresGateRepository) EarliestValidScan(ctx context.Context, ticketID uuid.UUID) (*ScanRecord, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, ticket_id, gate_id, scanner_device_id, scanner_user_id,
+		       scan_status::text, scan_method, scanned_at, ip_address
+		FROM ticket_scans
+		WHERE ticket_id = $1 AND scan_status::text = 'VALID'
+		ORDER BY scanned_at ASC, id ASC
+		LIMIT 1`, ticketID)
+
+	var rec ScanRecord
+	err := row.Scan(
+		&rec.ID, &rec.TicketID, &rec.GateID, &rec.ScannerDeviceID, &rec.ScannerUserID,
+		&rec.ScanStatus, &rec.ScanMethod, &rec.ScannedAt, &rec.IPAddress,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("gate: earliest valid scan: %w", err)
+	}
+	return &rec, nil
 }
