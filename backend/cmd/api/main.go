@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/LittleMardiah/E-Tix/backend/internal/analytics"
 	"github.com/LittleMardiah/E-Tix/backend/internal/auth"
 	"github.com/LittleMardiah/E-Tix/backend/internal/booking"
 	"github.com/LittleMardiah/E-Tix/backend/internal/config"
@@ -155,9 +156,14 @@ func main() {
 	gateSvc := gate.NewGateService(gateRepo, pgPool)
 	gateHandler := gate.NewGateHandler(gateSvc)
 
+	anRepo := analytics.NewPostgresAnalyticsRepository(pgPool)
+	anSvc := analytics.NewAnalyticsService(anRepo, eventRepo)
+	anHandler := analytics.NewAnalyticsHandler(anSvc)
+
 	ticketNotifier := notification.NewLogTicketNotification(logger)
 	ticketNotifyWorker := worker.NewTicketNotificationWorker(pgPool, ticketNotifier, rdb, logger, 0)
 	qrRegenWorker := worker.NewQRRegenerationWorker(pgPool, rdb, logger, 0)
+	feedbackWorker := worker.NewFeedbackLoopWorker(pgPool, anRepo, logger)
 
 	systemUserUUID := uuid.MustParse("00000000-0000-0000-0000-000000000000")
 	if cfg.SystemUserUUID != "" {
@@ -273,6 +279,29 @@ func main() {
 		auth.RBACMiddleware("gate_staff"),
 		auth.RateLimitMiddlewareScoped(rdb, 180, time.Minute, auth.RateLimitScopeUser),
 		gateHandler.VerifyPIN)
+	router.POST("/gate/sync",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RBACMiddleware("gate_staff"),
+		auth.RateLimitMiddlewareScoped(rdb, 60, time.Minute, auth.RateLimitScopeUser),
+		gateHandler.SyncOfflineScans)
+
+	router.GET("/events/:event_id/dashboard",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RBACMiddleware("event_organizer", "admin"),
+		auth.RateLimitMiddlewareScoped(rdb, 30, time.Minute, auth.RateLimitScopeUser),
+		anHandler.GetDashboard)
+
+	router.GET("/events/:event_id/analytics",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RBACMiddleware("event_organizer", "admin"),
+		auth.RateLimitMiddlewareScoped(rdb, 30, time.Minute, auth.RateLimitScopeUser),
+		anHandler.GetAnalytics)
+
+	router.GET("/events/:event_id/post-event-report",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RBACMiddleware("event_organizer", "admin"),
+		auth.RateLimitMiddlewareScoped(rdb, 10, time.Minute, auth.RateLimitScopeUser),
+		anHandler.GetPostEventReport)
 
 	router.GET("/events",
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
@@ -340,6 +369,11 @@ func main() {
 	go func() {
 		if err := qrRegenWorker.Run(context.Background()); err != nil {
 			logger.Error("qr regen worker stopped", zap.Error(err))
+		}
+	}()
+	go func() {
+		if err := feedbackWorker.Run(context.Background()); err != nil {
+			logger.Error("feedback loop worker stopped", zap.Error(err))
 		}
 	}()
 

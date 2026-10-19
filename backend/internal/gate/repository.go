@@ -57,9 +57,9 @@ type GateRepository interface {
 	// InsertScan writes a ticket_scans row (idempotent via PK conflict no-op).
 	InsertScan(ctx context.Context, scan *ScanRecord) error
 
-	// InsertScanTx is the tx-aware variant for atomic scan + status update
-	// (VerifyPIN path). TD-F6-01.
-	InsertScanTx(ctx context.Context, tx pgx.Tx, scan *ScanRecord) error
+	// InsertScanTx is the tx-aware variant for atomic scan + status update.
+	// Returns inserted=true on new row, false on duplicate (idempotent no-op).
+	InsertScanTx(ctx context.Context, tx pgx.Tx, scan *ScanRecord) (bool, error)
 
 	// UpdateTicketStatus marks a ticket as USED (used only on VALID scans
 	// that reach the trigger path; kept explicit for offline sync).
@@ -77,6 +77,13 @@ type GateRepository interface {
 	// by offline sync conflict resolution — earliest scanned_at wins, tie-
 	// breaker smallest scan_id (deterministic winner rule).
 	EarliestValidScan(ctx context.Context, ticketID uuid.UUID) (*ScanRecord, error)
+
+	// GetEarliestValidScanByTicketIDs returns earliest VALID scan per ticket
+	// (batch). For offline sync conflict resolution.
+	GetEarliestValidScanByTicketIDs(ctx context.Context, tx pgx.Tx, ticketIDs []uuid.UUID) (map[uuid.UUID]*ScanRecord, error)
+
+	// UpdateScanStatus overwrites scan_status (used to mark loser as ALREADY_USED).
+	UpdateScanStatus(ctx context.Context, tx pgx.Tx, scanID uuid.UUID, status string) error
 }
 
 // ErrTicketNotFound is returned when no ticket matches the given lookup.
@@ -171,20 +178,26 @@ func (r *PostgresGateRepository) InsertScan(ctx context.Context, scan *ScanRecor
 }
 
 // InsertScanTx is the tx-aware InsertScan variant for atomic paths (VerifyPIN).
-func (r *PostgresGateRepository) InsertScanTx(ctx context.Context, tx pgx.Tx, scan *ScanRecord) error {
-	_, err := tx.Exec(ctx, `
+// Returns inserted=true on new row, false on duplicate (idempotent no-op).
+func (r *PostgresGateRepository) InsertScanTx(ctx context.Context, tx pgx.Tx, scan *ScanRecord) (bool, error) {
+	var returnedID uuid.UUID
+	err := tx.QueryRow(ctx, `
 		INSERT INTO ticket_scans (
 			id, ticket_id, gate_id, scanner_device_id, scanner_user_id,
 			scan_status, scan_method, scanned_at, ip_address
 		) VALUES ($1,$2,$3,$4,$5,$6::scan_status_enum,$7,$8,$9)
-		ON CONFLICT (id) DO NOTHING`,
+		ON CONFLICT (id) DO NOTHING
+		RETURNING id`,
 		scan.ID, scan.TicketID, scan.GateID, scan.ScannerDeviceID, scan.ScannerUserID,
 		scan.ScanStatus, scan.ScanMethod, scan.ScannedAt, scan.IPAddress,
-	)
-	if err != nil {
-		return fmt.Errorf("gate: insert scan (tx): %w", err)
+	).Scan(&returnedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil // duplicate scan_id (idempotent)
 	}
-	return nil
+	if err != nil {
+		return false, fmt.Errorf("gate: insert scan (tx): %w", err)
+	}
+	return true, nil
 }
 
 // UpdateTicketStatus marks a ticket as USED within a caller tx.
@@ -246,4 +259,46 @@ func (r *PostgresGateRepository) EarliestValidScan(ctx context.Context, ticketID
 		return nil, fmt.Errorf("gate: earliest valid scan: %w", err)
 	}
 	return &rec, nil
+}
+
+// GetEarliestValidScanByTicketIDs returns earliest VALID scan per ticket.
+// Tie-breaker: smallest scan_id (UUID ASC) for deterministic winner selection.
+func (r *PostgresGateRepository) GetEarliestValidScanByTicketIDs(ctx context.Context, tx pgx.Tx, ticketIDs []uuid.UUID) (map[uuid.UUID]*ScanRecord, error) {
+	out := make(map[uuid.UUID]*ScanRecord)
+	if len(ticketIDs) == 0 {
+		return out, nil
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT DISTINCT ON (ticket_id)
+		       id, ticket_id, gate_id, scanner_device_id, scanner_user_id,
+		       scan_status::text, scan_method, scanned_at, ip_address
+		FROM ticket_scans
+		WHERE ticket_id = ANY($1) AND scan_status::text = 'VALID'
+		ORDER BY ticket_id, scanned_at ASC, id ASC`, ticketIDs)
+	if err != nil {
+		return nil, fmt.Errorf("gate: batch earliest: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rec ScanRecord
+		if err := rows.Scan(
+			&rec.ID, &rec.TicketID, &rec.GateID, &rec.ScannerDeviceID, &rec.ScannerUserID,
+			&rec.ScanStatus, &rec.ScanMethod, &rec.ScannedAt, &rec.IPAddress,
+		); err != nil {
+			return nil, err
+		}
+		out[rec.TicketID] = &rec
+	}
+	return out, rows.Err()
+}
+
+// UpdateScanStatus overwrites scan_status for a scan row (loser marking).
+func (r *PostgresGateRepository) UpdateScanStatus(ctx context.Context, tx pgx.Tx, scanID uuid.UUID, status string) error {
+	_, err := tx.Exec(ctx,
+		`UPDATE ticket_scans SET scan_status = $1::scan_status_enum WHERE id = $2`,
+		status, scanID)
+	if err != nil {
+		return fmt.Errorf("gate: update scan status: %w", err)
+	}
+	return nil
 }

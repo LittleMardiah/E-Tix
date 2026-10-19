@@ -25,6 +25,9 @@ var ErrTicketNotActive = errors.New("gate: ticket not active")
 // ErrTicketMismatch is returned when req.TicketID != PIN owner (TD-F6-03).
 var ErrTicketMismatch = errors.New("gate: ticket_id does not match pin owner")
 
+// ErrBatchTooLarge is returned when sync batch exceeds 500 scans.
+var ErrBatchTooLarge = errors.New("gate: batch exceeds 500 scans")
+
 // TxBeginner abstracts the transaction opener for testability.
 type TxBeginner interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
@@ -118,7 +121,7 @@ func (s *GateService) VerifyPIN(ctx context.Context, scannerUserID uuid.UUID, re
 
 	// TD-F6-04: distinguish already-used (409) from not-active (422).
 	if t.FallbackPINUsed || t.Status == "USED" {
-		if err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
+		if _, err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
 			ScannerUserID: &scannerUserID,
 			ID:            req.ScanID, TicketID: t.ID, GateID: req.GateID,
 			ScannerDeviceID: &req.ScannerDeviceID, ScanStatus: "ALREADY_USED",
@@ -133,7 +136,7 @@ func (s *GateService) VerifyPIN(ctx context.Context, scannerUserID uuid.UUID, re
 	}
 
 	if t.Status != "CONFIRMED" {
-		if err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
+		if _, err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
 			ScannerUserID: &scannerUserID,
 			ID:            req.ScanID, TicketID: t.ID, GateID: req.GateID,
 			ScannerDeviceID: &req.ScannerDeviceID, ScanStatus: "INVALID",
@@ -154,7 +157,7 @@ func (s *GateService) VerifyPIN(ctx context.Context, scannerUserID uuid.UUID, re
 		return nil, fmt.Errorf("gate: mark pin used: %w", err)
 	}
 
-	if err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
+	if _, err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
 		ScannerUserID: &scannerUserID,
 		ID:            req.ScanID, TicketID: t.ID, GateID: req.GateID,
 		ScannerDeviceID: &req.ScannerDeviceID, ScanStatus: "VALID",
@@ -172,4 +175,135 @@ func (s *GateService) VerifyPIN(ctx context.Context, scannerUserID uuid.UUID, re
 		Seat:   fmt.Sprintf("%s - %d", t.SectionName, t.SeatPos),
 		Status: "USED", ScanMethod: "PIN", ScannedAt: now,
 	}, nil
+}
+
+const syncMaxScans = 500
+
+// SyncOfflineScans processes a batch of offline scans with deterministic
+// conflict resolution. Earliest scanned_at wins; tie-breaker smallest scan_id.
+func (s *GateService) SyncOfflineScans(ctx context.Context, scannerUserID uuid.UUID, req *SyncRequest) (*SyncResponse, error) {
+	if len(req.Scans) > syncMaxScans {
+		return nil, ErrBatchTooLarge
+	}
+	if len(req.Scans) == 0 {
+		return &SyncResponse{Conflicts: []ConflictEntry{}, Errors: []string{}}, nil
+	}
+
+	resp := &SyncResponse{Conflicts: []ConflictEntry{}, Errors: []string{}}
+
+	for _, sc := range req.Scans {
+		tx, err := s.db.Begin(ctx)
+		if err != nil {
+			resp.Failed++
+			resp.Errors = append(resp.Errors, fmt.Sprintf("scan %s: begin: %v", sc.ScanID, err))
+			continue
+		}
+
+		// Conflict resolution for VALID scans: decide status BEFORE insert.
+		var insertStatus string
+		var prevWinner *ScanRecord
+		var targetTicket *TicketLookup
+		if sc.ScanStatus == "VALID" {
+			t, err := s.repo.GetTicketByIDForUpdate(ctx, tx, sc.TicketID)
+			if err != nil {
+				_ = tx.Rollback(ctx)
+				resp.Failed++
+				resp.Errors = append(resp.Errors, fmt.Sprintf("scan %s: lock ticket: %v", sc.ScanID, err))
+				continue
+			}
+			targetTicket = t
+
+			existing, err := s.repo.GetEarliestValidScanByTicketIDs(ctx, tx, []uuid.UUID{sc.TicketID})
+			if err != nil {
+				_ = tx.Rollback(ctx)
+				resp.Failed++
+				resp.Errors = append(resp.Errors, fmt.Sprintf("scan %s: query winners: %v", sc.ScanID, err))
+				continue
+			}
+			prevWinner = existing[sc.TicketID]
+
+			// Deterministic winner: earliest scanned_at; tie-break smallest scan_id.
+			weWin := prevWinner == nil ||
+				sc.ScannedAt.Before(prevWinner.ScannedAt) ||
+				(sc.ScannedAt.Equal(prevWinner.ScannedAt) && sc.ScanID.String() < prevWinner.ID.String())
+
+			if weWin {
+				insertStatus = "VALID"
+			} else {
+				insertStatus = "ALREADY_USED"
+			}
+		} else {
+			insertStatus = sc.ScanStatus
+		}
+
+		// Insert with resolved status; duplicate detection via inserted bool.
+		inserted, err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
+			ScannerUserID:   &scannerUserID,
+			ID:              sc.ScanID,
+			TicketID:        sc.TicketID,
+			GateID:          sc.GateID,
+			ScannerDeviceID: &req.DeviceID,
+			ScanStatus:      insertStatus,
+			ScanMethod:      sc.ScanMethod,
+			ScannedAt:       sc.ScannedAt,
+		})
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			resp.Failed++
+			resp.Errors = append(resp.Errors, fmt.Sprintf("scan %s: insert: %v", sc.ScanID, err))
+			continue
+		}
+		if !inserted {
+			_ = tx.Rollback(ctx)
+			resp.Duplicates++
+			continue
+		}
+
+		// Post-insert actions for VALID winner/loser.
+		if sc.ScanStatus == "VALID" {
+			if insertStatus == "VALID" {
+				// We win: demote previous winner (if any).
+				if prevWinner != nil {
+					if err := s.repo.UpdateScanStatus(ctx, tx, prevWinner.ID, "ALREADY_USED"); err != nil {
+						_ = tx.Rollback(ctx)
+						resp.Failed++
+						resp.Errors = append(resp.Errors, fmt.Sprintf("scan %s: demote winner: %v", sc.ScanID, err))
+						continue
+					}
+				}
+				if targetTicket.Status == "CONFIRMED" {
+					if err := s.repo.UpdateTicketStatus(ctx, tx, sc.TicketID, "USED"); err != nil {
+						_ = tx.Rollback(ctx)
+						resp.Failed++
+						resp.Errors = append(resp.Errors, fmt.Sprintf("scan %s: update ticket: %v", sc.ScanID, err))
+						continue
+					}
+				}
+			} else {
+				// We lose: record conflict.
+				var winnerDevice uuid.UUID
+				if prevWinner.ScannerDeviceID != nil {
+					winnerDevice = *prevWinner.ScannerDeviceID
+				}
+				resp.Conflicts = append(resp.Conflicts, ConflictEntry{
+					ScanID:          sc.ScanID,
+					TicketID:        sc.TicketID,
+					Status:          "ALREADY_USED",
+					WinnerDeviceID:  winnerDevice,
+					WinnerScannedAt: prevWinner.ScannedAt,
+					LoserDeviceID:   req.DeviceID,
+					LoserScannedAt:  sc.ScannedAt,
+				})
+			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			resp.Failed++
+			resp.Errors = append(resp.Errors, fmt.Sprintf("scan %s: commit: %v", sc.ScanID, err))
+			continue
+		}
+		resp.Synced++
+	}
+
+	return resp, nil
 }

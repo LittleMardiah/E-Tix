@@ -3,6 +3,7 @@ package gate
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -92,6 +93,43 @@ func (h *GateHandler) VerifyPIN(c *gin.Context) {
 		default:
 			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result, "error": nil})
+}
+
+// SyncOfflineScans handles POST /gate/sync.
+func (h *GateHandler) SyncOfflineScans(c *gin.Context) {
+	// Enforce 1MB body limit (SECURITY_SPEC 7.2) — no middleware present.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+
+	userIDStr := c.GetString("user_id")
+	scannerUserID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid user context")
+		return
+	}
+
+	var req SyncRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) || strings.Contains(err.Error(), "request body too large") {
+			writeError(c, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "body exceeds 1MB")
+			return
+		}
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid body")
+		return
+	}
+
+	if len(req.Scans) > 500 {
+		writeError(c, http.StatusUnprocessableEntity, "UNPROCESSABLE_ENTITY", "batch exceeds 500 scans")
+		return
+	}
+
+	result, err := h.svc.SyncOfflineScans(c.Request.Context(), scannerUserID, &req)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 
