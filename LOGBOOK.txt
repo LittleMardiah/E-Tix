@@ -1335,3 +1335,39 @@ risk untuk webhook receiver FASE 6.
 
 ================================================================================
 END OF ADAPTER HARDENING
+
+================================================================================
+## FASE 6 — CLOSED (2026-10-20)
+================================================================================
+
+Durasi: 2026-10-17 s/d 2026-10-20
+23 ROADMAP task: 21 DONE + 2 DEFERRED (E9 coverage → TD-F6-09, Postman → TD-014).
+
+### Deliverables
+- E1-E3: model + repo + scan-qr + verify-pin (tx-atomic, TD-F6-01/03/04 closed)
+- E4: POST /gate/sync (conflict demotion B1, duplicates counter B4, body 1MB B3)
+- E5-E7: dashboard + analytics + post-event-report (JSON/CSV/PDF-501, admin bypass B2)
+- E8: FeedbackLoopWorker (24h ticker, 3 insights idempotent) + 2 triggers verified
+- E9: 4 baseline tests (full coverage deferred)
+
+### Retro-audit findings (post mega-prompt)
+4 BLOCKER (B1-B4) + 6 MEDIUM (M6-M12) caught post-hoc, all fixed.
+- B1: conflict winner query AFTER insert → demotion missing
+- B2: checkOwner blocked admin (RBAC pass, service reject)
+- B3: sync body no MaxBytesReader (no middleware)
+- B4: duplicates counter silent (ON CONFLICT no-op)
+
+### Reviewer (DeepSeek) prompt mistakes caught by OpenCode (§11.5, 4 overrides)
+- Anchor single-line vs multi-line gofmt mismatch
+- `if not in s` self-defeating guard (ErrBatchTooLarge)
+- M8 false positive (test already strong from mega)
+- ErrBatchTooLarge unreachable HTTP (kept defensively)
+
+### Lesson
+Mega-prompt (§16.3 violation) works technically but ships 4 BLOCKER not caught 
+by gates. Future: return to split (E1-E9 per FASE) unless hard deadline.
+
+Next: FASE 7 — Controlled Resale Market (split normal, ~35 jam).
+
+================================================================================
+END OF FASE 6

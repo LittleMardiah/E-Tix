@@ -717,3 +717,40 @@ Rencana Fix: Remove dari interface + impl (breaking internal only, no
 Trigger: FASE 9 hygiene atau saat refactor berikutnya.
 Referensi: E3-B audit 2026-10-20.
 
+
+---
+
+ID: TD-F6-07
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: queue.EventRepository.GetOrganizerID = layer leak (belongs in 
+  internal/event/repository.go). Pragmatic reuse untuk urgent fix.
+Rencana Fix: Move ke event repo + update NewAnalyticsService wire.
+Trigger: FASE 9 refactor.
+Referensi: FASE 6 mega audit 2026-10-20.
+
+---
+
+ID: TD-F6-08
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: Error code NOT_IMPLEMENTED (PDF 501) tidak ada di API_CONTRACT §3.2.
+Rencana Fix: Update API_CONTRACT §3.2.
+Trigger: FASE 9 doc polish.
+Referensi: FASE 6 mega audit 2026-10-20.
+
+---
+
+ID: TD-F6-09
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: SEDANG
+Deskripsi: FASE 6 test coverage gap. Delivered: analytics 4 unit, gate 0. 
+  ROADMAP E9 targets: unit ≥90%, 7 integration, Postman, conflict IT. 
+  Coverage ~5-10% per package.
+Rencana Fix: FASE 9 full test suite (~6 jam).
+Trigger: FASE 9.
+Referensi: FASE 6 mega audit 2026-10-20.
+
