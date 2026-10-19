@@ -1371,3 +1371,99 @@ Next: FASE 7 — Controlled Resale Market (split normal, ~35 jam).
 
 ================================================================================
 END OF FASE 6
+
+================================================================================
+## FASE 6 — CLOSED (2026-10-20, extended session)
+================================================================================
+
+Durasi: 2026-10-17 s/d 2026-10-20 (3.5 hari)
+23 ROADMAP task: 21 DONE + 2 DEFERRED (E9 coverage → TD-F6-09, Postman → TD-014).
+
+Commit timeline (FASE 6 final):
+- 45d1aee  feat(fase-6): E4-E9 complete — sync + analytics + feedback worker
+- 78431bf  docs: FASE 6 CLOSED — TD-F6-07/08/09 + LOGBOOK checkpoint
+- 919b0a6  fix(fase-6): scan-qr concurrent race — Phase 2 tx+ForUpdate (B5)
+- 0a69e97  test(fase-6): gate unit + analytics admin + B5 concurrent regression
+- b013b90  test(fase-6): gate VerifyPIN happy/used/mismatch + Sync batch/dup + handler 413
+- <pending commit>  fix(fase-6): migration 003 SQLSTATE 42702 + 5 integration tests
+
+### Bug Discovery Timeline (2 bugs masking)
+
+Bug #1: ScanQR concurrent race (B5) — fixed in commit 919b0a6.
+  Found via review, mirror VerifyPIN pattern.
+
+Bug #2: Migration 001 trigger generate_post_event_report() SQLSTATE 42702.
+  Found via C2 feedback_loop integration test (first test to UPDATE events
+  status='COMPLETED').
+  Root cause: DECLARE gate_utilization JSONB collides with CTE alias.
+  Fix: migration 003 (CREATE OR REPLACE without DECLARE var).
+  Closed: 2026-10-20. HIGH production severity.
+
+Bug #3: feedback_loop_test.go assertion expected 3, actual 4.
+  Found via D1 diagnostic AFTER migration 003 applied.
+  Root cause: test written assuming trigger broken (0 PEAK_TIME). Now trigger
+  fixed → +1 PEAK_TIME + 3 worker = 4 insights.
+  Fix: assertion per-type + exact count 4.
+
+### 2-Bug-Masking Lesson
+
+Bug #1 (trigger) failed FIRST → masked Bug #2 (assertion). Fixing #1 revealed
+#2. Rule: "When a test fails, fixing the first error may reveal subsequent
+errors. Verify test passes after every fix, don't assume single root cause."
+
+### Verify Block Bugs Tally (2026-10-20)
+
+Command-level (5 bugs in my verify blocks):
+1. PASS_COUNT=$? (grep exit code not count)
+2. cd /path with space unquoted → "too many arguments"
+3. Missing `export TEST_DB_URL` → tests SKIP (false signal)
+4. Missing `-v` flag → no per-test output
+5. `$?` after pipe = last cmd (head), bukan go test
+
+Prompt design-level (3 bugs):
+6. Assumed 1 root cause (multiple bugs masking each other)
+7. Diagnostic block tidak capture actual assertion error
+8. Fix prompt missing STAGE 5.5 diagnostic if gate fail
+
+Root cause pattern: writing verify block / prompt from memory without testing.
+R3 violation (hallucinate command validity).
+
+### NEW RULES (adopted)
+
+Rule V1: Verify block template MUST include:
+  - `VAR=$(cmd 2>&1 | grep -c ...)` for count, NEVER `$?` after pipe
+  - `-v` for all `go test`
+  - `export TEST_DB_URL` explicit in integration
+  - `cd "path with space"` always quoted
+  - NO placeholder (`...`, `...same...`)
+
+Rule V2: Fix prompt MUST include:
+  - "if gate fail → capture diagnostic raw output, DO NOT proceed"
+  - Request full `go test -v` output, not just `--- PASS/FAIL`
+
+Rule V3: Before writing fix prompt for a bug, reproduce manually first.
+  Never trust diagnosis alone. R3.
+
+### FASE 6 CLOSED — Final State
+
+- All 4 endpoints: scan-qr, verify-pin, sync, dashboard, analytics, post-event
+- 2 workers: FeedbackLoopWorker (24h ticker) + 2 verified triggers
+- Tests: 13 gate unit + 5 analytics unit + 8 integration = 26 tests
+- Coverage: 27.9% overall (repository SQL = 0%, genuine scope limit)
+- Zero HIGH findings post-audit
+- DoD E9: unit ≥10 (13 ✅), integration 8/8 ✅, conflict 1 ✅, PDF stub ✅
+
+### TD Register FASE 6 (Final)
+
+CLOSED:
+- TD-F6-01, 03, 04 (from E2/E3)
+- TD-F6-10 (migration 003, same session)
+
+DEFERRED:
+- TD-F6-02 (RBAC FASE 8), TD-F6-05/06/07/08/11/12/13 (FASE 9 polish)
+- TD-F6-09 (full coverage, FASE 9)
+- TD-014 (Postman, FASE 9)
+
+================================================================================
+END OF FASE 6 CLOSED
+================================================================================

@@ -754,3 +754,55 @@ Rencana Fix: FASE 9 full test suite (~6 jam).
 Trigger: FASE 9.
 Referensi: FASE 6 mega audit 2026-10-20.
 
+
+---
+
+ID: TD-F6-10
+Tanggal: 2026-10-20
+Status: ✅ CLOSED (2026-10-20)
+Prioritas: HIGH
+Deskripsi: Migration 001 trigger generate_post_event_report() SQLSTATE 42702 —
+  PL/pgSQL DECLARE variable `gate_utilization JSONB` (unused) collides with
+  CTE column alias `gate_agg.gate_utilization`. Any UPDATE events SET
+  status='COMPLETED' fails. FeedbackLoopWorker cannot run on completed events.
+Root Cause: PostgreSQL plpgsql.variable_conflict = error (default) — ambiguous
+  reference between DECLARE var and CTE alias.
+Rencana Fix: Migration 003 — CREATE OR REPLACE FUNCTION without the DECLARE var.
+  Applied 2026-10-20 (version=3 dirty=false). Trigger verified working (manual
+  UPDATE test → PEAK_TIME insight inserted).
+Referensi: FASE 6 C2 diagnostic 2026-10-20 05:21 WIB, prompt_f6_mig003 log.
+
+ID: TD-F6-11
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: DATABASE_SCHEMA.txt v2.9 line ~708-770 masih dokumentasikan trigger
+  generate_post_event_report() versi buggy (dengan DECLARE gate_utilization).
+  Kode = truth (migration 003 fix), tapi docs belum sync.
+Rencana Fix: Amend DATABASE_SCHEMA.txt ke v2.9.1 (hapus DECLARE gate_utilization).
+Trigger: FASE 9 doc polish.
+Referensi: TD-F6-10, R2 (code = source of truth).
+
+ID: TD-F6-12
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: `_ = s.repo.InsertScan(ctx, ...)` di gate ScanQR INVALID path
+  swallows error. Analytics fraud detection tidak capture kalau insert
+  INVALID scan gagal (FK violation, DB down). Silent failure.
+Rencana Fix: Log warning kalau InsertScan error di INVALID path. Atau tambah
+  retry.
+Trigger: FASE 9 observability polish.
+Referensi: FASE 6 code review, B5 fix context.
+
+ID: TD-F6-13
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: `_ = w.repo.InsertInsight(...)` di feedback_loop.go (3 tempat:
+  generateGATE_STAFFING, generateBOT_BLACKLIST, generatePRICE_RECOMMENDATION)
+  swallows InsertInsight errors. Kalau insert gagal, insight silent tidak
+  terbuat — dashboard EO kosong tanpa alert.
+Rencana Fix: Log warning atau return error up (workflow worker sudah log).
+Trigger: FASE 9 polish.
+Referensi: FASE 6 diagnostic D4 (2026-10-20), pattern sama dengan TD-F6-12.
