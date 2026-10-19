@@ -46,8 +46,12 @@ func NewGateService(repo GateRepository, db TxBeginner) *GateService {
 }
 
 // ScanQR validates a dynamic HMAC QR and records the scan.
+// B5 FIX: VALID path is transactional with FOR UPDATE — prevents concurrent
+// scans from both being recorded VALID (double-count race).
 func (s *GateService) ScanQR(ctx context.Context, scannerUserID uuid.UUID, req *ScanQRRequest) (*ScanResult, error) {
 	now := s.nowFn()
+
+	// Phase 1: read for HMAC verify (no lock — cheap pre-check).
 	t, err := s.repo.GetTicketByID(ctx, req.TicketID)
 	if err != nil {
 		return nil, err
@@ -55,45 +59,87 @@ func (s *GateService) ScanQR(ctx context.Context, scannerUserID uuid.UUID, req *
 
 	decoded, err := ticket.VerifyDynamicQR(req.QRData, t.OwnerUserID, t.QRSecretKey, now)
 	if err != nil || decoded != req.TicketID {
+		// INVALID — record attempt, no state change, no lock needed.
 		_ = s.repo.InsertScan(ctx, &ScanRecord{
-			ScannerUserID: &scannerUserID,
-			ID:            req.ScanID, TicketID: req.TicketID, GateID: req.GateID,
-			ScannerDeviceID: &req.ScannerDeviceID, ScanStatus: "INVALID",
-			ScanMethod: "QR", ScannedAt: now,
+			ScannerUserID:   &scannerUserID,
+			ID:              req.ScanID,
+			TicketID:        req.TicketID,
+			GateID:          req.GateID,
+			ScannerDeviceID: &req.ScannerDeviceID,
+			ScanStatus:      "INVALID",
+			ScanMethod:      "QR",
+			ScannedAt:       now,
 		})
 		return nil, ErrInvalidQR
 	}
 
-	switch t.Status {
+	// Phase 2: VALID path — transactional + row-lock to serialize concurrent scans.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("gate: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	t2, err := s.repo.GetTicketByIDForUpdate(ctx, tx, req.TicketID)
+	if err != nil {
+		return nil, err
+	}
+
+	switch t2.Status {
 	case "USED":
-		_ = s.repo.InsertScan(ctx, &ScanRecord{
-			ScannerUserID: &scannerUserID,
-			ID:            req.ScanID, TicketID: req.TicketID, GateID: req.GateID,
-			ScannerDeviceID: &req.ScannerDeviceID, ScanStatus: "ALREADY_USED",
-			ScanMethod: "QR", ScannedAt: now,
-		})
-		return nil, ErrAlreadyUsed
-	case "CONFIRMED":
-		if err := s.repo.InsertScan(ctx, &ScanRecord{
-			ScannerUserID: &scannerUserID,
-			ID:            req.ScanID, TicketID: req.TicketID, GateID: req.GateID,
-			ScannerDeviceID: &req.ScannerDeviceID, ScanStatus: "VALID",
-			ScanMethod: "QR", ScannedAt: now,
+		if _, err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
+			ScannerUserID:   &scannerUserID,
+			ID:              req.ScanID,
+			TicketID:        req.TicketID,
+			GateID:          req.GateID,
+			ScannerDeviceID: &req.ScannerDeviceID,
+			ScanStatus:      "ALREADY_USED",
+			ScanMethod:      "QR",
+			ScannedAt:       now,
 		}); err != nil {
 			return nil, fmt.Errorf("gate: insert scan: %w", err)
 		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("gate: commit: %w", err)
+		}
+		return nil, ErrAlreadyUsed
+	case "CONFIRMED":
+		if _, err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
+			ScannerUserID:   &scannerUserID,
+			ID:              req.ScanID,
+			TicketID:        req.TicketID,
+			GateID:          req.GateID,
+			ScannerDeviceID: &req.ScannerDeviceID,
+			ScanStatus:      "VALID",
+			ScanMethod:      "QR",
+			ScannedAt:       now,
+		}); err != nil {
+			return nil, fmt.Errorf("gate: insert scan: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("gate: commit: %w", err)
+		}
 		return &ScanResult{
-			Valid: true, TicketID: req.TicketID, OwnerName: t.OwnerName,
-			Seat:   fmt.Sprintf("%s - %d", t.SectionName, t.SeatPos),
+			Valid: true, TicketID: req.TicketID, OwnerName: t2.OwnerName,
+			Seat:   fmt.Sprintf("%s - %d", t2.SectionName, t2.SeatPos),
 			Status: "USED", ScannedAt: now,
 		}, nil
 	default:
-		_ = s.repo.InsertScan(ctx, &ScanRecord{
-			ScannerUserID: &scannerUserID,
-			ID:            req.ScanID, TicketID: req.TicketID, GateID: req.GateID,
-			ScannerDeviceID: &req.ScannerDeviceID, ScanStatus: "INVALID",
-			ScanMethod: "QR", ScannedAt: now,
-		})
+		if _, err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
+			ScannerUserID:   &scannerUserID,
+			ID:              req.ScanID,
+			TicketID:        req.TicketID,
+			GateID:          req.GateID,
+			ScannerDeviceID: &req.ScannerDeviceID,
+			ScanStatus:      "INVALID",
+			ScanMethod:      "QR",
+			ScannedAt:       now,
+		}); err != nil {
+			return nil, fmt.Errorf("gate: insert scan: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("gate: commit: %w", err)
+		}
 		return nil, ErrTicketNotActive
 	}
 }
