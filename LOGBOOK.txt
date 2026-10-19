@@ -1467,3 +1467,58 @@ DEFERRED:
 ================================================================================
 END OF FASE 6 CLOSED
 ================================================================================
+
+================================================================================
+## FASE 6 — VERIFY BLOCK BUG #9 (Heredoc Quoting) — addendum 2026-10-20
+================================================================================
+
+Konteks: while appending TD-F6-10..13 to docs/TECHNICAL DEBT.txt,
+Reviewer (DeepSeek) wrote:
+  `cat >> docs/TECHNICAL DEBT.txt << 'EOF'`
+Path ada space, TIDAK di-quote. Bash parsed `>> docs/TECHNICAL` as redirect
+target (created empty file), `DEBT.txt` as arg ke cat → "No such file".
+
+Impact: TD append gagal silent (file docs/TECHNICAL empty created,
+real DEBT.txt unchanged). Verify grep output misleading (grep'd
+"docs/TECHNICAL" → 0, expected 4). User detected anomaly.
+
+Fix: Same command with quoted path `cat >> "docs/TECHNICAL DEBT.txt" << 'EOF'`.
+Re-run → TD count 46→50, FASE 6 count 0→4, verify grep PASS.
+
+### Verify Block Bug Tally (final: 9 bugs)
+
+Command-level (6):
+1. PASS_COUNT=$? (grep exit code not count)
+2. cd /path with space unquoted
+3. Missing `export TEST_DB_URL` in verify block
+4. Missing `-v` flag on go test
+5. `$?` after pipe = last cmd (head), bukan go test
+6. **`cat >> path with space` unquoted heredoc target** (bug #9)
+
+Prompt-design-level (3):
+7. Assumed single root cause (trigger + assertion 2-bug masking)
+8. Diagnostic block missing actual test error message capture
+9. Fix prompt missing STAGE 5.5 "if gate fail → capture diagnostic, DO NOT proceed"
+
+### NEW RULE (mandatory)
+
+Rule V4 (path quoting): Every shell command referencing a path with
+whitespace MUST quote the path:
+  - cat >> "path with space" << EOF
+  - git add "path with space"
+  - cd "path with space"
+  - grep pattern "path with space"
+  - psql "$DB_URL" (URL no space but always quote anyway)
+
+Rule V5 (verify 3-pilar): Verify block with pass/fail must include:
+  (a) `VAR=$(cmd 2>&1 | grep -c ...)` for count — NEVER `$?` after pipe
+  (b) `export TEST_DB_URL` explicit for integration
+  (c) `-v` flag on go test — always
+  (d) exit code via `${PIPESTATUS[0]}` if needed
+
+Rule V6 (fix-first reproduce): Before writing fix prompt for bug,
+reproduce manually with raw output. Do NOT trust diagnosis alone (R3).
+
+================================================================================
+END OF BUG #9 ADDENDUM
+================================================================================
