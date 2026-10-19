@@ -152,7 +152,7 @@ func main() {
 	ticketHandler := ticket.NewTicketHandler(ticketSvc)
 
 	gateRepo := gate.NewPostgresGateRepository(pgPool)
-	gateSvc := gate.NewGateService(gateRepo)
+	gateSvc := gate.NewGateService(gateRepo, pgPool)
 	gateHandler := gate.NewGateHandler(gateSvc)
 
 	ticketNotifier := notification.NewLogTicketNotification(logger)

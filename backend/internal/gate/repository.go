@@ -51,8 +51,15 @@ type GateRepository interface {
 	// ErrTicketNotFound when no match.
 	GetTicketByFallbackPIN(ctx context.Context, pin string) (*TicketLookup, error)
 
+	// GetTicketByFallbackPINForUpdate is the row-locked variant (TD-F6-01).
+	GetTicketByFallbackPINForUpdate(ctx context.Context, tx pgx.Tx, pin string) (*TicketLookup, error)
+
 	// InsertScan writes a ticket_scans row (idempotent via PK conflict no-op).
 	InsertScan(ctx context.Context, scan *ScanRecord) error
+
+	// InsertScanTx is the tx-aware variant for atomic scan + status update
+	// (VerifyPIN path). TD-F6-01.
+	InsertScanTx(ctx context.Context, tx pgx.Tx, scan *ScanRecord) error
 
 	// UpdateTicketStatus marks a ticket as USED (used only on VALID scans
 	// that reach the trigger path; kept explicit for offline sync).
@@ -130,6 +137,20 @@ func (r *PostgresGateRepository) GetTicketByFallbackPIN(ctx context.Context, pin
 	return tl, nil
 }
 
+// GetTicketByFallbackPINForUpdate is the row-locked variant (TD-F6-01).
+func (r *PostgresGateRepository) GetTicketByFallbackPINForUpdate(ctx context.Context, tx pgx.Tx, pin string) (*TicketLookup, error) {
+	row := tx.QueryRow(ctx, ticketLookupSQL+
+		` WHERE t.fallback_pin = $1 AND t.status::text = 'CONFIRMED' FOR UPDATE`, pin)
+	tl, err := scanTicketLookup(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTicketNotFound
+		}
+		return nil, fmt.Errorf("gate: get ticket by pin for update: %w", err)
+	}
+	return tl, nil
+}
+
 // InsertScan writes a ticket_scans row (idempotent via PK conflict no-op).
 func (r *PostgresGateRepository) InsertScan(ctx context.Context, scan *ScanRecord) error {
 	_, err := r.pool.Exec(ctx, `
@@ -143,6 +164,23 @@ func (r *PostgresGateRepository) InsertScan(ctx context.Context, scan *ScanRecor
 	)
 	if err != nil {
 		return fmt.Errorf("gate: insert scan: %w", err)
+	}
+	return nil
+}
+
+// InsertScanTx is the tx-aware InsertScan variant for atomic paths (VerifyPIN).
+func (r *PostgresGateRepository) InsertScanTx(ctx context.Context, tx pgx.Tx, scan *ScanRecord) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO ticket_scans (
+			id, ticket_id, gate_id, scanner_device_id, scanner_user_id,
+			scan_status, scan_method, scanned_at, ip_address
+		) VALUES ($1,$2,$3,$4,$5,$6::scan_status_enum,$7,$8,$9)
+		ON CONFLICT (id) DO NOTHING`,
+		scan.ID, scan.TicketID, scan.GateID, scan.ScannerDeviceID, scan.ScannerUserID,
+		scan.ScanStatus, scan.ScanMethod, scan.ScannedAt, scan.IPAddress,
+	)
+	if err != nil {
+		return fmt.Errorf("gate: insert scan (tx): %w", err)
 	}
 	return nil
 }
