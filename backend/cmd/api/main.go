@@ -18,6 +18,7 @@ import (
 	"github.com/LittleMardiah/E-Tix/backend/internal/config"
 	"github.com/LittleMardiah/E-Tix/backend/internal/db"
 	"github.com/LittleMardiah/E-Tix/backend/internal/event"
+	"github.com/LittleMardiah/E-Tix/backend/internal/gate"
 	"github.com/LittleMardiah/E-Tix/backend/internal/middleware"
 	"github.com/LittleMardiah/E-Tix/backend/internal/notification"
 	"github.com/LittleMardiah/E-Tix/backend/internal/payment"
@@ -150,6 +151,10 @@ func main() {
 	ticketSvc := ticket.NewTicketService(ticketRepo, redis.NewQRStore(rdb.Client), pgPool)
 	ticketHandler := ticket.NewTicketHandler(ticketSvc)
 
+	gateRepo := gate.NewPostgresGateRepository(pgPool)
+	gateSvc := gate.NewGateService(gateRepo)
+	gateHandler := gate.NewGateHandler(gateSvc)
+
 	ticketNotifier := notification.NewLogTicketNotification(logger)
 	ticketNotifyWorker := worker.NewTicketNotificationWorker(pgPool, ticketNotifier, rdb, logger, 0)
 	qrRegenWorker := worker.NewQRRegenerationWorker(pgPool, rdb, logger, 0)
@@ -258,6 +263,11 @@ func main() {
 		auth.AuthMiddleware(jwtSvc, blacklistSvc),
 		auth.RateLimitMiddlewareScoped(rdb, 30, time.Minute, auth.RateLimitScopeUser),
 		ticketHandler.Assign)
+	router.POST("/gate/scan-qr",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RBACMiddleware("gate_staff"),
+		auth.RateLimitMiddlewareScoped(rdb, 180, time.Minute, auth.RateLimitScopeUser),
+		gateHandler.ScanQR)
 
 	router.GET("/events",
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
