@@ -1,0 +1,87 @@
+package worker
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/zap"
+
+	"github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
+	"github.com/LittleMardiah/E-Tix/backend/internal/resale"
+)
+
+type PayoutWorker struct {
+	pool *pgxpool.Pool
+	repo resale.ResaleRepository
+	gw   adapter.PaymentGateway
+	log  *zap.Logger
+}
+
+func NewPayoutWorker(pool *pgxpool.Pool, repo resale.ResaleRepository, gw adapter.PaymentGateway, log *zap.Logger) *PayoutWorker {
+	return &PayoutWorker{pool: pool, repo: repo, gw: gw, log: log}
+}
+
+func (w *PayoutWorker) Handle(ctx context.Context, body []byte) error {
+	var p resale.PayoutPayload
+	if err := json.Unmarshal(body, &p); err != nil {
+		w.log.Error("payout: bad payload", zap.Error(err))
+		return nil
+	}
+
+	var lastErr error
+	var payoutResp *adapter.PayoutResponse
+	for attempt := 1; attempt <= 3; attempt++ {
+		// FIX #14: PayoutRequest{RecipientID, Amount} — 2 fields only
+		resp, err := w.gw.Payout(ctx, adapter.PayoutRequest{
+			RecipientID: p.SellerUserID.String(),
+			Amount:      p.SellerPayout,
+		})
+		if err == nil {
+			payoutResp = resp
+			break
+		}
+		lastErr = err
+		w.log.Warn("payout: retry", zap.Int("attempt", attempt), zap.Error(err))
+		if attempt < 3 {
+			time.Sleep(time.Duration(100<<attempt) * time.Millisecond)
+		}
+	}
+
+	tx, err := w.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if payoutResp != nil {
+		if e := w.repo.UpdateStatus(ctx, tx, p.ResaleID, "COMPLETED"); e != nil {
+			return e
+		}
+		_, _ = tx.Exec(ctx,
+			`UPDATE resale_transactions SET payout_transaction_id=$1 WHERE id=$2`,
+			payoutResp.PayoutID, p.ResaleID)
+		if e := tx.Commit(ctx); e != nil {
+			return e
+		}
+		w.log.Info("payout: completed", zap.String("resale", p.ResaleID.String()))
+		return nil
+	}
+
+	// Retry exhausted -> PENDING_PAYOUT + admin_actions log
+	if e := w.repo.UpdateStatus(ctx, tx, p.ResaleID, "PENDING_PAYOUT"); e != nil {
+		return e
+	}
+	_, _ = tx.Exec(ctx, `
+		INSERT INTO admin_actions (admin_id, action_type, target_resource_type,
+			target_resource_id, description, reason)
+		VALUES ('00000000-0000-0000-0000-000000000000', 'MANUAL_REFUND',
+			'resale_transaction', $1, $2, 'PAYOUT_RETRY_EXHAUSTED')`,
+		p.ResaleID, "Payout retry 3x failed: "+lastErr.Error())
+	if e := tx.Commit(ctx); e != nil {
+		return e
+	}
+	w.log.Error("payout: exhausted", zap.String("resale", p.ResaleID.String()), zap.Error(lastErr))
+	return nil
+}
