@@ -612,7 +612,7 @@ Referensi: Fix-4 coverage report 2026-10-17.
 
 ID: TD-F6-01
 Tanggal: 2026-10-18
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-20)
 Prioritas: MEDIUM
 Deskripsi: verify-pin concurrency race — GetTicketByFallbackPIN tanpa FOR 
   UPDATE. Dua gate_staff scan PIN sama concurrent → kedua fetch OK → kedua 
@@ -645,4 +645,43 @@ Rencana Fix:
   - Tambah test: request tanpa role → 401; wrong role → 403; correct role → pass.
 Trigger: E2-B (langsung) + FASE 8 admin implementation.
 Referensi: E2-B audit 2026-10-18.
+
+
+---
+
+ID: TD-F6-03
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: VerifyPINRequest.TicketID (binding required) diabaikan oleh service — 
+  pakai t.ID dari PIN lookup. Client bisa kirim ticket_id ≠ PIN owner → silently 
+  ignored. API_CONTRACT §11.2 spec ticket_id = decorative.
+Root Cause: E3-A audit override-3 — pakai t.ID (authoritative) untuk scan record.
+Rencana Fix: E3-B handler/service validate req.TicketID == t.ID → 422 if 
+  mismatch. Atau make TicketID optional di model.
+Trigger: E3-B implementation.
+Referensi: E3-A' audit 2026-10-20.
+
+---
+
+ID: TD-F6-04
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Re-scan PIN return 404 NOT_FOUND, bukan 409 CONFLICT. Root cause: 
+  query GetTicketByFallbackPINForUpdate pakai WHERE status='CONFIRMED' → ticket 
+  USED di-filter out → ErrNoRows → NotFound. API_CONTRACT §11.2 expects 409 
+  (already used). ALREADY_USED branch defensive dead code (hanya fire kalau 
+  status=CONFIRMED + used=TRUE, data corruption edge). Analytics: ALREADY_USED 
+  tidak ter-record untuk normal re-scan.
+Root Cause: WHERE status='CONFIRMED' filter terlalu restrictive di ForUpdate 
+  query. Design intent "detect used PIN" butuh no status filter + Go-side check.
+Rencana Fix: Query tanpa status filter (WHERE fallback_pin=$1 FOR UPDATE). 
+  Service branch:
+    - t==nil → NotFound
+    - t.FallbackPINUsed OR t.Status=="USED" → AlreadyUsed (record scan + commit)
+    - t.Status != "CONFIRMED" → NotActive
+    - else valid
+Trigger: E3-B atau audit phase.
+Referensi: E3-A' audit 2026-10-20.
 
