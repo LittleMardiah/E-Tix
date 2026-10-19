@@ -651,7 +651,7 @@ Referensi: E2-B audit 2026-10-18.
 
 ID: TD-F6-03
 Tanggal: 2026-10-20
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-20)
 Prioritas: RENDAH
 Deskripsi: VerifyPINRequest.TicketID (binding required) diabaikan oleh service — 
   pakai t.ID dari PIN lookup. Client bisa kirim ticket_id ≠ PIN owner → silently 
@@ -666,7 +666,7 @@ Referensi: E3-A' audit 2026-10-20.
 
 ID: TD-F6-04
 Tanggal: 2026-10-20
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-20)
 Prioritas: MEDIUM
 Deskripsi: Re-scan PIN return 404 NOT_FOUND, bukan 409 CONFLICT. Root cause: 
   query GetTicketByFallbackPINForUpdate pakai WHERE status='CONFIRMED' → ticket 
@@ -684,4 +684,36 @@ Rencana Fix: Query tanpa status filter (WHERE fallback_pin=$1 FOR UPDATE).
     - else valid
 Trigger: E3-B atau audit phase.
 Referensi: E3-A' audit 2026-10-20.
+
+
+---
+
+ID: TD-F6-05
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: Error code INVALID_PIN (handler VerifyPIN → 401) tidak ada di 
+  API_CONTRACT §3.2 list. Client-side parsing bisa mismatch kalau spec 
+  doc di-update nanti. Body code = "INVALID_PIN", message = "invalid pin".
+Root Cause: Semantically correct (distinguish wrong PIN from wrong JWT) 
+  tapi contract gap.
+Rencana Fix: FASE 9 update API_CONTRACT §3.2 tambah INVALID_PIN, atau 
+  ganti ke UNAUTHORIZED (option).
+Trigger: FASE 9 doc polish.
+Referensi: E3-B audit 2026-10-20.
+
+---
+
+ID: TD-F6-06
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: RENDAH
+Deskripsi: Non-tx GateRepository.GetTicketByFallbackPIN (interface + impl) 
+  dead code — 0 callers setelah VerifyPIN refactor ke ForUpdate variant. 
+  Method masih di interface + impl tapi tidak dipanggil.
+Root Cause: E3-A' refactor tambah ForUpdate, non-tx tertinggal.
+Rencana Fix: Remove dari interface + impl (breaking internal only, no 
+  external caller). Atau keep sebagai convenience method.
+Trigger: FASE 9 hygiene atau saat refactor berikutnya.
+Referensi: E3-B audit 2026-10-20.
 
