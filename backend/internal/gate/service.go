@@ -22,6 +22,9 @@ var ErrAlreadyUsed = errors.New("gate: ticket already used")
 // ErrTicketNotActive is returned when the ticket is not in CONFIRMED status.
 var ErrTicketNotActive = errors.New("gate: ticket not active")
 
+// ErrTicketMismatch is returned when req.TicketID != PIN owner (TD-F6-03).
+var ErrTicketMismatch = errors.New("gate: ticket_id does not match pin owner")
+
 // TxBeginner abstracts the transaction opener for testability.
 type TxBeginner interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
@@ -108,7 +111,13 @@ func (s *GateService) VerifyPIN(ctx context.Context, scannerUserID uuid.UUID, re
 		return nil, err
 	}
 
-	if t.FallbackPINUsed {
+	// TD-F6-03: validate ticket_id matches PIN owner.
+	if req.TicketID != t.ID {
+		return nil, ErrTicketMismatch
+	}
+
+	// TD-F6-04: distinguish already-used (409) from not-active (422).
+	if t.FallbackPINUsed || t.Status == "USED" {
 		if err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
 			ScannerUserID: &scannerUserID,
 			ID:            req.ScanID, TicketID: t.ID, GateID: req.GateID,
@@ -121,6 +130,21 @@ func (s *GateService) VerifyPIN(ctx context.Context, scannerUserID uuid.UUID, re
 			return nil, fmt.Errorf("gate: commit: %w", err)
 		}
 		return nil, ErrAlreadyUsed
+	}
+
+	if t.Status != "CONFIRMED" {
+		if err := s.repo.InsertScanTx(ctx, tx, &ScanRecord{
+			ScannerUserID: &scannerUserID,
+			ID:            req.ScanID, TicketID: t.ID, GateID: req.GateID,
+			ScannerDeviceID: &req.ScannerDeviceID, ScanStatus: "INVALID",
+			ScanMethod: "PIN", ScannedAt: now,
+		}); err != nil {
+			return nil, fmt.Errorf("gate: insert scan: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("gate: commit: %w", err)
+		}
+		return nil, ErrTicketNotActive
 	}
 
 	if err := s.repo.UpdateTicketStatus(ctx, tx, t.ID, "USED"); err != nil {

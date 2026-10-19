@@ -139,8 +139,10 @@ func (r *PostgresGateRepository) GetTicketByFallbackPIN(ctx context.Context, pin
 
 // GetTicketByFallbackPINForUpdate is the row-locked variant (TD-F6-01).
 func (r *PostgresGateRepository) GetTicketByFallbackPINForUpdate(ctx context.Context, tx pgx.Tx, pin string) (*TicketLookup, error) {
+	// No status filter: allows service to distinguish 409 (already used) vs
+	// 422 (not active) per API_CONTRACT §11.2. See TD-F6-04.
 	row := tx.QueryRow(ctx, ticketLookupSQL+
-		` WHERE t.fallback_pin = $1 AND t.status::text = 'CONFIRMED' FOR UPDATE`, pin)
+		` WHERE t.fallback_pin = $1 FOR UPDATE`, pin)
 	tl, err := scanTicketLookup(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

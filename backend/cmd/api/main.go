@@ -268,6 +268,11 @@ func main() {
 		auth.RBACMiddleware("gate_staff"),
 		auth.RateLimitMiddlewareScoped(rdb, 180, time.Minute, auth.RateLimitScopeUser),
 		gateHandler.ScanQR)
+	router.POST("/gate/verify-pin",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RBACMiddleware("gate_staff"),
+		auth.RateLimitMiddlewareScoped(rdb, 180, time.Minute, auth.RateLimitScopeUser),
+		gateHandler.VerifyPIN)
 
 	router.GET("/events",
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),

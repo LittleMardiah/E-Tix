@@ -61,3 +61,39 @@ func (h *GateHandler) ScanQR(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result, "error": nil})
 }
+
+// VerifyPIN handles POST /gate/verify-pin.
+func (h *GateHandler) VerifyPIN(c *gin.Context) {
+	userIDStr := c.GetString("user_id")
+	scannerUserID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid user context")
+		return
+	}
+
+	var req VerifyPINRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid body")
+		return
+	}
+
+	result, err := h.svc.VerifyPIN(c.Request.Context(), scannerUserID, &req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTicketNotFound):
+			// Wrong PIN → spec §11.2 treats as 401 (invalid credential).
+			writeError(c, http.StatusUnauthorized, "INVALID_PIN", "invalid pin")
+		case errors.Is(err, ErrTicketMismatch):
+			writeError(c, http.StatusUnprocessableEntity, "UNPROCESSABLE_ENTITY", "ticket_id does not match pin owner")
+		case errors.Is(err, ErrAlreadyUsed):
+			writeError(c, http.StatusConflict, "CONFLICT", "ticket already used")
+		case errors.Is(err, ErrTicketNotActive):
+			writeError(c, http.StatusUnprocessableEntity, "UNPROCESSABLE_ENTITY", "ticket not active")
+		default:
+			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result, "error": nil})
+}
