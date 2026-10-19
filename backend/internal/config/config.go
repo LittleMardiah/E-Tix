@@ -106,7 +106,7 @@ func Load() (*Config, error) {
 		CircuitBreakerTimeout:     os.Getenv("CIRCUIT_BREAKER_TIMEOUT"),
 		CircuitBreakerMaxRequests: os.Getenv("CIRCUIT_BREAKER_MAX_REQUESTS"),
 
-		ResalePlatformFeeRate: os.Getenv("RESALE_PLATFORM_FEE_RATE"),
+		ResalePlatformFeeRate: getEnvOrDefault("RESALE_PLATFORM_FEE_RATE", "0.025"),
 		SystemUserUUID:        os.Getenv("SYSTEM_USER_UUID"),
 	}
 
@@ -137,4 +137,11 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

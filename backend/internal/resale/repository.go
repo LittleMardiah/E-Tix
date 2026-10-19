@@ -3,6 +3,7 @@ package resale
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -124,21 +125,28 @@ func (r *PostgresResaleRepository) ClearBuyer(ctx context.Context, tx pgx.Tx, id
 	return err
 }
 func (r *PostgresResaleRepository) UpdateStatus(ctx context.Context, tx pgx.Tx, id uuid.UUID, status string) error {
-	var extra string
+	var extra, guard string
 	switch status {
 	case "CANCELLED":
 		extra = ", cancelled_at=NOW()"
+		guard = " AND status::text='PENDING' AND buyer_user_id IS NULL"
 	case "COMPLETED":
 		extra = ", completed_at=NOW()"
+		guard = " AND status::text='PENDING'" // from any PENDING (seller-listed or reserved)
+	case "PENDING_PAYOUT":
+		extra = ""
+		guard = " AND status::text='PENDING'" // from PENDING
+	default:
+		return fmt.Errorf("resale.UpdateStatus: unexpected target status %q", status)
 	}
 	ct, err := tx.Exec(ctx,
-		`UPDATE resale_transactions SET status=$1, updated_at=NOW()`+extra+` WHERE id=$2`,
+		`UPDATE resale_transactions SET status=$1, updated_at=NOW()`+extra+` WHERE id=$2`+guard,
 		status, id)
 	if err != nil {
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return ErrResaleNotFound
+		return ErrResaleNotPending
 	}
 	return nil
 }

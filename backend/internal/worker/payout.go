@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"github.com/LittleMardiah/E-Tix/backend/internal/config"
 	"github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
 	"github.com/LittleMardiah/E-Tix/backend/internal/resale"
 )
@@ -17,10 +18,11 @@ type PayoutWorker struct {
 	repo resale.ResaleRepository
 	gw   adapter.PaymentGateway
 	log  *zap.Logger
+	cfg  *config.Config
 }
 
-func NewPayoutWorker(pool *pgxpool.Pool, repo resale.ResaleRepository, gw adapter.PaymentGateway, log *zap.Logger) *PayoutWorker {
-	return &PayoutWorker{pool: pool, repo: repo, gw: gw, log: log}
+func NewPayoutWorker(pool *pgxpool.Pool, repo resale.ResaleRepository, gw adapter.PaymentGateway, log *zap.Logger, cfg *config.Config) *PayoutWorker {
+	return &PayoutWorker{pool: pool, repo: repo, gw: gw, log: log, cfg: cfg}
 }
 
 func (w *PayoutWorker) Handle(ctx context.Context, body []byte) error {
@@ -76,9 +78,9 @@ func (w *PayoutWorker) Handle(ctx context.Context, body []byte) error {
 	_, _ = tx.Exec(ctx, `
 		INSERT INTO admin_actions (admin_id, action_type, target_resource_type,
 			target_resource_id, description, reason)
-		VALUES ('00000000-0000-0000-0000-000000000000', 'MANUAL_REFUND',
-			'resale_transaction', $1, $2, 'PAYOUT_RETRY_EXHAUSTED')`,
-		p.ResaleID, "Payout retry 3x failed: "+lastErr.Error())
+		VALUES ($1, 'MANUAL_REFUND',
+			'resale_transaction', $2, $3, 'PAYOUT_RETRY_EXHAUSTED')`,
+		w.cfg.SystemUserUUID, p.ResaleID, "Payout retry 3x failed: "+lastErr.Error())
 	if e := tx.Commit(ctx); e != nil {
 		return e
 	}

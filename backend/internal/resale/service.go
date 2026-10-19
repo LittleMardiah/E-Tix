@@ -129,6 +129,7 @@ func (s *ResaleService) BuyResaleTicket(ctx context.Context, buyerID uuid.UUID, 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	reservationExpiresAt := time.Now().Add(180 * time.Second)
 
 	// FIX #12: PublishDelayed(ctx, queueName string, payload []byte, delay time.Duration)
 	if s.queue != nil {
@@ -138,7 +139,7 @@ func (s *ResaleService) BuyResaleTicket(ctx context.Context, buyerID uuid.UUID, 
 
 	return &BuyResponse{
 		ResaleID: resaleID, Status: "RESERVED",
-		ReservationExpiresAt: rt.UpdatedAt.Add(180 * time.Second),
+		ReservationExpiresAt: reservationExpiresAt,
 		PaymentLink:          "https://payment.example.com/" + resaleID.String(),
 	}, nil
 }
