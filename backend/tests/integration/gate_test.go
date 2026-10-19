@@ -218,3 +218,29 @@ func TestIntegration_Gate_SyncConflict_DemotesPreviousWinner(t *testing.T) {
 	assert.Equal(t, "ALREADY_USED", statusA, "B1 regression: previous winner must be demoted")
 	assert.Equal(t, "VALID", statusB, "B1 regression: earlier scan wins")
 }
+
+// IT-GATE-003: Expired HMAC (>±30s tolerance) -> ErrInvalidQR.
+func TestIntegration_Gate_ScanQR_ExpiredHMAC(t *testing.T) {
+	env := setupGateEnv(t)
+	ctx := context.Background()
+	tid, owner, secret, _ := insertConfirmedTicket(t, env.pool)
+
+	// T-90s = 3 blocks back, beyond ±1 tolerance.
+	expired := time.Now().Add(-90 * time.Second)
+	qr, err := ticket.GenerateQRData(tid, owner, secret, expired)
+	require.NoError(t, err)
+
+	// scanner_user_id FK requires a real user; owner exists via insertFreshUser.
+	_, err = env.svc.ScanQR(ctx, owner, &gate.ScanQRRequest{
+		TicketID: tid, QRData: qr, GateID: "A",
+		ScannerDeviceID: uuid.New(), ScanID: uuid.New(),
+	})
+	assert.ErrorIs(t, err, gate.ErrInvalidQR)
+
+	var n int
+	err = env.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM ticket_scans WHERE ticket_id=$1 AND scan_status::text='INVALID'`,
+		tid).Scan(&n)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+}
