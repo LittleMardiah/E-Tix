@@ -882,3 +882,33 @@ Rencana Fix: Unit test with fake Consumer channel + ctx cancel + assert idempote
 Trigger: FASE 9.
 Referensi: ROADMAP FASE 7 E9-S1-T19 (extend).
 
+
+---
+
+ID: TD-F8-01
+Tanggal: 2026-10-21
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: BulkCancelWorker.Run = ticker stub, not consumer loop. Actual consumption
+  via queueConn.Consume("admin_bulk_cancel") NOT wired in main.go (P8h wire pending).
+Rencana Fix: Add queue consumer loop in Run(ctx) reading from Connection.Consume.
+Trigger: FASE 9 integration test.
+Referensi: P8g-b bulk_cancel.go, FASE 7 PayoutWorker pattern reference.
+
+ID: TD-F8-02
+Tanggal: 2026-10-21
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: ForceRelease Redis key uses eventIDPlaceholder (returns "") — section
+  event_id not fetched. Bitmap release may target wrong key. Need GetEventIDBySection.
+Rencana Fix: Add repo.GetSectionEventID(ctx, sectionID) and use it in ForceRelease.
+Trigger: FASE 9 integration test.
+Referensi: P8g-a service.go ForceRelease, TD-F7-05 pattern.
+
+ID: TD-F8-03
+Tanggal: 2026-10-21
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Extended test coverage (30 ROADMAP FASE 8 E10 tasks) — only 1 sentinel test baseline.
+Rencana Fix: FASE 9 full STP sweep.
+Trigger: FASE 9.

@@ -261,11 +261,113 @@ func (r *PostgresAdminRepository) InsertAdminAction(ctx context.Context, tx pgx.
 	}
 	return id, nil
 }
-func (r *PostgresAdminRepository) ListLedgerEntries(_ context.Context, _, _, _ string, _, _ int) ([]LedgerEntry, int, error) {
-	return nil, 0, errors.New("admin.ListLedgerEntries: not implemented (E4)")
+func (r *PostgresAdminRepository) ListLedgerEntries(ctx context.Context, dateFrom, dateTo, statusFilter string, page, limit int) ([]LedgerEntry, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+	offset := (page - 1) * limit
+	if dateFrom == "" {
+		dateFrom = "1970-01-01"
+	}
+	if dateTo == "" {
+		dateTo = "2100-01-01"
+	}
+
+	union := `
+		WITH all_entries AS (
+			SELECT po.id AS event_id, 'PAYMENT_' || po.status::text AS event_type,
+			       'payment_obligation' AS reference_type, po.id AS reference_id,
+			       po.booking_id, po.user_id, po.amount::text AS amount,
+			       po.status::text AS status, po.external_transaction_id AS gateway_tx_id,
+			       NULL::uuid AS admin_id, (po.status::text = 'PAID') AS reconciled,
+			       po.created_at
+			FROM payment_obligations po
+			WHERE po.created_at >= $1::date AND po.created_at < ($2::date + INTERVAL '1 day')
+			UNION ALL
+			SELECT rt.id, 'RESALE_' || rt.status::text, 'resale_transaction', rt.id,
+			       NULL::uuid, rt.buyer_user_id, rt.resale_price::text, rt.status::text,
+			       rt.payment_transaction_id, NULL::uuid, (rt.status::text = 'COMPLETED'), rt.created_at
+			FROM resale_transactions rt
+			WHERE rt.created_at >= $1::date AND rt.created_at < ($2::date + INTERVAL '1 day')
+			UNION ALL
+			SELECT aa.id, 'ADMIN_' || aa.action_type::text, 'admin_action', aa.id,
+			       NULL::uuid, aa.target_user_id, '0'::text, 'PROCESSED'::text,
+			       aa.target_resource_id::text, aa.admin_id, TRUE, aa.created_at
+			FROM admin_actions aa
+			WHERE aa.created_at >= $1::date AND aa.created_at < ($2::date + INTERVAL '1 day')
+		)
+		SELECT event_id, event_type, reference_type, reference_id,
+		       booking_id, user_id, amount, status, gateway_tx_id,
+		       admin_id, reconciled, created_at
+		FROM all_entries
+		WHERE ($3 = '' OR status = $3)
+		ORDER BY created_at DESC LIMIT $4 OFFSET $5`
+
+	rows, err := r.pool.Query(ctx, union, dateFrom, dateTo, statusFilter, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var entries []LedgerEntry
+	for rows.Next() {
+		var e LedgerEntry
+		if err := rows.Scan(&e.EventID, &e.EventType, &e.ReferenceType, &e.ReferenceID,
+			&e.BookingID, &e.UserID, &e.Amount, &e.Status, &e.GatewayTransactionID,
+			&e.AdminID, &e.Reconciled, &e.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	countSQL := `
+		WITH all_entries AS (
+			SELECT status::text AS status, created_at FROM payment_obligations
+			WHERE created_at >= $1::date AND created_at < ($2::date + INTERVAL '1 day')
+			UNION ALL
+			SELECT status::text, created_at FROM resale_transactions
+			WHERE created_at >= $1::date AND created_at < ($2::date + INTERVAL '1 day')
+			UNION ALL
+			SELECT 'PROCESSED'::text, created_at FROM admin_actions
+			WHERE created_at >= $1::date AND created_at < ($2::date + INTERVAL '1 day')
+		)
+		SELECT COUNT(*) FROM all_entries WHERE ($3 = '' OR status = $3)`
+	var total int
+	if err := r.pool.QueryRow(ctx, countSQL, dateFrom, dateTo, statusFilter).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	return entries, total, nil
 }
-func (r *PostgresAdminRepository) ComputeLedgerSummary(_ context.Context, _, _, _ string) (*LedgerSummary, error) {
-	return nil, errors.New("admin.ComputeLedgerSummary: not implemented (E4)")
+func (r *PostgresAdminRepository) ComputeLedgerSummary(ctx context.Context, dateFrom, dateTo, _ string) (*LedgerSummary, error) {
+	if dateFrom == "" {
+		dateFrom = "1970-01-01"
+	}
+	if dateTo == "" {
+		dateTo = "2100-01-01"
+	}
+	var s LedgerSummary
+	err := r.pool.QueryRow(ctx, `
+		WITH po AS (
+			SELECT status::text AS status, amount::text AS amount, created_at
+			FROM payment_obligations
+			WHERE created_at >= $1::date AND created_at < ($2::date + INTERVAL '1 day')
+		)
+		SELECT
+			COALESCE(SUM(amount::numeric) FILTER (WHERE status = 'PAID'), 0)::text,
+			COALESCE(SUM(amount::numeric) FILTER (WHERE status = 'PENDING'), 0)::text,
+			COALESCE(SUM(amount::numeric) FILTER (WHERE status = 'REFUNDED'), 0)::text,
+			COUNT(*) FILTER (WHERE status = 'PENDING' AND created_at < NOW() - INTERVAL '10 minutes')
+		FROM po`, dateFrom, dateTo).Scan(&s.TotalPaid, &s.TotalPending, &s.TotalRefunded, &s.UnreconciledCount)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 func (r *PostgresAdminRepository) GetPaymentObligationForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*LedgerEntry, error) {
 	var (
@@ -316,14 +418,79 @@ func (r *PostgresAdminRepository) UpdatePaymentObligationRefunded(ctx context.Co
 	}
 	return nil
 }
-func (r *PostgresAdminRepository) ListStuckLocks(_ context.Context) ([]StuckLock, error) {
-	return nil, errors.New("admin.ListStuckLocks: not implemented (E6)")
+func (r *PostgresAdminRepository) ListStuckLocks(ctx context.Context) ([]StuckLock, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT b.id, b.section_id, s.name, b.seat_positions, b.expires_at
+		FROM bookings b JOIN sections s ON s.id = b.section_id
+		WHERE b.payment_status::text = 'PENDING'
+		  AND b.expires_at < NOW() - INTERVAL '10 minutes'
+		ORDER BY b.expires_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var locks []StuckLock
+	for rows.Next() {
+		var (
+			sl        StuckLock
+			seatRaw   []byte
+			expiresAt time.Time
+		)
+		if err := rows.Scan(&sl.BookingID, &sl.SectionID, &sl.SectionName, &seatRaw, &expiresAt); err != nil {
+			return nil, err
+		}
+		var seats []int
+		if err := json.Unmarshal(seatRaw, &seats); err != nil {
+			return nil, err
+		}
+		sl.SeatPositions = seats
+		sl.LockedSince = expiresAt.Add(-3 * time.Minute)
+		sl.DurationMinutes = int(time.Since(sl.LockedSince).Minutes())
+		sl.Status = "STUCK"
+		locks = append(locks, sl)
+	}
+	return locks, rows.Err()
 }
-func (r *PostgresAdminRepository) GetBookingForUpdate(_ context.Context, _ pgx.Tx, _ uuid.UUID) (*StuckLock, error) {
-	return nil, errors.New("admin.GetBookingForUpdate: not implemented (E6)")
+func (r *PostgresAdminRepository) GetBookingForUpdate(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) (*StuckLock, error) {
+	var (
+		sl        StuckLock
+		seatRaw   []byte
+		expiresAt time.Time
+	)
+	err := tx.QueryRow(ctx, `
+		SELECT b.id, b.section_id, s.name, b.seat_positions, b.expires_at
+		FROM bookings b JOIN sections s ON s.id = b.section_id
+		WHERE b.id = $1 FOR UPDATE OF b`, bookingID).Scan(
+		&sl.BookingID, &sl.SectionID, &sl.SectionName, &seatRaw, &expiresAt)
+	if err == pgx.ErrNoRows {
+		return nil, ErrAdminNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var seats []int
+	if err := json.Unmarshal(seatRaw, &seats); err != nil {
+		return nil, err
+	}
+	sl.SeatPositions = seats
+	sl.LockedSince = expiresAt.Add(-3 * time.Minute)
+	sl.DurationMinutes = int(time.Since(sl.LockedSince).Minutes())
+	sl.Status = "STUCK"
+	return &sl, nil
 }
-func (r *PostgresAdminRepository) UpdateBookingCancelled(_ context.Context, _ pgx.Tx, _ uuid.UUID) error {
-	return errors.New("admin.UpdateBookingCancelled: not implemented (E6)")
+func (r *PostgresAdminRepository) UpdateBookingCancelled(ctx context.Context, tx pgx.Tx, bookingID uuid.UUID) error {
+	// Trigger handle_booking_cancellation auto-CANCELLED tickets.
+	// Redis release handled in service.go (P8g), NOT here.
+	ct, err := tx.Exec(ctx, `
+		UPDATE bookings SET payment_status = 'CANCELLED', updated_at = NOW()
+		WHERE id = $1 AND payment_status::text = 'PENDING'`, bookingID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrAdminConflict
+	}
+	return nil
 }
 func (r *PostgresAdminRepository) CountCancellableTickets(ctx context.Context, eventID uuid.UUID) (int, error) {
 	var count int

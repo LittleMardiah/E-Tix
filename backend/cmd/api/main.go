@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/LittleMardiah/E-Tix/backend/internal/admin"
 	"github.com/LittleMardiah/E-Tix/backend/internal/analytics"
 	"github.com/LittleMardiah/E-Tix/backend/internal/auth"
 	"github.com/LittleMardiah/E-Tix/backend/internal/booking"
@@ -199,6 +200,15 @@ func main() {
 	catalogSvc := event.NewEventService(catalogRepo)
 	catalogHandler := event.NewEventHandler(catalogSvc)
 
+	// FASE 8 P8h: admin module wire
+	adminRepo := admin.NewPostgresAdminRepository(pgPool)
+	adminSvc := admin.NewAdminService(adminRepo, pgPool, rdb.Client, paymentGateway, mq, logger, systemUserUUID)
+	adminH := admin.NewAdminHandler(adminSvc)
+	admin2fa := admin.NewTwoFAService("E-Tix Flash")
+	admin2faMiddleware := admin.Admin2FAMiddleware(rdb.Client, admin2fa, logger)
+	bulkCancelWorker := worker.NewBulkCancelWorker(pgPool, rdb.Client, paymentGateway, logger)
+	_ = bulkCancelWorker
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -375,6 +385,25 @@ func main() {
 		auth.RateLimitMiddlewareScoped(rdb, 10, time.Minute, auth.RateLimitScopeUser),
 		resale.IdempotencyMiddleware(rdb, 24*time.Hour),
 		resaleHandler.Cancel)
+
+	// FASE 8 P8h: admin routes (11 endpoints, API_CONTRACT §14)
+	adminGroup := router.Group("/admin")
+	adminGroup.Use(auth.AuthMiddleware(jwtSvc, blacklistSvc))
+	adminGroup.Use(auth.RBACMiddleware("admin", "event_organizer"))
+	adminGroup.Use(auth.RateLimitMiddlewareScoped(rdb, 30, time.Minute, auth.RateLimitScopeUser))
+	{
+		adminGroup.POST("/events/:event_id/bulk-cancel", admin2faMiddleware, adminH.BulkCancel)
+		adminGroup.GET("/ledger", adminH.GetLedger)
+		adminGroup.POST("/ledger/reverse", admin2faMiddleware, adminH.ManualReverse)
+		adminGroup.GET("/stuck-locks", adminH.GetStuckLocks)
+		adminGroup.POST("/force-release", admin2faMiddleware, adminH.ForceRelease)
+		adminGroup.GET("/users", adminH.ListUsers)
+		adminGroup.PATCH("/users/:user_id/suspend", admin2faMiddleware, adminH.SuspendUser)
+		adminGroup.PATCH("/users/:user_id/unsuspend", admin2faMiddleware, adminH.UnsuspendUser)
+		adminGroup.GET("/blacklist", adminH.ListBlacklist)
+		adminGroup.POST("/blacklist", adminH.AddBlacklist)
+		adminGroup.DELETE("/blacklist/:id", adminH.RemoveBlacklist)
+	}
 
 	addr := ":" + port
 	go func() {

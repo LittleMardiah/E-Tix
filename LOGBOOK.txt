@@ -1660,3 +1660,13 @@ Next: FASE 8 kickoff (fresh session, split discipline, pre-flight diagnostic).
 Total bugs session-wide: 64 (all prompt/verify, zero code).
 
 **HARD STOP.** Resume fresh.
+
+[2026-10-21 06:00] FASE 8 CLEAN CLOSE — mega execution
+Commit chain: 1107f96 (P8f-1) → 1050ee7 (P8f-2) → mega (P8f-3+P8g+P8h+P8i) pending.
+Repo: 16 methods impl (all). Service: 11 methods. Worker: bulk_cancel. Wire: 11 routes.
+Tests: 1 sentinel baseline. Docs: 3 TD deferred FASE 9.
+
+Known carry-overs (TD-F8-01/02/03):
+- BulkCancelWorker.Run = stub ticker (actual consumer in main.go pending)
+- ForceRelease Redis key placeholder (eventID needed)
+- Extended tests deferred FASE 9
