@@ -31,6 +31,8 @@ type ResaleRepository interface {
 	ClearBuyer(ctx context.Context, tx pgx.Tx, id uuid.UUID) error
 	UpdateStatus(ctx context.Context, tx pgx.Tx, id uuid.UUID, status string) error
 	HasActiveListing(ctx context.Context, ticketID uuid.UUID) (bool, error)
+	SetPaymentTransactionID(ctx context.Context, id uuid.UUID, txID string) error
+	GetByPaymentTransactionID(ctx context.Context, txID string) (*ResaleTransaction, error)
 	TicketInfoForResale(ctx context.Context, ticketID uuid.UUID) (*TicketForResale, error)
 }
 
@@ -166,6 +168,36 @@ func (r *PostgresResaleRepository) HasActiveListing(ctx context.Context, ticketI
 		ticketID).Scan(&exists)
 	return exists, err
 }
+func (r *PostgresResaleRepository) SetPaymentTransactionID(ctx context.Context, id uuid.UUID, txID string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE resale_transactions SET payment_transaction_id=$1, updated_at=NOW() WHERE id=$2`,
+		txID, id)
+	return err
+}
+
+// GetByPaymentTransactionID looks up a resale row by gateway transaction id.
+// Used by the webhook handler to detect resale payment SUCCESS (S5-1).
+func (r *PostgresResaleRepository) GetByPaymentTransactionID(ctx context.Context, txID string) (*ResaleTransaction, error) {
+	var rt ResaleTransaction
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, ticket_id, event_id, seller_user_id, buyer_user_id,
+		       original_price::text, resale_price::text, platform_fee::text, seller_payout::text,
+		       status::text, payment_transaction_id, payout_transaction_id,
+		       created_at, completed_at, cancelled_at, updated_at
+		FROM resale_transactions WHERE payment_transaction_id = $1`, txID).Scan(
+		&rt.ID, &rt.TicketID, &rt.EventID, &rt.SellerUserID, &rt.BuyerUserID,
+		&rt.OriginalPrice, &rt.ResalePrice, &rt.PlatformFee, &rt.SellerPayout,
+		&rt.Status, &rt.PaymentTransactionID, &rt.PayoutTransactionID,
+		&rt.CreatedAt, &rt.CompletedAt, &rt.CancelledAt, &rt.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, ErrResaleNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &rt, nil
+}
+
 func (r *PostgresResaleRepository) TicketInfoForResale(ctx context.Context, ticketID uuid.UUID) (*TicketForResale, error) {
 	var t TicketForResale
 	err := r.pool.QueryRow(ctx, `

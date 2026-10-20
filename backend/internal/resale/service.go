@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
 	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
 )
 
@@ -19,12 +20,13 @@ type TxBeginner interface {
 type ResaleService struct {
 	repo    ResaleRepository
 	db      TxBeginner
-	queue   *queue.Connection // FIX #13: actual type from publisher.go:10
+	queue   *queue.Connection      // FIX #13: actual type from publisher.go:10
+	gw      adapter.PaymentGateway // P3: BuyResaleTicket payment init (S5-1)
 	feeRate string
 }
 
-func NewResaleService(repo ResaleRepository, db TxBeginner, q *queue.Connection, feeRate string) *ResaleService {
-	return &ResaleService{repo: repo, db: db, queue: q, feeRate: feeRate}
+func NewResaleService(repo ResaleRepository, db TxBeginner, q *queue.Connection, gw adapter.PaymentGateway, feeRate string) *ResaleService {
+	return &ResaleService{repo: repo, db: db, queue: q, gw: gw, feeRate: feeRate}
 }
 
 // Stubs so E1 handler skeleton compiles. E2..E5 replace each one.
@@ -131,6 +133,33 @@ func (s *ResaleService) BuyResaleTicket(ctx context.Context, buyerID uuid.UUID, 
 	}
 	reservationExpiresAt := time.Now().Add(180 * time.Second)
 
+	// P3 (S5-1): initiate real gateway payment + persist transaction id.
+	// Reference namespace "resale:" distinguishes from booking references.
+	// Adapter uses BookingID field as the gateway reference slot (see InitiateRequest).
+	var paymentLink string
+	if s.gw != nil {
+		resp, gwErr := s.gw.Initiate(ctx, adapter.InitiateRequest{
+			UserID:    buyerID.String(),
+			BookingID: "resale:" + resaleID.String(),
+			Amount:    rt.ResalePrice,
+		})
+		if gwErr != nil {
+			// Payment init failed: release reservation so buyer may retry cleanly.
+			if rtx, e := s.db.Begin(ctx); e == nil {
+				_ = s.repo.ClearBuyer(ctx, rtx, resaleID)
+				_ = rtx.Commit(ctx)
+			}
+			return nil, gwErr
+		}
+		paymentLink = resp.PaymentLink
+		if err := s.repo.SetPaymentTransactionID(ctx, resaleID, resp.TransactionID); err != nil {
+			return nil, err
+		}
+	}
+	if paymentLink == "" {
+		paymentLink = "https://payment.example.com/" + resaleID.String() // fallback stub (gw nil)
+	}
+
 	// FIX #12: PublishDelayed(ctx, queueName string, payload []byte, delay time.Duration)
 	if s.queue != nil {
 		body, _ := json.Marshal(ResaleExpiryPayload{ResaleID: resaleID})
@@ -140,7 +169,7 @@ func (s *ResaleService) BuyResaleTicket(ctx context.Context, buyerID uuid.UUID, 
 	return &BuyResponse{
 		ResaleID: resaleID, Status: "RESERVED",
 		ReservationExpiresAt: reservationExpiresAt,
-		PaymentLink:          "https://payment.example.com/" + resaleID.String(),
+		PaymentLink:          paymentLink,
 	}, nil
 }
 func (s *ResaleService) Cancel(ctx context.Context, sellerID uuid.UUID, resaleID uuid.UUID) (*CancelResponse, error) {
