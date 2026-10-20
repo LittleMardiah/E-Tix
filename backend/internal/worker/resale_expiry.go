@@ -51,13 +51,13 @@ func (w *ResaleExpiryWorker) Handle(ctx context.Context, body []byte) error {
 	return nil
 }
 
-func (w *ResaleExpiryWorker) Start(ctx context.Context) {
+func (w *ResaleExpiryWorker) Run(ctx context.Context) error {
 	tick := time.NewTicker(60 * time.Second)
 	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-tick.C:
 			_, err := w.pool.Exec(ctx,
 				`UPDATE resale_transactions SET buyer_user_id=NULL, updated_at=NOW()

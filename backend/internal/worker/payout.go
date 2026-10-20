@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/config"
 	"github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
+	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
 	"github.com/LittleMardiah/E-Tix/backend/internal/resale"
 )
 
@@ -19,10 +21,11 @@ type PayoutWorker struct {
 	gw   adapter.PaymentGateway
 	log  *zap.Logger
 	cfg  *config.Config
+	conn *queue.Connection
 }
 
-func NewPayoutWorker(pool *pgxpool.Pool, repo resale.ResaleRepository, gw adapter.PaymentGateway, log *zap.Logger, cfg *config.Config) *PayoutWorker {
-	return &PayoutWorker{pool: pool, repo: repo, gw: gw, log: log, cfg: cfg}
+func NewPayoutWorker(pool *pgxpool.Pool, repo resale.ResaleRepository, gw adapter.PaymentGateway, log *zap.Logger, cfg *config.Config, conn *queue.Connection) *PayoutWorker {
+	return &PayoutWorker{conn: conn, pool: pool, repo: repo, gw: gw, log: log, cfg: cfg}
 }
 
 func (w *PayoutWorker) Handle(ctx context.Context, body []byte) error {
@@ -86,4 +89,32 @@ func (w *PayoutWorker) Handle(ctx context.Context, body []byte) error {
 	}
 	w.log.Error("payout: exhausted", zap.String("resale", p.ResaleID.String()), zap.Error(lastErr))
 	return nil
+}
+
+// Run consumes the "resale_payout" queue until ctx cancel.
+// Loop pattern matches BookingExpiryWorker.Run (FASE 4).
+func (w *PayoutWorker) Run(ctx context.Context) error {
+	if w.conn == nil {
+		return errors.New("payout: mq connection not set")
+	}
+	deliveries, err := w.conn.Consume("resale_payout")
+	if err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case d, ok := <-deliveries:
+			if !ok {
+				return nil
+			}
+			if err := w.Handle(ctx, d.Body); err != nil {
+				w.log.Warn("payout: handle failed", zap.Error(err))
+				_ = d.Nack(false, true) // requeue transient
+				continue
+			}
+			_ = d.Ack(false)
+		}
+	}
 }

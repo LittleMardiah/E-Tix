@@ -152,6 +152,11 @@ func main() {
 	// (routes + workers + ResaleService come in P4)
 	resaleRepo := resale.NewPostgresResaleRepository(pgPool)
 	paymentSvc.SetResaleWebhookDeps(resaleRepo, mq)
+
+	// FASE 7 P4a: full resale wire (service + handler + workers)
+	resaleSvc := resale.NewResaleService(resaleRepo, pgPool, mq, paymentGateway, cfg.ResalePlatformFeeRate)
+	resaleHandler := resale.NewResaleHandler(resaleSvc)
+
 	paymentHandler := payment.NewPaymentHandler(paymentSvc, paymentRepo, paymentBookingReader, paymentIdem, logger)
 
 	ticketRepo := ticket.NewPostgresTicketRepository(pgPool)
@@ -351,6 +356,12 @@ func main() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "checks": checks})
 	})
 
+	// FASE 7 P4a: resale routes (API_CONTRACT §12)
+	router.POST("/resale", resaleHandler.List)
+	router.GET("/resale", resaleHandler.Browse) // public browse
+	router.POST("/resale/:id/buy", resaleHandler.Buy)
+	router.DELETE("/resale/listings/:id", resaleHandler.Cancel)
+
 	addr := ":" + port
 	go func() {
 		if err := fanWorker.Run(context.Background()); err != nil {
@@ -380,6 +391,21 @@ func main() {
 	go func() {
 		if err := feedbackWorker.Run(context.Background()); err != nil {
 			logger.Error("feedback loop worker stopped", zap.Error(err))
+		}
+	}()
+
+	// FASE 7 P4a: resale workers
+	resaleExpiryWorker := worker.NewResaleExpiryWorker(pgPool, resaleRepo, logger)
+	payoutWorker := worker.NewPayoutWorker(pgPool, resaleRepo, paymentGateway, logger, cfg, mq)
+
+	go func() {
+		if err := resaleExpiryWorker.Run(ctx); err != nil {
+			logger.Error("resale expiry worker stopped", zap.Error(err))
+		}
+	}()
+	go func() {
+		if err := payoutWorker.Run(ctx); err != nil {
+			logger.Error("payout worker stopped", zap.Error(err))
 		}
 	}()
 
