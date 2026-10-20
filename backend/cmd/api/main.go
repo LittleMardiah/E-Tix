@@ -26,6 +26,7 @@ import (
 	paymentadapter "github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
 	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
+	"github.com/LittleMardiah/E-Tix/backend/internal/resale"
 	"github.com/LittleMardiah/E-Tix/backend/internal/ticket"
 	"github.com/LittleMardiah/E-Tix/backend/internal/worker"
 )
@@ -146,6 +147,11 @@ func main() {
 	}
 
 	paymentSvc := payment.NewPaymentService(pgPool, paymentRepo, paymentBookingReader, paymentGateway, paymentIdem)
+
+	// FASE 7 P3b: partial wire — resaleRepo + webhook deps only
+	// (routes + workers + ResaleService come in P4)
+	resaleRepo := resale.NewPostgresResaleRepository(pgPool)
+	paymentSvc.SetResaleWebhookDeps(resaleRepo, mq)
 	paymentHandler := payment.NewPaymentHandler(paymentSvc, paymentRepo, paymentBookingReader, paymentIdem, logger)
 
 	ticketRepo := ticket.NewPostgresTicketRepository(pgPool)

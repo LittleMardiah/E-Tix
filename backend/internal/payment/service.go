@@ -13,6 +13,8 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
+	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
+	"github.com/LittleMardiah/E-Tix/backend/internal/resale"
 )
 
 // TxBeginner abstracts the transaction opener for testability. In production
@@ -40,6 +42,16 @@ type BookingSnapshot struct {
 	ExpiresAt     time.Time
 }
 
+// P3b: minimal resale surface used by webhook — avoids import cycle.
+// ResaleTxLite is a type alias to the real row so the Postgres repo satisfies
+// this interface without an extra adapter (resale does not import payment root).
+type ResaleWebhookLookup interface {
+	GetByPaymentTransactionID(ctx context.Context, txID string) (*ResaleTxLite, error)
+	UpdateStatus(ctx context.Context, tx pgx.Tx, id uuid.UUID, status string) error
+}
+
+type ResaleTxLite = resale.ResaleTransaction
+
 // PaymentService orchestrates the payment flow. FASE 4 scope: initiate only.
 type PaymentService struct {
 	db         TxBeginner
@@ -47,6 +59,8 @@ type PaymentService struct {
 	booking    BookingReader
 	gateway    adapter.PaymentGateway
 	idempotent *IdempotencyService
+	resaleRepo ResaleWebhookLookup // P3b: optional resale branch
+	mq         *queue.Connection   // P3b: for PayoutPayload enqueue
 }
 
 // NewPaymentService wires the service. booking may be nil for read-only paths.
@@ -64,6 +78,13 @@ func NewPaymentService(
 		gateway:    gateway,
 		idempotent: idem,
 	}
+}
+
+// SetResaleWebhookDeps wires resale repo + mq for the resale webhook branch.
+// Setter pattern (not constructor param) to avoid breaking FASE 4 call sites.
+func (s *PaymentService) SetResaleWebhookDeps(repo ResaleWebhookLookup, mq *queue.Connection) {
+	s.resaleRepo = repo
+	s.mq = mq
 }
 
 // InitiatePayments creates the payment obligations for a booking.
@@ -336,7 +357,14 @@ func (s *PaymentService) HandleWebhook(ctx context.Context, payload []byte, head
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	obligation, err := s.repo.GetByExternalTxIDForUpdate(ctx, tx, p.ExternalTransactionID)
+
 	if err != nil {
+		// P3b: try resale branch before failing (obligation may not exist for resale payments)
+		if s.resaleRepo != nil {
+			if rt, rerr := s.resaleRepo.GetByPaymentTransactionID(ctx, p.ExternalTransactionID); rerr == nil && rt != nil {
+				return s.handleResaleWebhook(ctx, rt, newStatus)
+			}
+		}
 		return err
 	}
 
@@ -451,4 +479,40 @@ func (s *PaymentService) BulkAssign(ctx context.Context, userID uuid.UUID, req *
 		Assigned:  len(results),
 		Tickets:   results,
 	}, nil
+}
+
+// handleResaleWebhook processes a webhook that matches a resale payment.
+// newStatus comes from classifyWebhookStatus ("" = transitional, no mutation).
+func (s *PaymentService) handleResaleWebhook(ctx context.Context, rt *ResaleTxLite, newStatus string) error {
+	if newStatus == "" {
+		return nil // transitional — ACK without mutation
+	}
+	if rt.Status != "PENDING" {
+		return nil // already terminal
+	}
+	if newStatus == StatusPaid {
+		tx, err := s.db.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		if err := s.resaleRepo.UpdateStatus(ctx, tx, rt.ID, "COMPLETED"); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+
+		// Enqueue payout job (worker consumes on P4)
+		if s.mq != nil {
+			body, _ := json.Marshal(map[string]interface{}{
+				"resale_id":      rt.ID.String(),
+				"seller_payout":  rt.SellerPayout,
+				"seller_user_id": rt.SellerUserID.String(),
+			})
+			_ = s.mq.PublishToQueue(ctx, "resale_payout", body)
+		}
+	}
+	// Other statuses (FAILED/etc.): leave as PENDING — expiry worker handles cleanup
+	return nil
 }
