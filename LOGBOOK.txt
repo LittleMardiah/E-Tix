@@ -1594,3 +1594,28 @@ V9: BEFORE fix prompt: minimum 3-5 diagnostic commands to CONFIRM hypothesis
 ================================================================================
 END OF FASE 7 CLEAN CLOSE
 ================================================================================
+
+[2026-10-20 20:05] FASE 7 POST-CLOSE AUDIT — Bug #55 + Gap 1 fixed
+- Bug #55 HIGH: AuthMiddleware missing 3 protected resale routes (List/Buy/Cancel).
+  Handler fallback 401 exists, but API_CONTRACT §12 violated + defense-in-depth broken
+  + rate limit scope USER tidak akan jalan tanpa AuthMiddleware set user_id.
+  Fixed: full chain Auth → RateLimit → Idempotency → Handler.
+- Gap 1: RateLimitMiddleware absent 4 resale routes.
+  Fixed per API_CONTRACT §5: POST 10/min USER, GET 100/min IP, POST buy 10/min USER,
+  DELETE 10/min USER.
+- Full regression: unit all pkg PASS, integration all PASS (zero breakage).
+- Bug #58 (my prompt): STAGE 3 gate compound `&&` + `$?` spurious rollback. OpenCode
+  self-recovered via re-apply + isolated verify (§11.2).
+- 3 TD registered: TD-F7-05 (concurrent Buy test), TD-F7-06 (webhook E2E),
+  TD-F7-07 (worker unit tests) — all DEFERRED FASE 9.
+
+FASE 7 status: 85% → 95% (100% functional, 5% test depth carry-over).
+
+Rule V10 (added):
+  "Gates in multi-command shell: isolate each check (`cmd; echo RC=$?`), avoid
+   `&&` chain for rollback decision. Recovery path: re-apply + isolated verify."
+
+Total bugs session-wide: 58 (13 command + 11 prompt + 2 state + 14 code + 4 static +
+2 diag + 1 verify-gate + 1 test-gap + 2 P4a + 5 audit-mega + 3 verify-round).
+
+Next: FASE 8 kickoff (fresh session, split discipline, pre-flight diagnostic).

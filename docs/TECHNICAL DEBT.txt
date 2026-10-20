@@ -848,3 +848,37 @@ Root Cause: Setup function tidak re-run seed; prior test flips ticket to RESALE_
 Fix: setupResaleEnv now calls pool.Exec(os.ReadFile("../fixtures/seed.sql")).
 Verified: double-run PASS 2/2, no SKIP, idempotent.
 Referensi: FASE 7 P4b diagnostic 2026-10-20 09:00 WIB.
+
+---
+
+ID: TD-F7-05
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Concurrent Buy test (FOR UPDATE proof) missing — BuyResaleTicket uses
+  FOR UPDATE but no integration test proving 2 concurrent buyers → 1 RESERVED + 1 CONFLICT.
+Rencana Fix: Integration test 10 goroutines same resale_id, assert 1 winner + 9 conflict.
+Trigger: FASE 9.
+Referensi: ROADMAP FASE 7 E9-S1-T22 (extend), Bug #55 fix context.
+
+ID: TD-F7-06
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Webhook→Payout E2E integration test missing — P3b added resale webhook
+  branch + PublishToQueue("resale_payout"), but no test proves chain: webhook SUCCESS
+  → UpdateStatus(COMPLETED) → trigger → PayoutPayload enqueued → PayoutWorker consumes.
+Rencana Fix: Integration test with fake webhook payload + queue consumer assertion.
+Trigger: FASE 9.
+Referensi: FASE 7 P3b commit 6dd2953.
+
+ID: TD-F7-07
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: ResaleExpiryWorker.Run + PayoutWorker.Run unit tests missing — loop
+  cancellation + idempotency branches untested (poison WARN covered via TD-F7-03).
+Rencana Fix: Unit test with fake Consumer channel + ctx cancel + assert idempotent clear.
+Trigger: FASE 9.
+Referensi: ROADMAP FASE 7 E9-S1-T19 (extend).
+
