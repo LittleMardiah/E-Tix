@@ -357,10 +357,24 @@ func main() {
 	})
 
 	// FASE 7 P4a: resale routes (API_CONTRACT §12)
-	router.POST("/resale", resale.IdempotencyMiddleware(rdb, 24*time.Hour), resaleHandler.List)
-	router.GET("/resale", resaleHandler.Browse) // public browse
-	router.POST("/resale/:id/buy", resale.IdempotencyMiddleware(rdb, 24*time.Hour), resaleHandler.Buy)
-	router.DELETE("/resale/listings/:id", resale.IdempotencyMiddleware(rdb, 24*time.Hour), resaleHandler.Cancel)
+	router.POST("/resale",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 10, time.Minute, auth.RateLimitScopeUser),
+		resale.IdempotencyMiddleware(rdb, 24*time.Hour),
+		resaleHandler.List)
+	router.GET("/resale",
+		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
+		resaleHandler.Browse) // public browse
+	router.POST("/resale/:id/buy",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 10, time.Minute, auth.RateLimitScopeUser),
+		resale.IdempotencyMiddleware(rdb, 24*time.Hour),
+		resaleHandler.Buy)
+	router.DELETE("/resale/listings/:id",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 10, time.Minute, auth.RateLimitScopeUser),
+		resale.IdempotencyMiddleware(rdb, 24*time.Hour),
+		resaleHandler.Cancel)
 
 	addr := ":" + port
 	go func() {
