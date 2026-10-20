@@ -2,10 +2,13 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -57,26 +60,205 @@ func NewPostgresAdminRepository(pool *pgxpool.Pool) *PostgresAdminRepository {
 
 // --- All stub bodies return not-implemented. Fill per E<N>. ---
 
-func (r *PostgresAdminRepository) GetUserByID(_ context.Context, _ uuid.UUID) (*AdminUser, error) {
-	return nil, errors.New("admin.GetUserByID: not implemented (E7)")
+func (r *PostgresAdminRepository) GetUserByID(ctx context.Context, id uuid.UUID) (*AdminUser, error) {
+	var u AdminUser
+	var baseScore, totalPurchases int
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, email, phone, name, role::text, status::text,
+		       base_score, total_purchases, created_at
+		FROM users WHERE id = $1 AND deleted_at IS NULL`, id).Scan(
+		&u.UserID, &u.Email, &u.Phone, &u.Name, &u.Role, &u.Status,
+		&baseScore, &totalPurchases, &u.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, ErrAdminNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	u.TotalPurchases = totalPurchases
+	u.LoyaltyTier = computeLoyaltyTier(baseScore, totalPurchases)
+	return &u, nil
 }
-func (r *PostgresAdminRepository) ListUsers(_ context.Context, _, _, _ string, _, _ int) ([]AdminUser, int, error) {
-	return nil, 0, errors.New("admin.ListUsers: not implemented (E7)")
+
+// computeLoyaltyTier — mirrors DATABASE_SCHEMA Query 4 formula.
+func computeLoyaltyTier(baseScore, totalPurchases int) string {
+	score := baseScore + totalPurchases*10
+	switch {
+	case score >= 90:
+		return "TIER_1"
+	case score >= 70:
+		return "TIER_2"
+	default:
+		return "TIER_3"
+	}
 }
-func (r *PostgresAdminRepository) UpdateUserStatus(_ context.Context, _ pgx.Tx, _ uuid.UUID, _ string) error {
-	return errors.New("admin.UpdateUserStatus: not implemented (E7)")
+func (r *PostgresAdminRepository) ListUsers(ctx context.Context, roleFilter, statusFilter, search string, page, limit int) ([]AdminUser, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+	offset := (page - 1) * limit
+
+	// Build WHERE clause dynamically (parameterized)
+	where := "WHERE deleted_at IS NULL"
+	args := []interface{}{}
+	argIdx := 1
+	if roleFilter != "" {
+		where += fmt.Sprintf(" AND role::text = $%d", argIdx)
+		args = append(args, roleFilter)
+		argIdx++
+	}
+	if statusFilter != "" {
+		where += fmt.Sprintf(" AND status::text = $%d", argIdx)
+		args = append(args, statusFilter)
+		argIdx++
+	}
+	if search != "" {
+		where += fmt.Sprintf(" AND (email ILIKE $%d OR name ILIKE $%d OR phone ILIKE $%d)", argIdx, argIdx, argIdx)
+		args = append(args, "%"+search+"%")
+		argIdx++
+	}
+
+	// Count total
+	var total int
+	countSQL := "SELECT COUNT(*) FROM users " + where
+	if err := r.pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	// Fetch rows
+	rowsSQL := fmt.Sprintf(`
+		SELECT id, email, phone, name, role::text, status::text,
+		       base_score, total_purchases, created_at
+		FROM users %s
+		ORDER BY created_at DESC
+		LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
+	args = append(args, limit, offset)
+
+	rows, err := r.pool.Query(ctx, rowsSQL, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var users []AdminUser
+	for rows.Next() {
+		var u AdminUser
+		var baseScore, totalPurchases int
+		if err := rows.Scan(&u.UserID, &u.Email, &u.Phone, &u.Name, &u.Role, &u.Status,
+			&baseScore, &totalPurchases, &u.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		u.TotalPurchases = totalPurchases
+		u.LoyaltyTier = computeLoyaltyTier(baseScore, totalPurchases)
+		users = append(users, u)
+	}
+	return users, total, rows.Err()
 }
-func (r *PostgresAdminRepository) ListBlacklist(_ context.Context, _, _ int) ([]BlacklistEntry, int, error) {
-	return nil, 0, errors.New("admin.ListBlacklist: not implemented (E8)")
+func (r *PostgresAdminRepository) UpdateUserStatus(ctx context.Context, tx pgx.Tx, id uuid.UUID, newStatus string) error {
+	ct, err := tx.Exec(ctx,
+		`UPDATE users SET status = $1::user_status_enum, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`,
+		newStatus, id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrAdminNotFound
+	}
+	return nil
 }
-func (r *PostgresAdminRepository) InsertBlacklist(_ context.Context, _ *BlacklistEntry) error {
-	return errors.New("admin.InsertBlacklist: not implemented (E8)")
+func (r *PostgresAdminRepository) ListBlacklist(ctx context.Context, page, limit int) ([]BlacklistEntry, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+	offset := (page - 1) * limit
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM blacklist`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, type, value, reason, added_by, added_at, expires_at
+		FROM blacklist ORDER BY added_at DESC LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var entries []BlacklistEntry
+	for rows.Next() {
+		var e BlacklistEntry
+		if err := rows.Scan(&e.ID, &e.Type, &e.Value, &e.Reason, &e.AddedBy, &e.AddedAt, &e.ExpiresAt); err != nil {
+			return nil, 0, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, total, rows.Err()
 }
-func (r *PostgresAdminRepository) DeleteBlacklist(_ context.Context, _ uuid.UUID) (uuid.UUID, error) {
-	return uuid.Nil, errors.New("admin.DeleteBlacklist: not implemented (E8)")
+func (r *PostgresAdminRepository) InsertBlacklist(ctx context.Context, e *BlacklistEntry) error {
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO blacklist (type, value, reason, added_by, expires_at)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, added_at`,
+		e.Type, e.Value, e.Reason, e.AddedBy, e.ExpiresAt).Scan(&e.ID, &e.AddedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrAdminConflict
+		}
+		return err
+	}
+	return nil
 }
-func (r *PostgresAdminRepository) InsertAdminAction(_ context.Context, _ pgx.Tx, _ *AdminActionRecord) (uuid.UUID, error) {
-	return uuid.Nil, errors.New("admin.InsertAdminAction: not implemented (E2)")
+func (r *PostgresAdminRepository) DeleteBlacklist(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	var deleted uuid.UUID
+	err := r.pool.QueryRow(ctx, `DELETE FROM blacklist WHERE id = $1 RETURNING id`, id).Scan(&deleted)
+	if err == pgx.ErrNoRows {
+		return uuid.Nil, ErrAdminNotFound
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return deleted, nil
+}
+func (r *PostgresAdminRepository) InsertAdminAction(ctx context.Context, tx pgx.Tx, action *AdminActionRecord) (uuid.UUID, error) {
+	var changesBefore, changesAfter interface{}
+	if action.ChangesBefore != nil {
+		b, err := json.Marshal(action.ChangesBefore)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("admin: marshal changes_before: %w", err)
+		}
+		changesBefore = b
+	}
+	if action.ChangesAfter != nil {
+		b, err := json.Marshal(action.ChangesAfter)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("admin: marshal changes_after: %w", err)
+		}
+		changesAfter = b
+	}
+
+	var id uuid.UUID
+	err := tx.QueryRow(ctx, `
+		INSERT INTO admin_actions (admin_id, action_type, target_user_id,
+			target_resource_type, target_resource_id, description, reason,
+			changes_before, changes_after, ip_address, user_agent)
+		VALUES ($1, $2::admin_action_type_enum, $3, $4, $5, $6, $7, $8, $9, $10::inet, $11)
+		RETURNING id`,
+		action.AdminID, action.ActionType, action.TargetUserID,
+		action.TargetResourceType, action.TargetResourceID,
+		action.Description, action.Reason,
+		changesBefore, changesAfter, action.IPAddress, action.UserAgent).Scan(&id)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
 }
 func (r *PostgresAdminRepository) ListLedgerEntries(_ context.Context, _, _, _ string, _, _ int) ([]LedgerEntry, int, error) {
 	return nil, 0, errors.New("admin.ListLedgerEntries: not implemented (E4)")
