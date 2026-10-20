@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -52,7 +53,15 @@ func (r *PostgresResaleRepository) Create(ctx context.Context, rt *ResaleTransac
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())`,
 		rt.ID, rt.TicketID, rt.EventID, rt.SellerUserID, rt.BuyerUserID,
 		rt.OriginalPrice, rt.ResalePrice, rt.PlatformFee, rt.SellerPayout, rt.Status)
-	return err
+	if err != nil {
+		// S2-1: map partial unique idx_resale_single_active violation to sentinel.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrResaleListingExists
+		}
+		return err
+	}
+	return nil
 }
 func (r *PostgresResaleRepository) GetByID(_ context.Context, _ uuid.UUID) (*ResaleTransaction, error) {
 	return nil, errors.New("resale.GetByID: not implemented (E3)")

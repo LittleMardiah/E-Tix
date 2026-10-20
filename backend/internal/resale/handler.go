@@ -16,97 +16,103 @@ func NewResaleHandler(svc *ResaleService) *ResaleHandler {
 func (h *ResaleHandler) List(c *gin.Context) {
 	uid, err := uuid.Parse(c.GetString("user_id"))
 	if err != nil {
-		c.JSON(401, gin.H{"error": "unauthorized"})
+		resaleError(c, 401, "UNAUTHORIZED", "invalid user context")
 		return
 	}
 	var req ListTicketRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		resaleError(c, 400, "INVALID_REQUEST", err.Error())
 		return
 	}
 	resp, err := h.svc.ListTicket(c.Request.Context(), uid, &req)
 	if err != nil {
-		code := 500
 		switch err {
+		case ErrResaleNotFound:
+			resaleError(c, 404, "NOT_FOUND", "ticket not found")
 		case ErrResaleForbidden:
-			code = 403
+			resaleError(c, 403, "FORBIDDEN", "not ticket owner")
 		case ErrResaleListingExists:
-			code = 409
-		case ErrResalePriceExceedsCap, ErrResaleTicketNotConfirmed:
-			code = 422
+			resaleError(c, 409, "RESALE_LISTING_EXISTS", "ticket already has active listing")
+		case ErrResalePriceExceedsCap:
+			resaleError(c, 422, "UNPROCESSABLE_ENTITY", "price exceeds cap")
+		case ErrResaleTicketNotConfirmed:
+			resaleError(c, 422, "UNPROCESSABLE_ENTITY", "ticket not confirmed")
+		default:
+			resaleError(c, 500, "INTERNAL_ERROR", err.Error())
 		}
-		c.JSON(code, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(201, gin.H{"data": resp})
+	resaleSuccess(c, 201, resp)
 }
 
 func (h *ResaleHandler) Browse(c *gin.Context) {
 	eid, err := uuid.Parse(c.Query("event_id"))
 	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid event_id"})
+		resaleError(c, 400, "INVALID_REQUEST", "invalid event_id")
 		return
 	}
 	resp, err := h.svc.Browse(c.Request.Context(), eid)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		resaleError(c, 500, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	c.JSON(200, gin.H{"data": resp})
+	resaleSuccess(c, 200, resp)
 }
 
 func (h *ResaleHandler) Buy(c *gin.Context) {
 	uid, err := uuid.Parse(c.GetString("user_id"))
 	if err != nil {
-		c.JSON(401, gin.H{"error": "unauthorized"})
+		resaleError(c, 401, "UNAUTHORIZED", "invalid user context")
 		return
 	}
 	rid, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid resale_id"})
+		resaleError(c, 400, "INVALID_REQUEST", "invalid resale_id")
 		return
 	}
 	resp, err := h.svc.BuyResaleTicket(c.Request.Context(), uid, rid)
 	if err != nil {
-		code := 500
 		switch err {
 		case ErrResaleNotFound:
-			code = 404
-		case ErrResaleAlreadyReserved, ErrResaleNotPending:
-			code = 409
+			resaleError(c, 404, "NOT_FOUND", "resale not found")
+		case ErrResaleAlreadyReserved:
+			resaleError(c, 409, "CONFLICT", "already reserved")
+		case ErrResaleNotPending:
+			resaleError(c, 409, "CONFLICT", "not pending")
 		case ErrResaleOwnListing:
-			code = 422
+			resaleError(c, 422, "UNPROCESSABLE_ENTITY", "cannot buy own listing")
+		default:
+			resaleError(c, 500, "INTERNAL_ERROR", err.Error())
 		}
-		c.JSON(code, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"data": resp})
+	resaleSuccess(c, 200, resp)
 }
 
 func (h *ResaleHandler) Cancel(c *gin.Context) {
 	uid, err := uuid.Parse(c.GetString("user_id"))
 	if err != nil {
-		c.JSON(401, gin.H{"error": "unauthorized"})
+		resaleError(c, 401, "UNAUTHORIZED", "invalid user context")
 		return
 	}
 	rid, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid resale_id"})
+		resaleError(c, 400, "INVALID_REQUEST", "invalid resale_id")
 		return
 	}
 	resp, err := h.svc.Cancel(c.Request.Context(), uid, rid)
 	if err != nil {
-		code := 500
 		switch err {
 		case ErrResaleNotFound:
-			code = 404
+			resaleError(c, 404, "NOT_FOUND", "resale not found")
 		case ErrResaleForbidden:
-			code = 403
+			resaleError(c, 403, "FORBIDDEN", "not seller")
 		case ErrResaleNotPending:
-			code = 422
+			resaleError(c, 422, "UNPROCESSABLE_ENTITY", "cannot cancel: already reserved or not pending")
+		default:
+			resaleError(c, 500, "INTERNAL_ERROR", err.Error())
 		}
-		c.JSON(code, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"data": resp})
+	resaleSuccess(c, 200, resp)
 }
