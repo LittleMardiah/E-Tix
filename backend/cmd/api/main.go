@@ -357,10 +357,10 @@ func main() {
 	})
 
 	// FASE 7 P4a: resale routes (API_CONTRACT §12)
-	router.POST("/resale", resaleHandler.List)
+	router.POST("/resale", resale.IdempotencyMiddleware(rdb, 24*time.Hour), resaleHandler.List)
 	router.GET("/resale", resaleHandler.Browse) // public browse
-	router.POST("/resale/:id/buy", resaleHandler.Buy)
-	router.DELETE("/resale/listings/:id", resaleHandler.Cancel)
+	router.POST("/resale/:id/buy", resale.IdempotencyMiddleware(rdb, 24*time.Hour), resaleHandler.Buy)
+	router.DELETE("/resale/listings/:id", resale.IdempotencyMiddleware(rdb, 24*time.Hour), resaleHandler.Cancel)
 
 	addr := ":" + port
 	go func() {

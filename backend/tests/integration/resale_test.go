@@ -26,6 +26,14 @@ func setupResaleEnv(t *testing.T) (*pgxpool.Pool, resale.ResaleRepository) {
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 	require.NoError(t, pool.Ping(ctx))
+	// Bug #53 fix: re-run seed per test to reset ticket status.
+	// Previous test run flips seed tickets to RESALE_PENDING (trigger doesn't
+	// fire on DELETE). Re-exec idempotent seed resets both to CONFIRMED.
+	seedBytes, err := os.ReadFile("../fixtures/seed.sql")
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, string(seedBytes))
+	require.NoError(t, err)
+
 	return pool, resale.NewPostgresResaleRepository(pool)
 }
 

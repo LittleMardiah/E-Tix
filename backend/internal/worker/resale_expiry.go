@@ -25,7 +25,9 @@ func NewResaleExpiryWorker(pool *pgxpool.Pool, repo resale.ResaleRepository, log
 func (w *ResaleExpiryWorker) Handle(ctx context.Context, body []byte) error {
 	var p resale.ResaleExpiryPayload
 	if err := json.Unmarshal(body, &p); err != nil {
-		w.log.Error("resale_expiry: bad payload", zap.Error(err))
+		// TD-F7-03 FIXED: WARN with body preview (observability on poison)
+		w.log.Warn("resale_expiry: poison payload discarded",
+			zap.Error(err), zap.Int("body_len", len(body)))
 		return nil
 	}
 	tx, err := w.pool.Begin(ctx)

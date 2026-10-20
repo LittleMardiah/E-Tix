@@ -1522,3 +1522,75 @@ reproduce manually with raw output. Do NOT trust diagnosis alone (R3).
 ================================================================================
 END OF BUG #9 ADDENDUM
 ================================================================================
+
+================================================================================
+## FASE 7 — CLEAN CLOSE (2026-10-20)
+================================================================================
+
+Durasi: 2026-10-20 (extended session)
+24 ROADMAP task: 22 DONE + 2 DEFERRED (TD-F7-01 extended tests, TD-F7-02 CLOSED same day).
+
+Commit chain FASE 7:
+- ba12015  feat(fase-7): mega V3 — resale module (13 findings post-audit)
+- b2c2fa4  fix(fase-7): P1 — migration 004 + S1-1 CRITICAL + S3-1/S3-2/S5-2/S5-3
+- f9faf4d  fix(fase-7): P2 — S2-1/S4-1/S4-2 envelope
+- 4e9b1b5  feat(fase-7): P3a — gateway.Initiate + SetPaymentTransactionID + helpers
+- 6dd2953  feat(fase-7): P3b v2 — webhook resale branch + PayoutPayload publish
+- 041eebe  feat(fase-7): P4a — workers Run pattern + main.go full wire
+- <P4b>    feat(fase-7): P4b FINAL — seed Bug #23 + TD-F7-02/03 FIXED + Bug #53 isolation
+
+### Mega V3 audit — 13 findings, 11 fixed immediately:
+- CRITICAL: S1-1 (updated_at column missing in resale_transactions) → migration 004
+- HIGH: S3-1 (stale rt.UpdatedAt), S5-1 (orphan payout worker) → P1 + P3b
+- MEDIUM: S2-1 (23505→409), S3-2 (fee default), S4-1 (List 404), S4-2 (envelope),
+  S5-2 (admin UUID), S5-3 (state guard) → P1 + P2
+- MEDIUM deferred: S7 (Bug #23 seed) → P4b FIXED, S4-3 (idempotency) → P4b FIXED
+- LOW: S2-2 (GetByID stub), S5-1b (poison log) → P4b FIXED
+
+### Bug tally session FASE 7 (2026-10-20):
+Total: 54 bugs.
+- 13 command-level (grep, cd, export, -v, $? pipe, heredoc, gate paths, adapter fields)
+- 10 prompt-design (root cause, diagnostic, STAGE 5.5, adapter, gate design, template)
+- 2 state-assumption (resale stub, worker wire — both mitigated by verify gate)
+- 13 real code (3 mega real + 9 audit-found + 1 Bug #53 test isolation)
+- 4 static review (cap stub, CreatedAt, config field, pool assertion)
+- 2 config from contaminated diag (#19 getEnv, #20 ResalePlatformFeeRate)
+- 1 verify gate (V2 count 2 vs expected 1 — my design)
+- 1 test gap (Bug #23 skip)
+- 2 P4a prompt bugs (#41 self-inconsistent, #42 anchor regex)
+- 5 audit-mega findings post-hoc
+- 1 Bug #54 (STAGE 7 never ran due STAGE 6 gate block)
+
+### New Rules V1-V9 (LOGBOOK, applied):
+V1: Verify block uses `$(cmd | grep -c)` not `$?` after pipe.
+V2: Fix prompt includes "if gate fail → capture diagnostic, STOP".
+V3: Reproduce manually before fix prompt.
+V4: Quote all paths with spaces.
+V5: Verify block 3-pilar: count via VAR capture, export TEST_DB_URL, -v flag.
+V6: Fix-first reproduce before fix prompt.
+V7: Never copy assumptions from prior diagnostic — re-verify HEAD.
+V8: OpenCode session = 1 prompt, 1 session (kill switch on contamination).
+V9: BEFORE fix prompt: minimum 3-5 diagnostic commands to CONFIRM hypothesis
+    (applied to Bug #53 — H1/H2/H3 all false, C1-C3 killed 3 hypotheses in 30s).
+
+### FASE 7 final state:
+- 4 endpoints live (List, Browse, Buy, Cancel), envelope per API_CONTRACT §3.1
+- 2 workers running (ResaleExpiryWorker ticker, PayoutWorker consumer)
+- 3 FLAGs verified (RESERVED synthetic, fee env + cap config, PENDING_PAYOUT retry)
+- Webhook→resale→payout chain functional (P3b setter pattern)
+- Idempotency middleware (TD-F7-02)
+- Poison observability (TD-F7-03)
+- Integration tests PASS 2/2 both runs (Bug #53 fixed, no SKIP)
+- Migration 004 (resale updated_at + auto-trigger)
+- Seed CONFIRMED tickets for tests (Bug #23)
+
+### Carry-over to FASE 9:
+- TD-F7-01 (extended tests: 8 unit + 7 integration)
+- TD-F6-09 (analytics repo coverage)
+- TD-F6-11 (DATABASE_SCHEMA doc sync)
+- TD-F6-12/13 (poison silent in gate/feedback workers — pattern #F7-03 fix, extend later)
+- TD-014 (Postman collection)
+
+================================================================================
+END OF FASE 7 CLEAN CLOSE
+================================================================================

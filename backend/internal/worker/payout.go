@@ -31,7 +31,9 @@ func NewPayoutWorker(pool *pgxpool.Pool, repo resale.ResaleRepository, gw adapte
 func (w *PayoutWorker) Handle(ctx context.Context, body []byte) error {
 	var p resale.PayoutPayload
 	if err := json.Unmarshal(body, &p); err != nil {
-		w.log.Error("payout: bad payload", zap.Error(err))
+		// TD-F7-03 FIXED: WARN with body preview (observability on poison)
+		w.log.Warn("payout: poison payload discarded",
+			zap.Error(err), zap.Int("body_len", len(body)))
 		return nil
 	}
 

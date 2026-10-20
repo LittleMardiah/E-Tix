@@ -806,3 +806,45 @@ Deskripsi: `_ = w.repo.InsertInsight(...)` di feedback_loop.go (3 tempat:
 Rencana Fix: Log warning atau return error up (workflow worker sudah log).
 Trigger: FASE 9 polish.
 Referensi: FASE 6 diagnostic D4 (2026-10-20), pattern sama dengan TD-F6-12.
+
+---
+
+ID: TD-F7-01
+Tanggal: 2026-10-20
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Extended test coverage (8 unit + 7 integration per ROADMAP FASE 7 E9).
+  Current: 1 unit sentinel + 2 integration (baseline, isolated per Bug #53 fix).
+Rencana Fix: FASE 9 full STP sweep.
+Trigger: FASE 9.
+Referensi: ROADMAP FASE 7 E9, audit 2026-10-20.
+
+ID: TD-F7-02
+Tanggal: 2026-10-20
+Status: ✅ FIXED (2026-10-20)
+Prioritas: LOW
+Deskripsi: X-Idempotency-Key tidak diterapkan di 4 resale endpoints (API_CONTRACT §12).
+Root Cause: Mega V3 shipped handlers tanpa middleware wrap.
+Fix: internal/resale/idempotency_mw.go — Redis cache 24h, wrap 3 POST/DELETE routes.
+  Pattern: responseCapture Writer, c.Data cached on replay.
+Referensi: FASE 7 audit S4-3, ROADMAP FASE 7 E8.
+
+ID: TD-F7-03
+Tanggal: 2026-10-20
+Status: ✅ FIXED (2026-10-20)
+Prioritas: LOW
+Deskripsi: Poison message di ResaleExpiryWorker + PayoutWorker silent discard (return nil).
+Root Cause: Error path WARN/ERROR log tidak ada, body discarded tanpa observability.
+Fix: WARN log with body_len preview in both workers.
+Referensi: FASE 7 audit S5-1b.
+
+ID: TD-F7-04
+Tanggal: 2026-10-20
+Status: ✅ CLOSED (2026-10-20)
+Prioritas: LOW
+Deskripsi: Bug #53 — test isolation gap in setupResaleEnv.
+Root Cause: Setup function tidak re-run seed; prior test flips ticket to RESALE_PENDING,
+  trigger not fired on DELETE, next run sees stale state → TicketInfo SKIPs.
+Fix: setupResaleEnv now calls pool.Exec(os.ReadFile("../fixtures/seed.sql")).
+Verified: double-run PASS 2/2, no SKIP, idempotent.
+Referensi: FASE 7 P4b diagnostic 2026-10-20 09:00 WIB.
