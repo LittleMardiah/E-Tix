@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -266,11 +267,54 @@ func (r *PostgresAdminRepository) ListLedgerEntries(_ context.Context, _, _, _ s
 func (r *PostgresAdminRepository) ComputeLedgerSummary(_ context.Context, _, _, _ string) (*LedgerSummary, error) {
 	return nil, errors.New("admin.ComputeLedgerSummary: not implemented (E4)")
 }
-func (r *PostgresAdminRepository) GetPaymentObligationForUpdate(_ context.Context, _ pgx.Tx, _ uuid.UUID) (*LedgerEntry, error) {
-	return nil, errors.New("admin.GetPaymentObligationForUpdate: not implemented (E5)")
+func (r *PostgresAdminRepository) GetPaymentObligationForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*LedgerEntry, error) {
+	var (
+		poID, bookingID, userID uuid.UUID
+		amount                  string
+		status                  string
+		extTxID                 *string
+		createdAt               time.Time
+	)
+	err := tx.QueryRow(ctx, `
+		SELECT id, booking_id, user_id, amount::text, status::text,
+		       external_transaction_id, created_at
+		FROM payment_obligations WHERE id = $1 FOR UPDATE`, id).Scan(
+		&poID, &bookingID, &userID, &amount, &status, &extTxID, &createdAt)
+	if err == pgx.ErrNoRows {
+		return nil, ErrAdminNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &LedgerEntry{
+		EventID:              poID,
+		EventType:            "PAYMENT_" + status,
+		ReferenceType:        "payment_obligation",
+		ReferenceID:          poID,
+		BookingID:            &bookingID,
+		UserID:               &userID,
+		Amount:               amount,
+		Status:               status,
+		GatewayTransactionID: extTxID,
+		Reconciled:           status == "PAID",
+		CreatedAt:            createdAt,
+	}, nil
 }
-func (r *PostgresAdminRepository) UpdatePaymentObligationRefunded(_ context.Context, _ pgx.Tx, _ uuid.UUID, _ string) error {
-	return errors.New("admin.UpdatePaymentObligationRefunded: not implemented (E5)")
+func (r *PostgresAdminRepository) UpdatePaymentObligationRefunded(ctx context.Context, tx pgx.Tx, id uuid.UUID, refundTxID string) error {
+	// Note: trigger_handle_ticket_cancellation will auto-CANCEL tickets.
+	ct, err := tx.Exec(ctx, `
+		UPDATE payment_obligations
+		SET status = 'REFUNDED', refunded_at = NOW(),
+		    refund_transaction_id = $1, updated_at = NOW()
+		WHERE id = $2 AND status::text = 'PAID'`,
+		refundTxID, id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrAdminConflict
+	}
+	return nil
 }
 func (r *PostgresAdminRepository) ListStuckLocks(_ context.Context) ([]StuckLock, error) {
 	return nil, errors.New("admin.ListStuckLocks: not implemented (E6)")
@@ -281,11 +325,26 @@ func (r *PostgresAdminRepository) GetBookingForUpdate(_ context.Context, _ pgx.T
 func (r *PostgresAdminRepository) UpdateBookingCancelled(_ context.Context, _ pgx.Tx, _ uuid.UUID) error {
 	return errors.New("admin.UpdateBookingCancelled: not implemented (E6)")
 }
-func (r *PostgresAdminRepository) CountCancellableTickets(_ context.Context, _ uuid.UUID) (int, error) {
-	return 0, errors.New("admin.CountCancellableTickets: not implemented (E3)")
+func (r *PostgresAdminRepository) CountCancellableTickets(ctx context.Context, eventID uuid.UUID) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM tickets t
+		JOIN bookings b ON b.id = t.booking_id
+		WHERE b.event_id = $1
+		  AND t.status::text IN ('CONFIRMED', 'LOCKED', 'PENDING_SPLIT_PAY', 'RESALE_PENDING')`,
+		eventID).Scan(&count)
+	return count, err
 }
-func (r *PostgresAdminRepository) SumRefundableAmount(_ context.Context, _ uuid.UUID) (string, error) {
-	return "", errors.New("admin.SumRefundableAmount: not implemented (E3)")
+func (r *PostgresAdminRepository) SumRefundableAmount(ctx context.Context, eventID uuid.UUID) (string, error) {
+	var total string
+	err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(po.amount), 0)::text
+		FROM payment_obligations po
+		JOIN bookings b ON b.id = po.booking_id
+		WHERE b.event_id = $1 AND po.status::text = 'PAID'`,
+		eventID).Scan(&total)
+	return total, err
 }
 
 var _ AdminRepository = (*PostgresAdminRepository)(nil)
