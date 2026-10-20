@@ -1619,3 +1619,44 @@ Total bugs session-wide: 58 (13 command + 11 prompt + 2 state + 14 code + 4 stat
 2 diag + 1 verify-gate + 1 test-gap + 2 P4a + 5 audit-mega + 3 verify-round).
 
 Next: FASE 8 kickoff (fresh session, split discipline, pre-flight diagnostic).
+
+[2026-10-20 21:55] FASE 8 CHECKPOINT — P8a-P8c locked, resume plan documented
+
+**Commits (3):**
+- de2ff68  feat(fase-8): P8a — admin model.go (22 structs + 8 sentinels)
+- 61c43c2  feat(fase-8): P8b — AdminRepository interface (16 methods) + Postgres stub + lockout constants
+- ad3afee  feat(fase-8): P8c — 2FA TOTP service + Admin2FAMiddleware + enrollment CLI + pquerna/otp v1.5.0
+
+**FASE 8 status:** 30% (3 of 10 epics)
+- E1 (skeleton): DONE (model + repo + lockout)
+- E2 (2FA): DONE (TOTP + middleware + CLI)
+- E3-E10: PENDING (bulk cancel, ledger, reverse, stuck/force, user mgmt, blacklist, wire, tests)
+
+**TD new FASE 8:** none yet (all caught early via split prompt discipline)
+
+**Session metrics (FASE 8 start):**
+- Duration: 19:45 → 21:55 (2+ jam)
+- Commits: 3
+- Bugs caught: 6 (#59 pquerna absent, #60 struct count, #61 avoided, #62 grep \t, #63 const estimate, #64 indirect marker)
+- Code bugs: 0 (all prompt/verify design)
+- Trend: GOOD (FASE 7 trend continued — quality locks via small prompts)
+
+**Next session plan (fresh, split 5 prompts):**
+- P8d-envelope (~10 min, 1 file: response helpers matching FASE 7 pattern)
+- P8e-handler-skeleton (~15 min, 1 file: 11 handler method stubs + envelope wire)
+- P8f-repo-impl (~25 min, repository.go: fill 16 stub methods, highest complexity — UNION + FOR UPDATE + PG refund)
+- P8g-worker+service (~30 min, service.go + bulk_cancel.go: async + retry + audit)
+- P8h-wire (~20 min, main.go: 11 routes + rate limit + 2FA middleware chain)
+- P8i-tests (~30 min, E9 + close docs)
+
+**Pre-flight next session:**
+1. Verify P8a-P8c committed (`git log --oneline -5`)
+2. Read ROADMAP FASE 8 §4 E3-E10 + API_CONTRACT §14
+3. Verify stub state of service.go + handler.go (should be 14-byte still)
+4. Apply V9 discipline: diagnostic commands BEFORE fix prompts
+
+**Rule V11 (add):** grep with `-E` does NOT support `\t` — use `[[:space:]]` or `-P '\t'` (Bug #62).
+
+Total bugs session-wide: 64 (all prompt/verify, zero code).
+
+**HARD STOP.** Resume fresh.
