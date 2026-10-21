@@ -33,7 +33,7 @@ Isi semua bagian. Jangan biarkan bagian kosong.
 
 ID: TD-00X
 Tanggal: YYYY-MM-DD
-Status: OPEN | IN PROGRESS | FIXED | CLOSED | DEFERRED
+Status: (pilih satu) OPEN | IN PROGRESS | FIXED | CLOSED | DEFERRED
 Prioritas: TINGGI | SEDANG | RENDAH
 Deskripsi: Gejala yang terlihat dan dampaknya ke pengguna atau sistem.
 Root Cause: Penyebab sebenarnya kenapa hal ini terjadi.
@@ -47,7 +47,7 @@ Jangan dihitung sebagai entry aktif.
 
 ID: TD-000
 Tanggal: YYYY-MM-DD
-Status: OPEN
+Status: CONTOH — OPEN (bukan entry aktif, jangan dihitung)
 Prioritas: TINGGI
 Deskripsi: Contoh isi deskripsi masalah.
 Root Cause: Contoh isi akar penyebab.

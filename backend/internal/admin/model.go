@@ -117,8 +117,10 @@ type StuckLocksResponse struct {
 // StuckLock = one booking with expired lock (§14.4)
 type StuckLock struct {
 	BookingID       uuid.UUID `json:"booking_id"`
+	EventID         uuid.UUID `json:"event_id"` // F8-F02: needed for Redis key
 	SectionID       uuid.UUID `json:"section_id"`
 	SectionName     string    `json:"section_name"`
+	LayoutVersion   int       `json:"layout_version"` // F8-F02: needed for Redis key
 	SeatPositions   []int     `json:"seat_positions"`
 	LockedSince     time.Time `json:"locked_since"`
 	DurationMinutes int       `json:"duration_minutes"`

@@ -392,17 +392,17 @@ func main() {
 	adminGroup.Use(auth.RBACMiddleware("admin", "event_organizer"))
 	adminGroup.Use(auth.RateLimitMiddlewareScoped(rdb, 30, time.Minute, auth.RateLimitScopeUser))
 	{
-		adminGroup.POST("/events/:event_id/bulk-cancel", admin2faMiddleware, adminH.BulkCancel)
+		adminGroup.POST("/events/:event_id/bulk-cancel", admin.IdempotencyMiddleware(rdb, 24*time.Hour), admin2faMiddleware, adminH.BulkCancel)
 		adminGroup.GET("/ledger", adminH.GetLedger)
-		adminGroup.POST("/ledger/reverse", admin2faMiddleware, adminH.ManualReverse)
+		adminGroup.POST("/ledger/reverse", admin.IdempotencyMiddleware(rdb, 24*time.Hour), admin2faMiddleware, adminH.ManualReverse)
 		adminGroup.GET("/stuck-locks", adminH.GetStuckLocks)
-		adminGroup.POST("/force-release", admin2faMiddleware, adminH.ForceRelease)
+		adminGroup.POST("/force-release", admin.IdempotencyMiddleware(rdb, 24*time.Hour), admin2faMiddleware, adminH.ForceRelease)
 		adminGroup.GET("/users", adminH.ListUsers)
 		adminGroup.PATCH("/users/:user_id/suspend", admin2faMiddleware, adminH.SuspendUser)
 		adminGroup.PATCH("/users/:user_id/unsuspend", admin2faMiddleware, adminH.UnsuspendUser)
 		adminGroup.GET("/blacklist", adminH.ListBlacklist)
-		adminGroup.POST("/blacklist", adminH.AddBlacklist)
-		adminGroup.DELETE("/blacklist/:id", adminH.RemoveBlacklist)
+		adminGroup.POST("/blacklist", admin.IdempotencyMiddleware(rdb, 24*time.Hour), adminH.AddBlacklist)
+		adminGroup.DELETE("/blacklist/:id", admin.IdempotencyMiddleware(rdb, 24*time.Hour), adminH.RemoveBlacklist)
 	}
 
 	addr := ":" + port

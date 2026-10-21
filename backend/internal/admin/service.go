@@ -195,11 +195,11 @@ func (s *AdminServiceImpl) ForceRelease(ctx context.Context, adminID uuid.UUID, 
 		return nil, err
 	}
 
-	// Redis seat release (granular SETBIT 0)
+	// F8-F02 fix: granular bitmask release (0-based offset per LOGIC_FLOW §9.3).
+	// Key shape matches FASE 3 lock: seats:{event_id}:{section_id}:v{layout_version}.
 	if s.rdb != nil && len(booking.SeatPositions) > 0 {
-		var layoutVersion int
-		_ = s.rdb.Get(ctx, fmt.Sprintf("section:layout:%s", booking.SectionID.String())).Scan(&layoutVersion)
-		key := fmt.Sprintf("seats:%s:%s:v%d", eventIDPlaceholder(booking), booking.SectionID.String(), layoutVersion)
+		key := fmt.Sprintf("seats:%s:%s:v%d",
+			booking.EventID.String(), booking.SectionID.String(), booking.LayoutVersion)
 		for _, pos := range booking.SeatPositions {
 			_ = s.rdb.SetBit(ctx, key, int64(pos-1), 0).Err()
 		}
@@ -317,5 +317,4 @@ func (s *AdminServiceImpl) RemoveBlacklist(ctx context.Context, adminID uuid.UUI
 }
 
 // helpers
-func strPtr(s string) *string                { return &s }
-func eventIDPlaceholder(_ *StuckLock) string { return "" }
+func strPtr(s string) *string { return &s }

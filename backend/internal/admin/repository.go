@@ -420,7 +420,7 @@ func (r *PostgresAdminRepository) UpdatePaymentObligationRefunded(ctx context.Co
 }
 func (r *PostgresAdminRepository) ListStuckLocks(ctx context.Context) ([]StuckLock, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT b.id, b.section_id, s.name, b.seat_positions, b.expires_at
+		SELECT b.id, s.event_id, b.section_id, s.name, s.layout_version, b.seat_positions, b.expires_at
 		FROM bookings b JOIN sections s ON s.id = b.section_id
 		WHERE b.payment_status::text = 'PENDING'
 		  AND b.expires_at < NOW() - INTERVAL '10 minutes'
@@ -436,7 +436,7 @@ func (r *PostgresAdminRepository) ListStuckLocks(ctx context.Context) ([]StuckLo
 			seatRaw   []byte
 			expiresAt time.Time
 		)
-		if err := rows.Scan(&sl.BookingID, &sl.SectionID, &sl.SectionName, &seatRaw, &expiresAt); err != nil {
+		if err := rows.Scan(&sl.BookingID, &sl.EventID, &sl.SectionID, &sl.SectionName, &sl.LayoutVersion, &seatRaw, &expiresAt); err != nil {
 			return nil, err
 		}
 		var seats []int
@@ -458,10 +458,10 @@ func (r *PostgresAdminRepository) GetBookingForUpdate(ctx context.Context, tx pg
 		expiresAt time.Time
 	)
 	err := tx.QueryRow(ctx, `
-		SELECT b.id, b.section_id, s.name, b.seat_positions, b.expires_at
+		SELECT b.id, s.event_id, b.section_id, s.name, s.layout_version, b.seat_positions, b.expires_at
 		FROM bookings b JOIN sections s ON s.id = b.section_id
 		WHERE b.id = $1 FOR UPDATE OF b`, bookingID).Scan(
-		&sl.BookingID, &sl.SectionID, &sl.SectionName, &seatRaw, &expiresAt)
+		&sl.BookingID, &sl.EventID, &sl.SectionID, &sl.SectionName, &sl.LayoutVersion, &seatRaw, &expiresAt)
 	if err == pgx.ErrNoRows {
 		return nil, ErrAdminNotFound
 	}
