@@ -177,6 +177,18 @@ func (h *PaymentHandler) GetBookingStatus(c *gin.Context) {
 }
 
 func buildStatusResponse(bookingID uuid.UUID, obs []PaymentObligation) *BookingStatusResponse {
+	// FIX P9a-6 #105: a booking with zero obligations has NO payment yet.
+	// Previously allPaid started as true, so an empty obligation list was
+	// reported as payment_status=PAID with tickets_generated=true (leaked
+	// PAID + ticket generation for unpaid bookings). Empty => PENDING/false.
+	if len(obs) == 0 {
+		return &BookingStatusResponse{
+			BookingID:        bookingID.String(),
+			PaymentStatus:    StatusPending,
+			Obligations:      []ObligationResponse{},
+			TicketsGenerated: false,
+		}
+	}
 	out := make([]ObligationResponse, 0, len(obs))
 	allPaid := true
 	anyTicketGen := false

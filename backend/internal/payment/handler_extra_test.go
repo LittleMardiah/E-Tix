@@ -372,26 +372,24 @@ func TestBuildStatusResponse_MixedStatusIsPending(t *testing.T) {
 	assert.False(t, resp.TicketsGenerated)
 }
 
-func TestBuildStatusResponse_EmptyObligations_ReportsPaid(t *testing.T) {
-	// CHARACTERISATION of current behaviour: buildStatusResponse initialises
+func TestBuildStatusResponse_EmptyObligations_ReportsPending(t *testing.T) {
+	// FIXED in P9a-6 (#105): buildStatusResponse used to initialise
 	// allPaid=true, so a booking with zero obligations (payment never
-	// initiated) is reported as payment_status=PAID with
-	// tickets_generated=true.
+	// initiated) was reported as payment_status=PAID with
+	// tickets_generated=true. That leaked PAID + ticket generation for
+	// bookings nobody had paid for.
 	//
-	// FINDING (P9a-5, reported not fixed — out of the prompt's 2-bug scope):
-	// the API CONTRACT §9.3 example only covers the all-paid case and does not
-	// specify the empty-obligations case. A client would see "tickets
-	// generated" for a booking nobody has paid for. Recommend the User decide
-	// whether buildStatusResponse should return PENDING/false when the
-	// obligation list is empty.
+	// Now an empty obligation list reports PENDING + tickets_generated=false.
 	bid := uuid.New()
 
 	resp := buildStatusResponse(bid, nil)
 
 	require.NotNil(t, resp)
 	assert.Empty(t, resp.Obligations)
-	assert.Equal(t, StatusPaid, resp.PaymentStatus, "current behaviour: allPaid starts as true")
-	assert.True(t, resp.TicketsGenerated, "current behaviour: empty obligations report tickets_generated")
+	assert.NotNil(t, resp.Obligations, "obligations must serialise as [] not null")
+	assert.Equal(t, StatusPending, resp.PaymentStatus, "empty obligations => PENDING")
+	assert.False(t, resp.TicketsGenerated, "empty obligations => tickets_generated=false")
+	assert.Equal(t, bid.String(), resp.BookingID)
 }
 
 // ============================================================

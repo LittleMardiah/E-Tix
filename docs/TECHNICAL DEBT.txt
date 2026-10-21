@@ -1009,3 +1009,24 @@ Root Cause: Industry empirical — 80% = ~95% regression catch, 90% = ~97%.
 Rencana Fix: Optional post-TD-F9-06. Skip if cost > value.
 Trigger: User decide post-FASE 9 demo.
 Referensi: Coverage strategy 2026-10-21 (my honest analysis §6).
+
+---
+
+ID: TD-F9-09
+Tanggal: 2026-10-22
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Event min-price seeding bug — buildEventSummary seeds min/max from
+  i == 0 so an unparsable first section price zeroes MinPrice (aggregate
+  calculation below would be skipped if seeded wrong). Unreachable in
+  production because sections.price NUMERIC(15,2) NOT NULL CHECK (price > 0)
+  prevents unparsable/negative prices entering DB. Characterization test
+  TestBuildEventSummary_UnparsablePriceIsSkipped added (asserts current buggy
+  behavior). Fixing would change aggregation semantics — needs design decision.
+Root Cause: Defensive fallback loop seeds from first element regardless of
+  parse validity; intended to seed from first valid parsed price.
+Rencana Fix: Post-demo — refactor seed loop to track "first valid parsed"
+  explicitly. Requires API semantics review (does min_price=0 mean
+  "unavailable" or "no sections"?).
+Trigger: FASE 9 P9a-7 (event pkg polish) OR FASE 9.5 (post-demo).
+Referensi: P9a-5 OpenCode log 2026-10-22, event/summary_test.

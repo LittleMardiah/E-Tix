@@ -78,11 +78,28 @@ func TestRepo_GetSectionByID_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "section not found")
 }
 
-func TestRepo_GetTakenSeats_Empty(t *testing.T) {
+// FIX P9a-6 #106: the old assertion (assert.Empty) contradicted
+// tests/fixtures/seed.sql, which inserts a PAID booking + CONFIRMED ticket
+// at seat 2 of CAT 1 (55555555-...). GetTakenSeats selects tickets whose
+// status is CONFIRMED/LOCKED/PENDING_SPLIT_PAY/RESALE_PENDING, so CAT 1
+// legitimately reports seat 2 as taken. The genuinely-empty case is a
+// section without any ticket.
+func TestRepo_GetTakenSeats_SeedSeatTaken(t *testing.T) {
 	pool := newRepoTestPool(t)
 	repo := NewPostgresBookingRepository(pool)
 
 	taken, err := repo.GetTakenSeats(context.Background(), repoSeedCAT1SectID)
+	require.NoError(t, err)
+	assert.NotEmpty(t, taken, "seed.sql inserts a CONFIRMED ticket at CAT 1 seat 2")
+	assert.Contains(t, taken, 2, "seed.sql ticket cccccccc-0002 is at CAT 1 seat 2")
+}
+
+func TestRepo_GetTakenSeats_Empty(t *testing.T) {
+	pool := newRepoTestPool(t)
+	repo := NewPostgresBookingRepository(pool)
+
+	// Random section UUID => no tickets => no taken seats.
+	taken, err := repo.GetTakenSeats(context.Background(), uuid.New())
 	require.NoError(t, err)
 	assert.Empty(t, taken)
 }
