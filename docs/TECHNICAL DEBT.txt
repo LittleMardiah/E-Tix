@@ -953,3 +953,19 @@ Root Cause: My prompt-design bugs #81-86 (awk $NF, CI grep pipe, endpoint
 Rencana Fix: Add V13 rule to LOGBOOK; apply to FASE 9+ audit prompts.
 Trigger: LOGBOOK append during FASE 9 pre-flight.
 Referensi: PA0+PA1 session 2026-10-21.
+
+---
+
+ID: TD-F9-04
+Tanggal: 2026-10-21
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: gitleaks not installed — WSL Go 1.22.2 < 1.23.8 required by
+  gitleaks v8.28.0. Curl-to-/tmp blocked by OpenCode permission rules.
+Root Cause: Environment constraint (Go version mismatch + permission deny).
+Rencana Fix: FASE 9 P9f (security scan) — alternative secret scan via:
+  1. `docker run zricethezav/gitleaks:latest detect --no-git --source .`
+  2. OR trufflehog via docker
+  3. OR upgrade Go to 1.23.8+ (requires sudo, deferred)
+Trigger: FASE 9 Epic A P9f (security testing).
+Referensi: Phase 0 manual run 2026-10-21, log /tmp/s_f9_phase0.log.
