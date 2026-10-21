@@ -22,6 +22,10 @@ func IdempotencyMiddleware(rdb *redis.Client, ttl time.Duration) gin.HandlerFunc
 		}
 		cacheKey := "admin:idem:" + key
 
+		// TD-F5-08 (accepted trade-off): the cached 2xx body is replayed
+		// verbatim, so meta.request_id/timestamp are from the first request.
+		// Identical replay is the idempotency contract; regenerating meta is
+		// intentionally out of scope.
 		if cached, err := rdb.Get(c.Request.Context(), cacheKey).Result(); err == nil {
 			c.Data(http.StatusOK, "application/json; charset=utf-8", []byte(cached))
 			c.Abort()

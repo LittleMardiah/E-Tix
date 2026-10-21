@@ -46,11 +46,6 @@ type GateRepository interface {
 	// GetTicketByID fetches ticket + owner + section names for gate decisions.
 	GetTicketByID(ctx context.Context, ticketID uuid.UUID) (*TicketLookup, error)
 
-	// GetTicketByFallbackPIN returns the ticket matching the given PIN if
-	// fallback_pin_used = FALSE and status = 'CONFIRMED'. Returns
-	// ErrTicketNotFound when no match.
-	GetTicketByFallbackPIN(ctx context.Context, pin string) (*TicketLookup, error)
-
 	// GetTicketByFallbackPINForUpdate is the row-locked variant (TD-F6-01).
 	GetTicketByFallbackPINForUpdate(ctx context.Context, tx pgx.Tx, pin string) (*TicketLookup, error)
 
@@ -126,20 +121,6 @@ func (r *PostgresGateRepository) GetTicketByID(ctx context.Context, ticketID uui
 			return nil, ErrTicketNotFound
 		}
 		return nil, fmt.Errorf("gate: get ticket: %w", err)
-	}
-	return tl, nil
-}
-
-// GetTicketByFallbackPIN returns the ticket matching the PIN if unused + CONFIRMED.
-func (r *PostgresGateRepository) GetTicketByFallbackPIN(ctx context.Context, pin string) (*TicketLookup, error) {
-	row := r.pool.QueryRow(ctx, ticketLookupSQL+
-		` WHERE t.fallback_pin = $1 AND t.fallback_pin_used = FALSE AND t.status::text = 'CONFIRMED'`, pin)
-	tl, err := scanTicketLookup(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrTicketNotFound
-		}
-		return nil, fmt.Errorf("gate: get ticket by pin: %w", err)
 	}
 	return tl, nil
 }

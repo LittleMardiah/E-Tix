@@ -11,6 +11,13 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// fanScorePublishTimeout bounds the async fan-score publish. RabbitMQ
+	// publisher confirms are a future enhancement; this prevents the
+	// detached goroutine from hanging indefinitely (TD-F2-03).
+	fanScorePublishTimeout = 5 * time.Second
+)
+
 type QueueTokenIssuer interface {
 	Generate(userID uuid.UUID, tier string, score int) (string, error)
 }
@@ -110,8 +117,14 @@ func IngressMiddleware(cfg IngressConfig) gin.HandlerFunc {
 			if merr != nil {
 				zap.L().Warn("ingress marshal fan score metadata failed", zap.String("user_id", uid.String()), zap.Error(merr))
 			} else {
+				// FIX P9a-8 TD-F2-03: the detached publish previously used
+				// context.Background(), which can block forever on a stalled
+				// broker and leak goroutines. Bound it with a timeout while
+				// keeping it off the request path.
 				go func() {
-					if perr := cfg.Publisher.Publish(context.Background(), "fan_score", payload); perr != nil {
+					pubCtx, cancel := context.WithTimeout(context.Background(), fanScorePublishTimeout)
+					defer cancel()
+					if perr := cfg.Publisher.Publish(pubCtx, "fan_score", payload); perr != nil {
 						zap.L().Warn("ingress publish fan score metadata failed", zap.String("user_id", uid.String()), zap.Error(perr))
 					}
 				}()

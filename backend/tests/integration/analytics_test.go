@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/analytics"
-	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
+	"github.com/LittleMardiah/E-Tix/backend/internal/event"
 )
 
 func setupAnalyticsEnv(t *testing.T) (*analytics.AnalyticsService, *pgxpool.Pool) {
@@ -34,8 +34,8 @@ func setupAnalyticsEnv(t *testing.T) (*analytics.AnalyticsService, *pgxpool.Pool
 	require.NoError(t, err)
 
 	anRepo := analytics.NewPostgresAnalyticsRepository(pool)
-	queueRepo := queue.NewPostgresEventRepository(pool)
-	svc := analytics.NewAnalyticsService(anRepo, queueRepo)
+	eventRepo := event.NewPostgresEventRepository(pool) // TD-F6-07: ownership lookup now lives in event pkg
+	svc := analytics.NewAnalyticsService(anRepo, eventRepo)
 	return svc, pool
 }
 

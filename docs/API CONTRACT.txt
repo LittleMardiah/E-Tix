@@ -174,6 +174,7 @@ ERROR CODES (STANDARDIZED)
 |-------------------------------------|------|----------------------------------------------------|
 | INVALID_REQUEST                     | 400  | Malformed request, missing field                   |
 | UNAUTHORIZED                        | 401  | Missing/invalid token                              |
+| INVALID_PIN                         | 401  | Wrong fallback PIN (distinct from wrong JWT)       |
 | TOKEN_TYPE_MISMATCH                 | 401  | Refresh token used as access token                 |
 | TOKEN_BLACKLISTED                   | 401  | Refresh token revoked (rotation)                   |
 | INVALID_QR_OR_TICKET_MISMATCH       | 401  | QR decoded ticket ID != request ticket ID          |
@@ -187,6 +188,7 @@ ERROR CODES (STANDARDIZED)
 | UNPROCESSABLE_ENTITY                | 422  | Business logic violation                           |
 | EVENT_ALREADY_STARTED               | 422  | Assignment attempted after event start time        |
 | RATE_LIMIT_EXCEEDED                 | 429  | Too many requests                                  |
+| NOT_IMPLEMENTED                     | 501  | Feature stub (e.g. PDF export before v1.1)         |
 | INTERNAL_ERROR                      | 500  | Unexpected backend error                           |
 | SERVICE_UNAVAILABLE                 | 503  | Database down or Redis circuit breaker open        |
 

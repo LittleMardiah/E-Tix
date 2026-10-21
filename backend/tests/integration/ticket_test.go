@@ -332,3 +332,25 @@ func (c *countingNotifier) SendFallbackPIN(_ context.Context, _ uuid.UUID, _, _,
 	c.calls++
 	return nil
 }
+
+// -------- TD-F5-06 (FIX P9a-8): cold-start path (no seeded last_seen) --------
+
+func TestIntegration_TicketNotification_ColdStart(t *testing.T) {
+	env := setupTicketEnv(t)
+	ctx := context.Background()
+
+	// A CONFIRMED ticket exists (from seed.sql). Crucially, do NOT seed
+	// ticket_notify:last_seen — that is the cold-start condition.
+	_, err := env.rdb.Get(ctx, "ticket_notify:last_seen").Result()
+	require.Error(t, err, "precondition: last_seen key must be absent")
+
+	notifier := &countingNotifier{}
+	w := worker.NewTicketNotificationWorker(env.pool, notifier, env.rdb, newTestLogger(), 0)
+
+	require.NoError(t, w.RunOnce(ctx), "cold start must not error on redis.Nil miss")
+	assert.GreaterOrEqual(t, notifier.calls, 1, "expected >=1 dispatch on cold start")
+
+	lastSeen, err := env.rdb.GetString(ctx, "ticket_notify:last_seen")
+	require.NoError(t, err)
+	assert.NotEmpty(t, lastSeen, "last_seen must be created after cold-start dispatch")
+}

@@ -105,6 +105,20 @@ func buildOrderBy(sortBy string) string {
 	}
 }
 
+// GetOrganizerID returns the organizer (owner) of an event. Moved here from
+// the queue package (TD-F6-07) because event ownership is catalog domain.
+func (r *PostgresEventRepository) GetOrganizerID(ctx context.Context, eventID uuid.UUID) (uuid.UUID, error) {
+	var orgID uuid.UUID
+	err := r.db.QueryRow(ctx, `SELECT organizer_id FROM events WHERE id = $1`, eventID).Scan(&orgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, fmt.Errorf("event not found: %w", err)
+		}
+		return uuid.Nil, fmt.Errorf("get organizer id: %w", err)
+	}
+	return orgID, nil
+}
+
 func (r *PostgresEventRepository) ListEvents(ctx context.Context, filter ListFilter) ([]Event, int, error) {
 	where, args := buildListWhere(filter)
 	order := buildOrderBy(filter.SortBy)

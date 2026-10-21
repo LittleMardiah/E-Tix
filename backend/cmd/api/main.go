@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/admin"
@@ -169,7 +170,9 @@ func main() {
 	gateHandler := gate.NewGateHandler(gateSvc)
 
 	anRepo := analytics.NewPostgresAnalyticsRepository(pgPool)
-	anSvc := analytics.NewAnalyticsService(anRepo, eventRepo)
+	// TD-F6-07: analytics ownership lookup now comes from the event repo.
+	catalogRepo := event.NewPostgresEventRepository(pgPool)
+	anSvc := analytics.NewAnalyticsService(anRepo, catalogRepo)
 	anHandler := analytics.NewAnalyticsHandler(anSvc)
 
 	ticketNotifier := notification.NewLogTicketNotification(logger)
@@ -196,7 +199,6 @@ func main() {
 	statusFetcher := worker.NewGatewayStatusFetcher(paymentGateway)
 	reconciliationWorker := worker.NewWebhookReconciliationWorker(pgPool, paymentRepo, reconciliationRepo, statusFetcher, systemUserUUID, logger)
 
-	catalogRepo := event.NewPostgresEventRepository(pgPool)
 	catalogSvc := event.NewEventService(catalogRepo)
 	catalogHandler := event.NewEventHandler(catalogSvc)
 
@@ -224,6 +226,7 @@ func main() {
 	router.Use(middleware.RecoveryMiddleware(logger))
 	router.Use(middleware.LoggerMiddleware(logger))
 	router.Use(middleware.CORSMiddleware(parseOrigins(cfg.CORSOrigins), logger))
+	router.Use(middleware.PrometheusMiddleware())
 
 	router.POST("/auth/register", auth.RateLimitMiddlewareScoped(rdb, 10, time.Hour, auth.RateLimitScopeIP), authHandler.Register)
 	router.POST("/auth/login", auth.RateLimitMiddlewareScoped(rdb, 5, time.Minute, auth.RateLimitScopeIP), authHandler.Login)
@@ -329,6 +332,10 @@ func main() {
 	router.GET("/events/:event_id",
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
 		catalogHandler.GetByID)
+
+	// FIX P9a-8 TD-F0-01: Prometheus scrape endpoint. Registered before the
+	// catch-all groups so it is never rate-limited or role-gated.
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	router.GET("/healthz/liveness", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})

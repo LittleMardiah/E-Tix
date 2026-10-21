@@ -364,3 +364,91 @@ func TestIntegration_LockSeats_TokenReplay409(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "replay must not create a second booking")
 }
+
+// ============================================================
+// TD-F0-05 (FIX P9a-8): multi-user concurrency — distinct users,
+// distinct queue tokens, same seat. Verifies per-user winner attribution.
+// ============================================================
+
+func TestIntegration_LockSeats_MultiUser_SeatContest(t *testing.T) {
+	svc, qt, pool, _ := setupBookingEnv(t)
+	ctx := context.Background()
+
+	const N = 5
+	seat := 77
+
+	userIDs := make([]uuid.UUID, N)
+	tokens := make([]string, N)
+	for i := 0; i < N; i++ {
+		userIDs[i] = uuid.New()
+		_, err := pool.Exec(ctx, `
+			INSERT INTO users (id, email, phone, name, password_hash, role, status, base_score)
+			VALUES ($1, $2, $3, $4, $5, 'customer', 'ACTIVE', 50)`,
+			userIDs[i],
+			fmt.Sprintf("multiuser-%d@test.local", i),
+			fmt.Sprintf("+6281299900%02d", i),
+			fmt.Sprintf("Multi User %d", i),
+			"$2a$12$dummyhashnotusedinprod",
+		)
+		require.NoError(t, err)
+		tokens[i] = newIntegrationToken(t, qt, userIDs[i])
+	}
+
+	// Clean up the extra users (and any bookings they created) before the
+	// pool is closed. LIFO cleanup: this runs before setupBookingEnv's.
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM bookings WHERE leader_user_id = ANY($1)`, userIDs)
+		_, _ = pool.Exec(bg, `DELETE FROM users WHERE id = ANY($1)`, userIDs)
+	})
+
+	type outcome struct {
+		userID uuid.UUID
+		err    error
+	}
+	results := make(chan outcome, N)
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		go func(i int) {
+			defer wg.Done()
+			_, err := svc.LockSeats(ctx, userIDs[i], seedEventID, seedVIPSectID,
+				&booking.LockSeatsRequest{SeatPositions: []int{seat}, PaymentMode: "SPLIT"},
+				tokens[i])
+			results <- outcome{userID: userIDs[i], err: err}
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+
+	var winners []uuid.UUID
+	var conflicts, other int
+	for r := range results {
+		switch {
+		case r.err == nil:
+			winners = append(winners, r.userID)
+		case errors.Is(r.err, booking.ErrSeatsNotAvailable):
+			conflicts++
+		default:
+			other++
+			t.Logf("unexpected err for %s: %v", r.userID, r.err)
+		}
+	}
+
+	require.Len(t, winners, 1, "exactly one distinct user must win the seat")
+	assert.Equal(t, N-1, conflicts, "all other distinct users must conflict")
+	assert.Equal(t, 0, other, "no unexpected errors")
+
+	// Per-user attribution: DB owner must be the winning user, exactly once.
+	var dbLeader uuid.UUID
+	var dbCount int
+	err := pool.QueryRow(ctx, `
+		SELECT leader_user_id, count(*) OVER ()
+		FROM bookings
+		WHERE section_id = $1 AND seat_positions @> $2::jsonb`,
+		seedVIPSectID, fmt.Sprintf("[%d]", seat),
+	).Scan(&dbLeader, &dbCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, dbCount, "exactly one booking row for the contested seat")
+	assert.Equal(t, winners[0], dbLeader, "booking leader must be the winning user")
+}

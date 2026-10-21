@@ -288,7 +288,7 @@ Verified: internal/queue/queue_p9a7_test.go (4 test baru) + go test ./internal/q
 Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ID: TD-F2-03
 Tanggal: 2026-10-15
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: RENDAH
 Deskripsi: IngressMiddleware publish fan_score metadata via goroutine +
   context.Background() (detached). Publish failure = Warn log only, tidak
@@ -297,6 +297,9 @@ Rencana Fix: Ganti publish synchronous dengan timeout, atau pakai RabbitMQ
   publisher confirms + DLQ.
 Trigger: FASE 9 atau saat observability review.
 Referensi: docs/AUDIT FASE 2 findings H11.
+Fix: internal/queue/middleware.go fan_score publish wrapped in
+  context.WithTimeout(5s) inside the goroutine; stays off request path.
+Verified: internal/queue tests pass; go build/vet clean.
 
 ID: TD-F2-04
 Tanggal: 2026-10-15
@@ -361,7 +364,7 @@ Referensi: docs/AUDIT FASE 3, H1 fix.
 
 ID: TD-F0-01
 Tanggal: 2026-10-16
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: MEDIUM
 Deskripsi: /metrics Prometheus endpoint tidak ada. Retro-audit cmd/api/main.go
   menemukan 0 route /metrics. Monitoring (Prometheus + Grafana) skip FASE 0
@@ -373,6 +376,10 @@ Rencana Fix: Tambah /metrics endpoint (prometheus/client_golang) + instrument
   payment_reconciliation_pending (per SECURITY_SPEC §9.3).
 Trigger: FASE 6 (analytics) atau FASE 9 (portfolio polish).
 Referensi: docs/AUDIT TOTAL FASE 0-3, opencode review 2026-10-16.
+Fix: internal/middleware/prometheus.go (http_request_duration_seconds,
+  http_requests_total) + GET /metrics via promhttp in cmd/api/main.go;
+  middleware covered by internal/middleware/prometheus_test.go.
+Verified: go build/vet clean; middleware tests pass.
 
 ID: TD-F0-02
 Tanggal: 2026-10-16
@@ -409,7 +416,7 @@ Referensi: docs/AUDIT TOTAL FASE 0-4, opencode review 2026-10-16.
 
 ID: TD-F0-04
 Tanggal: 2026-10-16
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: RENDAH
 Deskripsi: CI coverage output misleading. `go test -cover ./tests/integration/...`
   melaporkan "100.0% of statements" untuk package integration, padahal package
@@ -424,10 +431,13 @@ Rencana Fix: Update .github/workflows/test.yml → integration job pakai
 Trigger: FASE 5 (saat FASE 5 test integration ditambah) atau FASE 9 (polish).
 Referensi: docs/AUDIT TOTAL FASE 0-4 test quality audit, opencode review
   2026-10-16.
+Fix: .github/workflows/test.yml integration job now runs with
+  -coverpkg=./internal/... -cover so coverage measures production code.
+Verified: grep coverpkg in workflow (1 occurrence).
 
 ID: TD-F0-05
 Tanggal: 2026-10-16
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: RENDAH
 Deskripsi: Concurrency test di booking_test.go (TestIntegration_LockSeats_
   Concurrency_OneWinner) pakai seedCustomerID SAMA untuk semua N=10 racers.
@@ -440,13 +450,16 @@ Rencana Fix: Generate N distinct users (via seed.sql atau in-test INSERT)
 Trigger: FASE 5 saat booking queue token binding jadi critical, atau FASE 9.
 Referensi: docs/AUDIT TOTAL FASE 0-4 test quality audit, opencode review
   2026-10-16.
-
+Fix: tests/integration/booking_test.go — TestIntegration_LockSeats_MultiUser_SeatContest
+  creates 5 distinct users + 5 distinct queue tokens contesting one seat;
+  asserts exactly 1 winner, N-1 conflicts, and DB leader attribution.
+Verified: go vet -tags integration clean; executed in serial integration run.
 
 ---
 
 ID: TD-F0-06
 Tanggal: 2026-10-16
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: SEDANG
 Deskripsi: Local dev DB migration tidak auto-apply. Fresh checkout atau
   setelah pull → DB bisa kosong atau stale (contoh: 2026-10-16 DB v1
@@ -458,6 +471,9 @@ Rencana Fix: Tambah `backend/scripts/dev_setup.sh` yang jalankan docker
   Update docs/LOCAL_SETUP.md. Atau pre-commit hook.
 Trigger: FASE 5 setup atau saat ada dev baru onboarding.
 Referensi: Insiden 2026-10-16 (migrate down 1 silent revert).
+Fix: backend/scripts/dev_setup.sh — docker compose up, migrate up, seed;
+  idempotent and supports --no-docker / DATABASE_URL override.
+Verified: bash -n clean.
 
 ID: TD-F4-04
 Tanggal: 2026-10-16
@@ -535,7 +551,7 @@ Verified: internal/ticket/service_test.go — TestAssign_ConcurrentLoserReturnsC
 Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ID: TD-F5-05
 Tanggal: 2026-10-16
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: LOW
 Deskripsi: Setelah GetString miss → ("", nil), 7 lokasi masih cek errors.Is(err, 
   goredis.Nil). Sebagian dead (caller wrapper), sebagian valid (caller raw client).
@@ -546,10 +562,18 @@ Root Cause: Wrapper semantic change (GetString Nil → nil) tanpa cleanup caller
 Rencana Fix: Audit per-lokasi; hapus dead branch, biarkan raw-client branch.
 Trigger: FASE 9 polish atau saat refactor wrapper.
 Referensi: E9-B2 follow-up observasi.
+Fix: per-location audit. Only booking/service.go:322,356 use the embedded
+  raw go-redis Get, so errors.Is(err, goredis.Nil) is live there. The other
+  listed sites (auth/blacklist, auth/service, payment/idempotency,
+  queue/fan_score) call the GetString wrapper (miss -> "", nil) and no
+  longer contain Nil checks (cleaned during the wrapper refactor). No dead
+  Nil branches remain. auth/handler had no Nil branch.
+Verified: grep -rn 'goredis.Nil|redis.Nil' internal (non-test) = 2 live
+  booking sites + wrapper internals only.
 
 ID: TD-F5-06
 Tanggal: 2026-10-16
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: LOW
 Deskripsi: Test TestIntegration_TicketNotification_DispatchesPIN seed key 
   ticket_notify:last_seen sebelum RunOnce — tidak exercise cold-start miss path 
@@ -559,13 +583,16 @@ Rencana Fix: Tambah test TestIntegration_TicketNotification_ColdStart: tidak
   seed key, assert RunOnce sukses + dispatch.
 Trigger: FASE 9 atau saat worker di-refactor.
 Referensi: E9-B2 override log.
-
+Fix: tests/integration/ticket_test.go — TestIntegration_TicketNotification_ColdStart
+  does not seed ticket_notify:last_seen; asserts RunOnce succeeds,
+  dispatches >=1 PIN, and creates last_seen afterwards.
+Verified: go vet -tags integration clean; executed in serial integration run.
 
 ---
 
 ID: TD-F5-07
 Tanggal: 2026-10-17
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: LOW
 Deskripsi: Content-Type inconsistency — ticket handler cache hit pakai c.Data
   ("application/json", no charset) vs c.JSON ("application/json; charset=utf-8").
@@ -576,10 +603,13 @@ Rencana Fix: Set explicit Content-Type header sebelum c.Data, atau cache JSON
   object (re-serialize via c.JSON). Trigger: FASE 9 polish atau saat client 
   report issue.
 Referensi: docs/AUDIT FASE 5, audit-B finding #3.
+Fix: internal/ticket/handler.go both c.Data sites now use
+  'application/json; charset=utf-8', matching c.JSON on fresh responses.
+Verified: internal/ticket tests pass; go build/vet clean.
 
 ID: TD-F5-08
 Tanggal: 2026-10-17
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-22, accepted trade-off)
 Prioritas: LOW
 Deskripsi: Idempotency cache hit return stale meta.request_id + meta.timestamp 
   dari request pertama. Behavior benar (idempotency), tapi tracing misleading.
@@ -588,6 +618,11 @@ Rencana Fix: Cache response tanpa meta, regenerate meta di handler, atau
   accept trade-off (spec idempotency = identical response).
 Trigger: FASE 9 polish.
 Referensi: docs/AUDIT FASE 5, audit-B finding #5.
+Fix: accepted per TD Rencana Fix option 3. Documented at replay sites
+  (ticket assign cache hit; admin/resale idempotency middleware): replaying
+  the original envelope including meta.request_id IS the idempotency
+  contract; regenerating meta would break it.
+Verified: internal/ticket, admin, resale tests pass.
 
 ID: TD-F5-09
 Tanggal: 2026-10-17
@@ -652,7 +687,7 @@ Referensi: E2-A audit 2026-10-18.
 
 ID: TD-F6-02
 Tanggal: 2026-10-18
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-22)
 Prioritas: RENDAH
 Deskripsi: RBACMiddleware (internal/auth/rbac.go:9) ada tapi 0 usage baseline 
   FASE 0-5. FASE 6 scan-qr = route PERTAMA yang butuh role gating. Chain 
@@ -665,7 +700,11 @@ Rencana Fix:
   - Tambah test: request tanpa role → 401; wrong role → 403; correct role → pass.
 Trigger: E2-B (langsung) + FASE 8 admin implementation.
 Referensi: E2-B audit 2026-10-18.
-
+Fix: verified wiring — cmd/api/main.go:391 adminGroup.Use(auth.RBACMiddleware("admin",
+  "event_organizer")) after AuthMiddleware; gate routes gated at main.go:294-322.
+  RBAC middleware unit tests already exist (internal/auth/middleware_test.go:
+  allow matching role, allow any-of, deny unlisted, missing role -> 401).
+Verified: grep RBACMiddleware main.go; auth tests pass.
 
 ---
 
@@ -710,7 +749,7 @@ Referensi: E3-A' audit 2026-10-20.
 
 ID: TD-F6-05
 Tanggal: 2026-10-20
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: RENDAH
 Deskripsi: Error code INVALID_PIN (handler VerifyPIN → 401) tidak ada di 
   API_CONTRACT §3.2 list. Client-side parsing bisa mismatch kalau spec 
@@ -721,12 +760,15 @@ Rencana Fix: FASE 9 update API_CONTRACT §3.2 tambah INVALID_PIN, atau
   ganti ke UNAUTHORIZED (option).
 Trigger: FASE 9 doc polish.
 Referensi: E3-B audit 2026-10-20.
+Fix: docs/API CONTRACT.txt §3.2 error table now documents INVALID_PIN (401)
+  matching internal/gate/handler.go.
+Verified: grep INVALID_PIN docs.
 
 ---
 
 ID: TD-F6-06
 Tanggal: 2026-10-20
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: RENDAH
 Deskripsi: Non-tx GateRepository.GetTicketByFallbackPIN (interface + impl) 
   dead code — 0 callers setelah VerifyPIN refactor ke ForUpdate variant. 
@@ -736,30 +778,39 @@ Rencana Fix: Remove dari interface + impl (breaking internal only, no
   external caller). Atau keep sebagai convenience method.
 Trigger: FASE 9 hygiene atau saat refactor berikutnya.
 Referensi: E3-B audit 2026-10-20.
-
+Fix: removed non-tx GetTicketByFallbackPIN from GateRepository interface and
+  PostgresGateRepository impl; VerifyPIN uses GetTicketByFallbackPINForUpdate.
+Verified: grep shows no non-tx callers; gate tests pass.
 
 ---
 
 ID: TD-F6-07
 Tanggal: 2026-10-20
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: RENDAH
 Deskripsi: queue.EventRepository.GetOrganizerID = layer leak (belongs in 
   internal/event/repository.go). Pragmatic reuse untuk urgent fix.
 Rencana Fix: Move ke event repo + update NewAnalyticsService wire.
 Trigger: FASE 9 refactor.
 Referensi: FASE 6 mega audit 2026-10-20.
+Fix: moved GetOrganizerID to event.PostgresEventRepository (catalog domain);
+  removed from queue.PostgresEventRepository; cmd/api now passes catalogRepo
+  to analytics.NewAnalyticsService.
+Verified: event/queue/analytics tests pass; go build/vet clean.
 
 ---
 
 ID: TD-F6-08
 Tanggal: 2026-10-20
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: RENDAH
 Deskripsi: Error code NOT_IMPLEMENTED (PDF 501) tidak ada di API_CONTRACT §3.2.
 Rencana Fix: Update API_CONTRACT §3.2.
 Trigger: FASE 9 doc polish.
 Referensi: FASE 6 mega audit 2026-10-20.
+Fix: docs/API CONTRACT.txt §3.2 error table now documents NOT_IMPLEMENTED (501)
+  matching internal/analytics/handler.go.
+Verified: grep NOT_IMPLEMENTED docs.
 
 ---
 
@@ -1080,3 +1131,20 @@ Rencana Fix: Post-demo — refactor seed loop to track "first valid parsed"
   "unavailable" or "no sections"?).
 Trigger: FASE 9 P9a-7 (event pkg polish) OR FASE 9.5 (post-demo).
 Referensi: P9a-5 OpenCode log 2026-10-22, event/summary_test.
+
+---
+
+ID: TD-F9-10
+Tanggal: 2026-10-22
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Parallel integration test flakiness. `go test -tags integration ./tests/integration/...`
+  in parallel mode (default -p=N) intermittently fails due to the shared Postgres
+  test database — admin/auth suites race on seed data and row locks. Reproduced
+  on baseline `e799883` via worktree (pre-existing, NOT a P9a-7 regression).
+  Interim fix: CI runs integration with `-p 1` (serial). Clean on serial execution.
+Root Cause: Tests share one test DB; no per-test schema/transaction isolation.
+Rencana Fix: Proper fix post-demo — testcontainers per test file OR unique schema
+  prefix per test OR transaction rollback per test via harness (~15-20 jam).
+Trigger: P9a-9 (integration close) OR post-demo test hardening.
+Referensi: P9a-7 OpenCode log 2026-10-22; V2.6 §11.2 worktree comparison.

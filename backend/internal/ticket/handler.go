@@ -216,8 +216,13 @@ func (h *TicketHandler) Assign(c *gin.Context) {
 	sum := sha256.Sum256([]byte(idemKey + ":" + ownerID.String() + ":" + ticketID.String()))
 	cacheKey := "idem:assign:" + hex.EncodeToString(sum[:])
 
+	// TD-F5-08 (accepted trade-off): idempotent replay returns the original
+	// envelope, including the first request's meta.request_id. Per spec,
+	// idempotency means an identical response; regenerating meta would break
+	// that guarantee and is intentionally not done.
 	if cached, _ := h.svc.CacheGet(c.Request.Context(), cacheKey); cached != "" {
-		c.Data(http.StatusOK, "application/json", []byte(cached))
+		// FIX P9a-8 TD-F5-07: match c.JSON charset on the cached-byte path.
+		c.Data(http.StatusOK, "application/json; charset=utf-8", []byte(cached))
 		return
 	}
 
@@ -246,5 +251,5 @@ func (h *TicketHandler) Assign(c *gin.Context) {
 		zap.L().Warn("assign: cache set failed", zap.Error(err))
 	}
 
-	c.Data(http.StatusOK, "application/json", body)
+	c.Data(http.StatusOK, "application/json; charset=utf-8", body)
 }

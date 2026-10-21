@@ -315,11 +315,6 @@ func TestP9a7_GetPostEventReport_Forbidden(t *testing.T) {
 
 // --- HTTP handler layer ---
 
-type p9a7Route struct {
-	method string
-	path   string
-}
-
 func p9a7Do(t *testing.T, h *AnalyticsHandler, method, kind, eventID, userID, role, query string) *httptest.ResponseRecorder {
 	t.Helper()
 	r := gin.New()
