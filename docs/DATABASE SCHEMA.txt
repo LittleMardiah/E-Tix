@@ -1,9 +1,9 @@
 ================================================================================
-DATABASE SCHEMA: E-Tix Flash (Smart Ticketing Platform) - v2.9-FINAL
+DATABASE SCHEMA: E-Tix Flash (Smart Ticketing Platform) - v2.9.1
 ================================================================================
 
-Version:         2.9-FINAL
-Last Updated:    2026-09-07
+Version:         2.9.1
+Last Updated:    2026-10-22
 Author:          M. Arif Aulia
 Platform:        Supabase PostgreSQL 15+
 Status:          ✅ 100% PRODUCTION-READY — LOCKED (FINAL — ALL REVIEWS COMPLETE)
@@ -765,9 +765,13 @@ EXECUTE FUNCTION update_user_loyalty_score();
 
 CREATE OR REPLACE FUNCTION generate_post_event_report()
 RETURNS TRIGGER AS $$
+-- FIX P9a-7 TD-F6-11: the unused DECLARE variable `gate_utilization` was
+-- removed. It collided with the CTE column alias `gate_agg.gate_utilization`
+-- and raised SQLSTATE 42702 (ambiguous column reference) on
+-- `UPDATE events SET status='COMPLETED'`. Fixed by migration
+-- 003_fix_post_event_trigger.up.sql — this doc now mirrors the migration.
 DECLARE
   report_data JSONB;
-  gate_utilization JSONB;
 BEGIN
   IF NEW.status = 'COMPLETED' THEN
     WITH gate_stats AS (
@@ -1194,7 +1198,7 @@ ORDER BY t.seat_position;
 -- ORDER BY id ASC untuk mencegah deadlock.
 
 ================================================================================
-END OF DATABASE SCHEMA v2.9-FINAL
+END OF DATABASE SCHEMA v2.9.1
 ================================================================================
 
 ✅ 100% PRODUCTION-READY — LOCKED
@@ -1207,5 +1211,5 @@ END OF DATABASE SCHEMA v2.9-FINAL
 ✅ All features from F001-F006 supported
 ✅ Ready for backend implementation
 
-Last Updated: 2026-09-07 by M. Arif Aulia
+Last Updated: 2026-10-22 by FASE 9 P9a-7 (TD-F6-11 trigger-function sync)
 Bismillah — Final Version. 100% Complete. LOCKED. NO MORE REVISIONS.

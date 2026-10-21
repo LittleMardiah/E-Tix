@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/ticket"
 )
@@ -60,7 +61,10 @@ func (s *GateService) ScanQR(ctx context.Context, scannerUserID uuid.UUID, req *
 	decoded, err := ticket.VerifyDynamicQR(req.QRData, t.OwnerUserID, t.QRSecretKey, now)
 	if err != nil || decoded != req.TicketID {
 		// INVALID — record attempt, no state change, no lock needed.
-		_ = s.repo.InsertScan(ctx, &ScanRecord{
+		// FIX P9a-7 TD-F6-12: the scan row must never be silently dropped —
+		// a failed INSERT (FK violation, DB down) hides fraud attempts from
+		// analytics. Log a warning (best-effort; the INVALID verdict stands).
+		if serr := s.repo.InsertScan(ctx, &ScanRecord{
 			ScannerUserID:   &scannerUserID,
 			ID:              req.ScanID,
 			TicketID:        req.TicketID,
@@ -69,7 +73,12 @@ func (s *GateService) ScanQR(ctx context.Context, scannerUserID uuid.UUID, req *
 			ScanStatus:      "INVALID",
 			ScanMethod:      "QR",
 			ScannedAt:       now,
-		})
+		}); serr != nil {
+			zap.L().Warn("gate: insert INVALID scan failed",
+				zap.String("ticket_id", req.TicketID.String()),
+				zap.String("scan_id", req.ScanID.String()),
+				zap.Error(serr))
+		}
 		return nil, ErrInvalidQR
 	}
 

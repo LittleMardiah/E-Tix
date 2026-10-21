@@ -1,5 +1,7 @@
 package payment
 
+// STP traceability: UT-PAY-004 (mapped below).
+
 import (
 	"context"
 	"testing"
@@ -131,6 +133,7 @@ func TestBulkAssign_NotLeader(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotLeader)
 }
 
+// UT-PAY-004: BulkAssign_InactiveTarget_Returns422
 func TestBulkAssign_InactiveTarget(t *testing.T) {
 	bid := uuid.New()
 	leader := uuid.New()

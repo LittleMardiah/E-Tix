@@ -1,9 +1,9 @@
 ================================================================================
-SOFTWARE TEST PLAN (STP): E-Tix Flash (Smart Ticketing Platform) (v1.1-FINAL)
+SOFTWARE TEST PLAN (STP): E-Tix Flash (Smart Ticketing Platform) (v1.2-FINAL)
 ================================================================================
 
-Version:         1.1-FINAL
-Last Updated:    2026-09-11
+Version:         1.2-FINAL
+Last Updated:    2026-10-22
 Author:          M. Arif Aulia
 Status:          ✅ 100% PRODUCTION-READY — REVISED & LOCKED FOR EXECUTION
 Platform:        Golang (Gin) + PostgreSQL (Supabase) + Redis (Upstash) + RabbitMQ (CloudAMQP)
@@ -58,7 +58,7 @@ Status:                 ✅ Approved / Active
 
 Dokumen ini menjelaskan bagaimana testing akan dilakukan untuk release E-Tix Flash v1.0.0, mencakup:
 
-- Scope testing (F001-F006, 24 screens, 37 endpoints, 12 tabel DB)
+- Scope testing (F001-F006, 24 screens, 43 endpoints, 12 tabel DB)
 - Strategi testing (Unit → Integration → API → E2E → NFT)
 - Execution plan (timeline, environment, triggers)
 - Quality criteria (acceptance criteria per PRD §Success Metrics)
@@ -74,10 +74,10 @@ Dokumen ini menjelaskan bagaimana testing akan dilakukan untuk release E-Tix Fla
 - [✅] LOGIC_FLOW.txt (v1.4-FINAL) — State machines, concurrency, Circuit Breaker
 - [✅] HALAMAN.txt (v1.1-FINAL) — 24 screens wireframes
 - [✅] TDD.txt (v1.10-FINAL) — Technical design, Testing Strategy §10
-- [✅] API_CONTRACT.txt (v1.2-FINAL) — 37 endpoints
+- [✅] API_CONTRACT.txt (v1.3-FINAL) — 43 endpoints
 - [✅] SECURITY_SPEC.txt (v1.4-FINAL) — Threat model, Security Testing §12.2
 - [✅] DRP.txt (v1.2-FINAL) — 9 playbooks, Testing & Drills §7
-- [🔄] STP.txt (v1.1-FINAL) — [THIS DOCUMENT]
+- [🔄] STP.txt (v1.2-FINAL) — [THIS DOCUMENT]
 - [⏳] ROADMAP.txt — Next
 
 ================================================================================
@@ -112,12 +112,12 @@ SURFACE AREAS COVERED (Cross-Reference Foundation):
 
 | Surface                     | Quantity | Source                        | Covered In Section |
 |-----------------------------|----------|-------------------------------|--------------------|
-| REST Endpoints              | 37       | API_CONTRACT v1.2             | 3.2 (API Test)     |
-| Database Tables             | 12       | DATABASE_SCHEMA v2.9          | 3.2 (Integration)  |
+| REST Endpoints              | 43       | API_CONTRACT v1.3             | 3.2 (API Test)     |
+| Database Tables             | 12       | DATABASE_SCHEMA v2.9.1        | 3.2 (Integration)  |
 | Wireframe Screens           | 24       | HALAMAN v1.1                  | 3.2 (E2E)          |
 | Background Workers          | 6        | TDD v1.10 §6                  | 3.2 (Integration)  |
 | Redis Lua Scripts           | 2        | TDD v1.10 §6.2                | 3.2 (Unit)         |
-| DB Triggers                 | 8        | DATABASE_SCHEMA v2.9          | 3.2 (Integration)  |
+| DB Triggers                 | 8        | DATABASE_SCHEMA v2.9.1        | 3.2 (Integration)  |
 | DR Playbooks                | 9        | DRP v1.2 §5                   | 3.2 (DR Test)      |
 | Threat Categories           | 12       | SECURITY_SPEC v1.4 §1         | 3.2 (Security)     |
 
@@ -126,7 +126,7 @@ SURFACE AREAS COVERED (Cross-Reference Foundation):
 
 | Feature                              | Reason                                              | Target Release |
 |--------------------------------------|-----------------------------------------------------|----------------|
-| Change Password / Forgot Password    | OUT OF SCOPE per API_CONTRACT v1.2 (no endpoint)    | Future (v1.1+) |
+| Change Password / Forgot Password    | OUT OF SCOPE per API_CONTRACT v1.3 (no endpoint)    | Future (v1.1+) |
 | Internal Wallet / Ledger             | OUT OF SCOPE per PRD v6.0 "Out of Scope"            | Never (design) |
 | Live Streaming Konser                | OUT OF SCOPE per PRD v6.0                           | Never          |
 | Physical Merchandise Logistics       | OUT OF SCOPE per PRD v6.0                           | Never          |
@@ -280,14 +280,49 @@ NOTES pada NEW v1.1:
 - UT-GATE-004: Memvalidasi bahwa HMAC QR dengan timestamp > 30s (di luar window
   tolerance ±30s dari LOGIC_FLOW v1.4 §5.4) di-reject dengan error code
   `INVALID_QR_OR_TICKET_MISMATCH` (401) — BUKAN `EXPIRED_QR` (tidak ada di
-  API_CONTRACT v1.2 §3.2).
+  API_CONTRACT v1.3 §3.2).
 - UT-GATE-005: Boundary test — 501 scans batch sync melebihi max 500 (SECURITY_SPEC
   v1.4 §7.2) → `UNPROCESSABLE_ENTITY` (422) — business rule violation.
 - UT-GATE-006: Body > 1 MB (BodySizeLimit) → HTTP 413 Payload Too Large (HTTP
   standard, dari BodySizeLimit middleware).
 - UT-ADMIN-002 & UT-ADMIN-003: Assertion diperketat — verify admin_actions
   record menyertakan ip_address (INET) + user_agent (TEXT) sesuai DATABASE_SCHEMA
-  v2.9 + SECURITY_SPEC §9.1.
+  v2.9.1 + SECURITY_SPEC §9.1.
+
+NOTES TRACEABILITY (v1.2 — TD-F5-09):
+  Setiap Test Case ID di tabel LEVEL 1 (di atas) sekarang memakai ID yang sama
+  sebagai komentar di file test backend (`backend/internal/<module>/*_test.go`),
+  sehingga STP <-> test dapat ditelusuri dua arah. Status mapping
+  (verified terhadap source code 2026-10-22):
+
+  | STP ID                  | Backend test file / function                                        | Status        |
+  |-------------------------|-----------------------------------------------------------------------|---------------|
+  | UT-AUTH-003             | internal/auth/jwt_test.go :: TestValidateAccessToken_RefreshAsAccess   | MAPPED        |
+  | UT-AUTH-004             | internal/auth/blacklist_test.go :: TestIsBlacklisted_True              | MAPPED        |
+  | UT-BOOK-001..005        | internal/booking/service_test.go (UT-BOOK-001..007)                   | MAPPED        |
+  | UT-PAY-003              | internal/payment/handler_extra_test.go :: ...IdempotentReplayReturnsCached | MAPPED    |
+  | UT-PAY-004              | internal/payment/bulkassign_test.go :: TestBulkAssign_InactiveTarget   | MAPPED        |
+  | UT-TICK-001             | internal/ticket/qr_generator_test.go :: TestGenerateQRData_Success     | MAPPED        |
+  | UT-TICK-004             | internal/ticket/repository_test.go :: TestRepo_MarkFallbackPINUsed_SingleUse | MAPPED  |
+  | UT-GATE-001,002,003,005 | internal/gate/gate_p9a6_test.go                                     | MAPPED        |
+  | UT-RESALE-001..003      | internal/resale/resale_p9a6_test.go                                 | MAPPED        |
+  | UT-WORK-001,002         | internal/worker/booking_expiry_test.go                              | MAPPED        |
+  | UT-AUTH-001             | — (tidak ada HashPassword/bcrypt di source)                          | GAP           |
+  | UT-AUTH-002             | — (tidak ada test token kadaluarsa)                                 | GAP           |
+  | UT-PAY-001, UT-PAY-002  | — (tidak ada test assertion external_transaction_id / webhook lookup)| GAP          |
+  | UT-TICK-002             | — (tidak ada test QR dengan ticket_id berbeda)                       | GAP           |
+  | UT-TICK-003             | — (fallback PIN disimpan PLAIN, tidak di-hash)                        | GAP           |
+  | UT-GATE-004, UT-GATE-006| — (expired-HMAC window / body >1MB belum ada test)                 | GAP           |
+  | UT-ADMIN-001            | — (admin 2FA lockout ada di internal/admin/lockout.go, tanpa test)   | GAP           |
+  | UT-ADMIN-002, UT-ADMIN-003 | internal/admin/service_test.go (audit tercatat, ip_address + user_agent BELUM di-assert) | PARTIAL |
+  | UT-WORK-003, UT-WORK-004| — (resale expiry TTL / DB queue sync belum ada test)                 | GAP           |
+  | UT-UTIL-001..003        | — (internal/util tidak punya file test)                             | GAP           |
+  | (fan-score / queue-token / captcha) | internal/queue/queue_p9a6_test.go, queue_p9a7_test.go | NO STP ID   |
+
+  GAP list (follow-up di luar scope P9a-7): UT-AUTH-001, UT-AUTH-002, UT-PAY-001,
+  UT-PAY-002, UT-TICK-002, UT-TICK-003, UT-GATE-004, UT-GATE-006, UT-ADMIN-001,
+  UT-WORK-003, UT-WORK-004, UT-UTIL-001..003, plus penambahan ID STP untuk modul
+  fan-score / queue-token / captcha.
 
 LEVEL 2: INTEGRATION TESTS
 ────────────────────────────────────────────────────────────────────────────────
@@ -358,7 +393,7 @@ NOTES pada IT-GATE-003 (NEW v1.1):
   HMAC QR tolerance window: block-1, block, block+1 (LOGIC_FLOW §5.4).
   Kalau QR di-generate di timestamp block N, verifikasi di block N+2 (60s+)
   → signature mismatch → API_CONTRACT §11.1 → `INVALID_QR_OR_TICKET_MISMATCH`
-  (401). BUKAN `EXPIRED_QR` (tidak ada di API_CONTRACT v1.2).
+  (401). BUKAN `EXPIRED_QR` (tidak ada di API_CONTRACT v1.3).
 
 LEVEL 3: API / CONTRACT TESTS
 ────────────────────────────────────────────────────────────────────────────────
@@ -366,7 +401,7 @@ LEVEL 3: API / CONTRACT TESTS
 Purpose: Test API contracts (request/response schema, status codes, auth).
 
 Scope:
-- [x] All 37 endpoints (API_CONTRACT v1.2)
+- [x] All 43 endpoints (API_CONTRACT v1.3)
 - [x] Request validation (schema, data types, required fields)
 - [x] Response validation (schema, status codes, meta envelope)
 - [x] HTTP method correctness
@@ -892,7 +927,7 @@ Total Testing Effort: [Estimated — to be finalized upon sprint planning]
 | P1    | Week 1      | Setup env, CI/CD, testcontainers, seed fixtures                | M. Arif Aulia    |
 | P2    | Week 2-3    | Unit tests (coverage 85%) — per module                        | M. Arif Aulia    |
 | P3    | Week 3-4    | Integration tests (critical paths + workers + triggers)        | M. Arif Aulia    |
-| P4    | Week 4-5    | API contract tests (all 37 endpoints)                          | M. Arif Aulia    |
+| P4    | Week 4-5    | API contract tests (all 43 endpoints)                          | M. Arif Aulia    |
 | P5    | Week 5-6    | E2E tests (5 critical journeys) — Playwright                   | M. Arif Aulia    |
 | P6    | Week 6-7    | Performance (k6) + Security (OWASP ZAP) + Chaos                | M. Arif Aulia    |
 | P7    | Week 7      | Regression suite (full) + Bug fixes                            | M. Arif Aulia    |
@@ -1087,7 +1122,7 @@ BUG TRACKING TOOL: GitHub Issues dengan labels:
 WHAT TO AUTOMATE:
   [x] All unit tests (100%)
   [x] All integration tests (100%)
-  [x] Critical API endpoints (100% of 37 endpoints)
+  [x] Critical API endpoints (100% of 43 endpoints)
   [x] Critical E2E workflows (5 journeys)
   [x] Regression test suite (100%)
   [x] Performance baselines (k6 + Prometheus)
@@ -1529,7 +1564,7 @@ SIGN-OFF:
 - X-Queue-Token: JWT header single-use untuk booking lock.
 - X-Admin-2FA-Token: Token wajib untuk admin financial mutations.
 - INVALID_QR_OR_TICKET_MISMATCH: Error code 401 untuk QR invalid / expired /
-  ticket ID mismatch (API_CONTRACT v1.2 §3.2). BUKAN `EXPIRED_QR` (tidak ada).
+  ticket ID mismatch (API_CONTRACT v1.3 §3.2). BUKAN `EXPIRED_QR` (tidak ada).
 - UNPROCESSABLE_ENTITY: Error code 422 untuk business rule violation — dipakai
   untuk batch > 500 scans per request (SECURITY_SPEC v1.4 §7.2).
 - Payload Too Large: HTTP standard 413 (bukan custom error code) — dikembalikan
@@ -1586,7 +1621,7 @@ SIGN-OFF:
   - Testing Strategy (85% coverage, 5 E2E journeys, k6 20k RPS) ✓
   - Out of Scope respected (no wallet/ledger, no live streaming, dst.) ✓
 
-✅ DATABASE_SCHEMA v2.9-FINAL Sync:
+✅ DATABASE_SCHEMA v2.9.1 Sync:
   - 12 tables covered in integration tests ✓
   - All 8 triggers tested (check_booking_payment_complete, handle_resale_lifecycle, dst.) ✓
   - RLS policies tested (IT-RLS-001, IT-RLS-002) ✓
@@ -1616,8 +1651,8 @@ SIGN-OFF:
   - Circuit Breaker (5s/30s/5 max) ✓
   - Connection pool (MaxConns=15) tested ✓
 
-✅ API_CONTRACT v1.2-FINAL Sync:
-  - All 37 endpoints in Level 3 API tests ✓
+✅ API_CONTRACT v1.3-FINAL Sync:
+  - All 43 endpoints in Level 3 API tests ✓
   - Error codes (400/401/403/404/409/422/429/500/503) ✓
   - X-Idempotency-Key, X-Queue-Token, X-Admin-2FA-Token headers ✓
   - IDOR patched (resale buy) tested ✓
@@ -1661,15 +1696,16 @@ SIGN-OFF:
 | Version  | Date       | Author       | Changes                                                                                                                                            |
 |----------|------------|--------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
 | 1.0-FINAL| 2026-09-11 | M. Arif Aulia| Initial STP document for E-Tix Flash v1.0.0. Synchronized with PRD v6.0, DATABASE_SCHEMA v2.9, LOGIC_FLOW v1.4, HALAMAN v1.1, TDD v1.10, API_CONTRACT v1.2, SECURITY_SPEC v1.4, DRP v1.2. Covers 6 testing levels (Unit, Integration, API, E2E, NFT, DR), 5 critical journeys, 12 threat categories, 9 DR playbooks. |
-| 1.1-FINAL| 2026-09-11 | M. Arif Aulia| **Post-Gemini review fixes:** 1) UT-GATE-004 (NEW): Expired HMAC > 30s → 401 INVALID_QR_OR_TICKET_MISMATCH (FLAG: EXPIRED_QR tidak ada di API_CONTRACT v1.2). 2) IT-GATE-003 (NEW): Integration test expired QR. 3) UT-GATE-005 (NEW): Boundary 501 scans → 422 UNPROCESSABLE_ENTITY (FLAG: PAYLOAD_TOO_LARGE bukan error code resmi). 4) UT-GATE-006 (NEW): Body >1MB → 413 Payload Too Large (HTTP standard). 5) IT-PAY-004 (UPDATED): Partial split-pay timeout scenario (3 PAID, 1 EXPIRED) with auto-refund + full seat release. 6) UT-ADMIN-002 (UPDATED) & UT-ADMIN-003 (NEW): Assertion ip_address + user_agent di admin_actions. 7) Journey 4 & 5 (UPDATED): added expired QR, batch boundary, audit trail steps. |
+| 1.1-FINAL| 2026-09-11 | M. Arif Aulia| **Post-Gemini review fixes:** 1) UT-GATE-004 (NEW): Expired HMAC > 30s → 401 INVALID_QR_OR_TICKET_MISMATCH (FLAG: EXPIRED_QR tidak ada di API_CONTRACT v1.3). 2) IT-GATE-003 (NEW): Integration test expired QR. 3) UT-GATE-005 (NEW): Boundary 501 scans → 422 UNPROCESSABLE_ENTITY (FLAG: PAYLOAD_TOO_LARGE bukan error code resmi). 4) UT-GATE-006 (NEW): Body >1MB → 413 Payload Too Large (HTTP standard). 5) IT-PAY-004 (UPDATED): Partial split-pay timeout scenario (3 PAID, 1 EXPIRED) with auto-refund + full seat release. 6) UT-ADMIN-002 (UPDATED) & UT-ADMIN-003 (NEW): Assertion ip_address + user_agent di admin_actions. 7) Journey 4 & 5 (UPDATED): added expired QR, batch boundary, audit trail steps. |
+| 1.2-FINAL| 2026-10-22 | FASE 9 P9a-7| **Traceability + endpoint-count sync (TD-F5-09, TD-F9-02):** 1) Level 1 test case IDs sekarang punya komentar ID yang sama di file test backend (internal/<module>/*_test.go) — traceability matrix + gap list di §3.2. 2) Endpoint count 37 -> 43 (32 direct + 11 /admin routes), API_CONTRACT v1.2 -> v1.3, DATABASE_SCHEMA v2.9 -> v2.9.1. |
 
 ================================================================================
-END OF STP v1.1-FINAL
+END OF STP v1.2-FINAL
 ================================================================================
 
 ✅ 100% PRODUCTION-READY — REVISED & LOCKED
-✅ Synchronized with ALL foundation documents (PRD v6.0, DATABASE_SCHEMA v2.9,
-   LOGIC_FLOW v1.4, HALAMAN v1.1, TDD v1.10, API_CONTRACT v1.2, SECURITY_SPEC v1.4,
+✅ Synchronized with ALL foundation documents (PRD v6.0, DATABASE_SCHEMA v2.9.1,
+   LOGIC_FLOW v1.4, HALAMAN v1.1, TDD v1.10, API_CONTRACT v1.3, SECURITY_SPEC v1.4,
    DRP v1.2)
 ✅ 6 testing levels (Unit, Integration, API, E2E, NFT, DR)
 ✅ 5 critical user journeys (E2E)
@@ -1680,5 +1716,5 @@ END OF STP v1.1-FINAL
 ✅ 2 ghost error codes flagged & corrected (EXPIRED_QR, PAYLOAD_TOO_LARGE)
 ✅ Ready for ROADMAP.txt
 
-Last Updated: 2026-09-11 by M. Arif Aulia
+Last Updated: 2026-10-22 by FASE 9 P9a-7 (TD-F5-09 traceability, TD-F9-02 endpoint count)
 Bismillah — Final Version. 100% Complete. LOCKED.

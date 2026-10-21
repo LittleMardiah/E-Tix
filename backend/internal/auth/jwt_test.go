@@ -1,5 +1,8 @@
 package auth
 
+// STP traceability: UT-AUTH-003 (mapped below) — UT-AUTH-001/002 have no
+// matching test yet (gap tracked in TD-F5-09).
+
 import (
 	"crypto/rand"
 	"crypto/rsa"
@@ -118,6 +121,7 @@ func TestValidateAccessToken_Valid(t *testing.T) {
 	assert.WithinDuration(t, time.Now().Add(AccessTokenTTL), claims.ExpiresAt.Time, time.Minute)
 }
 
+// UT-AUTH-003: ValidateJWT_RefreshUsedAsAccess_ReturnsTokenTypeMismatch
 func TestValidateAccessToken_RefreshAsAccess(t *testing.T) {
 	svc := newTestJWTService(t)
 	refresh, err := svc.GenerateRefreshToken(newTestUser())

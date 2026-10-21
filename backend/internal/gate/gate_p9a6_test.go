@@ -1,5 +1,9 @@
 package gate
 
+// STP traceability: UT-GATE-001..006 — mapped below: 001, 002, 003, 005.
+// UT-GATE-004 (expired HMAC window) + UT-GATE-006 (body >1MB → 413) have no
+// test yet (gap tracked in TD-F5-09).
+
 import (
 	"context"
 	"encoding/json"
@@ -173,6 +177,7 @@ func TestP9a6_Handler_ScanQR_UnexpectedError_Returns500(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "INTERNAL_ERROR")
 }
 
+// UT-GATE-001: ScanQR_ValidHMAC_ReturnsUSED
 func TestP9a6_Handler_ScanQR_Success_Returns200(t *testing.T) {
 	repo := &fakeRepo{ticket: p9a6ConfirmedTicket(), ticketFU: p9a6ConfirmedTicket()}
 	svc, _ := buildService(repo)
@@ -239,6 +244,7 @@ func TestP9a6_Handler_VerifyPIN_TicketMismatch_Returns422(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "ticket_id does not match pin owner")
 }
 
+// UT-GATE-002: VerifyPIN_AlreadyUsed_Returns409
 func TestP9a6_Handler_VerifyPIN_AlreadyUsed_Returns409(t *testing.T) {
 	repo := &fakeRepo{pinTicket: &TicketLookup{
 		ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
@@ -299,6 +305,7 @@ func TestP9a6_Handler_VerifyPIN_Success_Returns200(t *testing.T) {
 // Handler: SyncOfflineScans
 // ============================================================
 
+// UT-GATE-005: OfflineSync_Batch501Scans_Returns422
 func TestP9a6_Handler_SyncOfflineScans_BatchTooLarge_Returns422(t *testing.T) {
 	svc, _ := buildService(&fakeRepo{})
 	h := NewGateHandler(svc)
@@ -482,6 +489,7 @@ func TestP9a6_Service_SyncOfflineScans_ValidScanWins(t *testing.T) {
 	assert.True(t, tx.committed)
 }
 
+// UT-GATE-003: OfflineSync_ConflictResolution_EarliestWins
 func TestP9a6_Service_SyncOfflineScans_ValidScanLosesToEarlierScan(t *testing.T) {
 	earlier := &ScanRecord{
 		ID: uuid.New(), TicketID: uTicket, GateID: "A",

@@ -1,5 +1,7 @@
 package auth
 
+// STP traceability: UT-AUTH-004 (mapped below).
+
 import (
 	"context"
 	"testing"
@@ -31,6 +33,7 @@ func TestAddToBlacklist_ValidTTL(t *testing.T) {
 	assert.Equal(t, time.Hour, mr.TTL(key))
 }
 
+// UT-AUTH-004: IsBlacklisted_RevokedJTI_ReturnsTrue
 func TestIsBlacklisted_True(t *testing.T) {
 	client, _ := newTestRedisClient(t)
 	bl := NewTokenBlacklistService(client)

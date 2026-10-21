@@ -173,6 +173,38 @@ func TestLockSeats_AllAvailable_ReturnsSuccess(t *testing.T) {
 	assert.Equal(t, 180*time.Second, pub.calls[0].delay)
 }
 
+// STP traceability: no UT-BOOK-* ID in STP v1.1 §3.2 for key TTL (module gap
+// tracked in TD-F5-09).
+// FIX P9a-7 TD-F3-02: owner key + booking mapping TTL must be synced with
+// the seat hold (lockTTLSeconds + grace), not hard-coded to 7 days.
+func TestLockSeats_OwnerAndBookingKeyTTLSyncedWithHold(t *testing.T) {
+	rdb, mr := newBookingTestRedis(t)
+	eid, sid := uuid.New(), uuid.New()
+	repo := &fakeRepo{section: newSection(eid, sid, 10)}
+	svc, qt := newTestService(t, repo, rdb, &fakePublisher{})
+
+	tok := newValidToken(t, qt)
+	resp, err := svc.LockSeats(context.Background(), uuid.New(), eid, sid,
+		&LockSeatsRequest{SeatPositions: []int{1, 2}, PaymentMode: "SPLIT"}, tok)
+	require.NoError(t, err)
+
+	ownerKey := "owner:" + bitmapKey(eid, sid) + ":1"
+	bookingKey := "booking:" + resp.BookingID
+
+	require.True(t, mr.Exists(ownerKey), "owner key must exist")
+	require.True(t, mr.Exists(bookingKey), "booking mapping must exist")
+
+	ownerTTL := mr.TTL(ownerKey)
+	bookingTTL := mr.TTL(bookingKey)
+
+	assert.Equal(t, time.Duration(lockKeyTTLSeconds)*time.Second, ownerTTL)
+	assert.Equal(t, time.Duration(lockKeyTTLSeconds)*time.Second, bookingTTL)
+	assert.Equal(t, ownerTTL, bookingTTL, "owner key and booking mapping TTL must be in sync")
+	assert.Less(t, ownerTTL, 7*24*time.Hour, "TTL must no longer be 7 days")
+	assert.Greater(t, ownerTTL, time.Duration(lockTTLSeconds)*time.Second,
+		"TTL must outlive the seat hold so the release path can still verify ownership")
+}
+
 // UT-BOOK-002: pre-lock seat 2, then attempt lock [1,2,3] → CONFLICT.
 func TestLockSeats_Conflict_ReturnsErrSeatsNotAvailable(t *testing.T) {
 	rdb, _ := newBookingTestRedis(t)

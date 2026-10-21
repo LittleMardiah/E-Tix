@@ -1,9 +1,9 @@
 ================================================================================
-API CONTRACT: E-Tix Flash (Smart Ticketing Platform) (v1.2-FINAL)
+API CONTRACT: E-Tix Flash (Smart Ticketing Platform) (v1.3-FINAL)
 ================================================================================
 
-Version:         1.2-FINAL
-Last Updated:    2026-09-10
+Version:         1.3-FINAL
+Last Updated:    2026-10-22
 Author:          M. Arif Aulia
 Status:          ✅ 100% PRODUCTION-READY — SYNCHRONIZED WITH ALL DOCUMENTS
 Platform:        Golang (Gin) + PostgreSQL (Supabase) + Redis (Upstash) + RabbitMQ (CloudAMQP)
@@ -28,7 +28,7 @@ Base URL:        https://api.e-tix-flash.com (or local: http://localhost:8080)
 3. Error Handling & Response Format
 4. Common Headers & Validation
 5. Rate Limiting Strategy
-6. Page-to-API Mapping Matrix (24 Screens → 37 Endpoints)
+6. Page-to-API Mapping Matrix (24 Screens → 43 Endpoints)
 7. Auth & User Endpoints (F001)
 8. Event Catalog & Queue Endpoints (F001)
 9. Booking & Payment Endpoints (F002 & F003)
@@ -2085,17 +2085,19 @@ HTTP/1.1 200 OK
 | 1.0-FINAL | 2026-09-10 | M. Arif Aulia | Initial API Contract document for E-Tix Flash.                        |
 | 1.1-FINAL | 2026-09-10 | M. Arif Aulia | **Post-Gemini review fixes:** 1) Added specs for 3 ghost endpoints (GET /users/me, GET /events/{id}/dashboard, GET /admin/users). 2) Added 3 public catalog endpoints (GET /events, GET /events/{id}, GET /events/{eid}/sections/{sid}/seats). 3) IDOR patched: removed buyer_user_id from resale buy body. 4) Added X-Queue-Token header requirement for Lock Seats with QUEUE_TOKEN_REQUIRED error code. |
 | 1.2-FINAL | 2026-09-10 | M. Arif Aulia | **Post-Gemini review fixes (DRIFT CLEANUP):** 1) Section 14.2 /admin/ledger: removed wallet_id, balance_after, WALLET_TOPUP, is_reversed; replaced with event-sourced view from payment_obligations + admin_actions + resale_transactions. 2) Section 14.3 /admin/ledger/reverse: removed ledger_id, reversal_ledger_id, is_reversed; replaced with Payment Gateway refund + admin_actions audit. 3) Section 15.3 metric ledger_balance_check → payment_reconciliation_pending. 4) Section 11.3 /gate/sync note updated to scan_status_enum 'ALREADY_USED' (aligns with SECURITY_SPEC v1.4). 5) Synchronized with SECURITY_SPEC v1.4-FINAL and PRD v6.0 "Out of Scope" (no internal wallet/ledger). |
+| 1.3-FINAL | 2026-10-22 | FASE 9 P9a-7 | **Endpoint-count sync (FIX P9a-7 TD-F9-02):** endpoint count corrected 37 -> 43 (32 direct routes + 11 /admin routes, verified against backend/cmd/api/main.go). No request/response spec changed. |
+
 
 ================================================================================
-END OF API_CONTRACT v1.2-FINAL
+END OF API_CONTRACT v1.3-FINAL
 ================================================================================
 
 ✅ 100% PRODUCTION-READY — LOCKED
-✅ Synchronized with PRD v6.0, DATABASE SCHEMA v2.9, LOGIC FLOW v1.4, HALAMAN v1.1, TDD v1.10, SECURITY_SPEC v1.4
+✅ Synchronized with PRD v6.0, DATABASE SCHEMA v2.9.1, LOGIC FLOW v1.4, HALAMAN v1.1, TDD v1.10, SECURITY_SPEC v1.4
 ✅ All 24 screens mapped to endpoints
-✅ All 37 endpoints defined with complete request/response examples
+✅ All 43 endpoints defined (32 direct + 11 admin) with complete request/response examples
 ✅ NO wallet/ledger drift (PRD "Out of Scope" respected)
 ✅ Ready for DRP.md, STP.md, ROADMAP.md
 
-Last Updated: 2026-09-10 by M. Arif Aulia
+Last Updated: 2026-10-22 by FASE 9 P9a-7 (TD-F9-02 endpoint-count sync)
 Bismillah — Final Version. 100% Complete. LOCKED.

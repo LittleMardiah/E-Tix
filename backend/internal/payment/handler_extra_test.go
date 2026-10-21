@@ -1,5 +1,8 @@
 package payment
 
+// STP traceability: UT-PAY-003 (mapped below) — UT-PAY-001/002 have no
+// matching test yet (gap tracked in TD-F5-09).
+
 import (
 	"bytes"
 	"context"
@@ -480,6 +483,7 @@ func TestHandler_BulkAssign_NotLeaderReturns403(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"code":"FORBIDDEN"`)
 }
 
+// UT-PAY-003: Idempotency_24h_DuplicateKey_ReturnsCachedResponse
 func TestHandler_BulkAssign_IdempotentReplayReturnsCached(t *testing.T) {
 	bid, leader := uuid.New(), uuid.New()
 	repo := &memObligationRepo{}

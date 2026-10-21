@@ -174,6 +174,7 @@ func mustJSON(bid uuid.UUID) []byte {
 // Tests
 // ============================================================
 
+// UT-WORK-001: BookingExpiry_LazyCheck_PaidNoOp
 func TestProcessOne_PaidNoOp(t *testing.T) {
 	bid := uuid.New()
 	repo := &fakeBookingExpiryRepo{status: payment.StatusPaid}
@@ -215,6 +216,7 @@ func TestProcessOne_PoisonBadUUID(t *testing.T) {
 	assert.ErrorIs(t, err, errPoison)
 }
 
+// UT-WORK-002: BookingExpiry_LazyCheck_Pending_Rollback
 func TestProcessOne_RollbackSuccess(t *testing.T) {
 	bid := uuid.New()
 	repo := &fakeBookingExpiryRepo{

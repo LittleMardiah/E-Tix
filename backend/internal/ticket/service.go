@@ -148,7 +148,17 @@ func (s *TicketService) Assign(ctx context.Context, ownerID, ticketID, targetUse
 	if err != nil {
 		return nil, err
 	}
+	// FIX P9a-7 TD-F5-04: concurrent assign losers must get 409 (ErrAssignConflict),
+	// not 403. The row lock makes the loser read the post-commit state, where
+	// owner_user_id already points to the winner's target — so the owner check
+	// below would wrongly answer FORBIDDEN. UpdateAssign stamps
+	// original_owner_user_id with the pre-transfer owner, so a caller that was
+	// the original owner lost the race → CONFLICT (409), same code the handler
+	// already returns for ErrAssignConflict.
 	if ticket.OwnerUserID != ownerID {
+		if ticket.OriginalOwnerUserID != nil && *ticket.OriginalOwnerUserID == ownerID {
+			return nil, ErrAssignConflict
+		}
 		return nil, ErrTicketForbidden
 	}
 	if ticket.Status != "CONFIRMED" {

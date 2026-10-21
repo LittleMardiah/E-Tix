@@ -1,5 +1,8 @@
 package queue
 
+// STP traceability: fan-score / queue-token / captcha — no UT-FAN-* or
+// UT-QUEUE-* ID exists in STP v1.1 §3.2 (module gap, see TD-F5-09).
+
 import (
 	"bytes"
 	"context"

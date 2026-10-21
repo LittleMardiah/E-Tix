@@ -1754,3 +1754,45 @@ FASE 9 = ready to kickoff after Phase 0 (tools install).
 Total bugs this session: 87 (all prompt/verify, 0 code debt).
 Rule V13 confirmation: audit prompts ≤30 commands; verify counts vs schema;
 verify grep patterns against actual log format (6 verify bugs today #82-87).
+
+[2026-10-22 00:12] FASE 9 P9a-7 — RULE V13 ADOPTED (TD-F9-03) + TD FIX BATCH
+
+RULE V13 — Audit prompt discipline (adopted per TD-F9-03).
+Audit prompts must:
+- Cap at <=30 commands per prompt (split if larger)
+- Verify ENUM counts against docs/DATABASE SCHEMA.txt BEFORE assuming
+- RLS tests must use NON-superuser role (superuser bypasses RLS)
+- Verify grep patterns against ACTUAL log format BEFORE writing verify block
+- Cross-check endpoint counts vs actual routes in cmd/api/main.go
+Reference: TD-F9-03, TD-F9-02 (endpoint count drift), session 2026-10-21 P9a series.
+
+Session work (FASE 9 P9a-7, uncommitted — no push per R10):
+- TD-F8-01: BulkCancelWorker.Run stub ticker -> RabbitMQ consumer (queue
+  "admin_bulk_cancel", Ack/Nack), wired via cmd/api/main.go.
+- TD-F8-02: verified ALREADY FIXED (commit 666435a, ForceRelease uses real
+  booking.EventID from GetBookingForUpdate JOIN sections) — no code change.
+- TD-F5-04: concurrent assign loser now 409 (ErrAssignConflict) instead of
+  403; original_owner_user_id special case kept.
+- TD-F6-12/TD-F6-13: silent InsertScan/InsertInsight errors now logged.
+- TD-F2-02: CAPTCHA failed-attempt lockout (Redis, 3 fails / 15 min) -> 429
+  CAPTCHA_LOCKED; counter cleared on success.
+- TD-F3-02: seat owner + booking mapping TTL synced to 300s (was 604800 in
+  Lua only) via single source lockKeyTTLSeconds passed as ARGV[4].
+- Docs: TD-F5-09 (STP v1.2 traceability matrix + STP ID comments in test
+  files), TD-F6-11 (DATABASE_SCHEMA v2.9.1, gate_utilization DECLARE
+  removed), TD-F9-02 (API_CONTRACT v1.3, 37 -> 43 endpoints),
+  TD-F9-03 (this V13 rule).
+- Gates: gofmt 0, go build OK, go vet OK, go test ./internal/... 0 FAIL.
+- Coverage: unit aggregate 57.9% -> 62.0% (target ~62% tercapai). Test baru:
+  internal/analytics/analytics_p9a7_test.go, internal/config/config_p9a7_test.go,
+  internal/db/db_p9a7_test.go, internal/redis/redis_p9a7_test.go.
+  Per-paket: analytics 11.4%->47.8%, config 0%->66.7%, db 0%->100%, redis 0%->94.6%.
+- Catatan: `go test -tags integration ./internal/...` (package paralel) flaky —
+  test DB Postgres dipakai bersama antar-paket (baseline e799883 punya flakes yang
+  sama). Dengan `-p 1` semua 17 paket PASS. Bukan regresi P9a-7.
+- Deviations (TEAM_CONTRACT v2.2 section 11.5): prompt STP ID ranges
+  (UT-FAN-001..008 / UT-GATE-001..010 / UT-RESALE-001..008) tidak ada di
+  STP v1.1 section 3.2 — dipakai range terverifikasi (UT-GATE-001..006,
+  UT-RESALE-001..003, UT-WORK-001..004) + gap list. TD-F8-02 tidak diubah
+  (sudah fixed). Wiring main.go untuk TD-F8-01 ditambahkan (belum ada di
+  prompt).

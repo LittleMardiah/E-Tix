@@ -3,8 +3,8 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/payment/adapter"
+	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
 )
 
 type BulkCancelPayload struct {
@@ -25,10 +26,11 @@ type BulkCancelWorker struct {
 	rdb  *redis.Client
 	gw   adapter.PaymentGateway
 	log  *zap.Logger
+	conn *queue.Connection
 }
 
-func NewBulkCancelWorker(pool *pgxpool.Pool, rdb *redis.Client, gw adapter.PaymentGateway, log *zap.Logger) *BulkCancelWorker {
-	return &BulkCancelWorker{pool: pool, rdb: rdb, gw: gw, log: log}
+func NewBulkCancelWorker(pool *pgxpool.Pool, rdb *redis.Client, gw adapter.PaymentGateway, log *zap.Logger, conn *queue.Connection) *BulkCancelWorker {
+	return &BulkCancelWorker{pool: pool, rdb: rdb, gw: gw, log: log, conn: conn}
 }
 
 func (w *BulkCancelWorker) Handle(ctx context.Context, body []byte) error {
@@ -84,15 +86,33 @@ func (w *BulkCancelWorker) Handle(ctx context.Context, body []byte) error {
 	return nil
 }
 
+// Run consumes the "admin_bulk_cancel" queue until ctx is cancelled.
+// FIX P9a-7 TD-F8-01: was a ticker stub (never consumed anything). The
+// admin BulkCancel endpoint (internal/admin/service.go) publishes to this
+// queue, so the worker must run a real MQ consumer loop. Loop pattern
+// matches PayoutWorker.Run (FASE 7).
 func (w *BulkCancelWorker) Run(ctx context.Context) error {
-	tick := time.NewTicker(5 * time.Second)
-	defer tick.Stop()
+	if w.conn == nil {
+		return errors.New("bulk cancel: mq connection not set")
+	}
+	deliveries, err := w.conn.Consume("admin_bulk_cancel")
+	if err != nil {
+		return fmt.Errorf("bulk cancel: consume: %w", err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-tick.C:
-			// Stub — actual consume via queue conn in main.go
+		case d, ok := <-deliveries:
+			if !ok {
+				return nil
+			}
+			if err := w.Handle(ctx, d.Body); err != nil {
+				w.log.Warn("bulk_cancel: handle failed", zap.Error(err))
+				_ = d.Nack(false, true) // requeue transient
+				continue
+			}
+			_ = d.Ack(false)
 		}
 	}
 }

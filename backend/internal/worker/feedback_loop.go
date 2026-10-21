@@ -72,11 +72,18 @@ func (w *FeedbackLoopWorker) generateGATE_STAFFING(ctx context.Context, eventID 
 		return
 	}
 	rec := json.RawMessage(`{"recommendation":"Add staff at busy gates"}`)
-	_ = w.repo.InsertInsight(ctx, &analytics.InsightRecord{
+	// FIX P9a-7 TD-F6-13: never swallow InsertInsight errors — a silent
+	// failure leaves the EO dashboard empty without any alert.
+	if err := w.repo.InsertInsight(ctx, &analytics.InsightRecord{
 		EventID: eventID, InsightType: "GATE_STAFFING",
 		Title: "Gate staff optimization", Description: "Auto-generated", Recommendation: rec,
 		GeneratedAt: time.Now().UTC(),
-	})
+	}); err != nil {
+		w.logger.Warn("feedback loop: InsertInsight failed",
+			zap.String("insight_type", "GATE_STAFFING"),
+			zap.String("event_id", eventID.String()),
+			zap.Error(err))
+	}
 }
 
 func (w *FeedbackLoopWorker) generateBOT_BLACKLIST(ctx context.Context, eventID uuid.UUID) {
@@ -85,11 +92,17 @@ func (w *FeedbackLoopWorker) generateBOT_BLACKLIST(ctx context.Context, eventID 
 		return
 	}
 	rec := json.RawMessage(`{"recommendation":"Review bot patterns"}`)
-	_ = w.repo.InsertInsight(ctx, &analytics.InsightRecord{
+	// FIX P9a-7 TD-F6-13: never swallow InsertInsight errors.
+	if err := w.repo.InsertInsight(ctx, &analytics.InsightRecord{
 		EventID: eventID, InsightType: "BOT_BLACKLIST",
 		Title: "Bot blacklist report", Description: "Auto-generated", Recommendation: rec,
 		GeneratedAt: time.Now().UTC(),
-	})
+	}); err != nil {
+		w.logger.Warn("feedback loop: InsertInsight failed",
+			zap.String("insight_type", "BOT_BLACKLIST"),
+			zap.String("event_id", eventID.String()),
+			zap.Error(err))
+	}
 }
 
 func (w *FeedbackLoopWorker) generatePRICE_RECOMMENDATION(ctx context.Context, eventID uuid.UUID) {
@@ -98,9 +111,15 @@ func (w *FeedbackLoopWorker) generatePRICE_RECOMMENDATION(ctx context.Context, e
 		return
 	}
 	rec := json.RawMessage(`{"recommendation":"Consider price adjustment"}`)
-	_ = w.repo.InsertInsight(ctx, &analytics.InsightRecord{
+	// FIX P9a-7 TD-F6-13: never swallow InsertInsight errors.
+	if err := w.repo.InsertInsight(ctx, &analytics.InsightRecord{
 		EventID: eventID, InsightType: "PRICE_RECOMMENDATION",
 		Title: "Pricing recommendation", Description: "Auto-generated", Recommendation: rec,
 		GeneratedAt: time.Now().UTC(),
-	})
+	}); err != nil {
+		w.logger.Warn("feedback loop: InsertInsight failed",
+			zap.String("insight_type", "PRICE_RECOMMENDATION"),
+			zap.String("event_id", eventID.String()),
+			zap.Error(err))
+	}
 }

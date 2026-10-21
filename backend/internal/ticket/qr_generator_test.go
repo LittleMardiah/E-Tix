@@ -1,5 +1,8 @@
 package ticket
 
+// STP traceability: UT-TICK-001 (mapped below) — UT-TICK-002/003 have no
+// matching test yet (gap tracked in TD-F5-09).
+
 import (
 	"testing"
 	"time"
@@ -17,6 +20,7 @@ var (
 	testNow = time.Unix(1_699_999_980, 0).UTC()
 )
 
+// UT-TICK-001: GenerateQR_HMACSHA256_ValidSignature
 func TestGenerateQRData_Success(t *testing.T) {
 	qr, err := GenerateQRData(testTicketID, testOwnerID, testSecret, testNow)
 	require.NoError(t, err)

@@ -261,6 +261,47 @@ func TestAssign_ConcurrentConflict(t *testing.T) {
 	assert.ErrorIs(t, err, ErrAssignConflict)
 }
 
+// STP traceability: no UT-TICK-* ID in STP v1.1 §3.2 for concurrent assign
+// (module gap tracked in TD-F5-09).
+// FIX P9a-7 TD-F5-04: loser of a concurrent assign must get 409 (conflict),
+// not 403 (forbidden) — the winner already moved owner_user_id.
+func TestAssign_ConcurrentLoserReturnsConflictNotForbidden(t *testing.T) {
+	loser := uuid.New()
+	winnerTarget := uuid.New()
+	repo := &fakeRepo{
+		forUpdate: &Ticket{
+			OwnerUserID:         winnerTarget,
+			OriginalOwnerUserID: &loser,
+			Status:              "CONFIRMED",
+			IsAssigned:          true,
+		},
+		userStatus: "ACTIVE",
+	}
+	s, _ := newSvc(repo, newFakeQRStore())
+	_, err := s.Assign(context.Background(), loser, uuid.New(), uuid.New())
+	assert.ErrorIs(t, err, ErrAssignConflict)
+	assert.NotErrorIs(t, err, ErrTicketForbidden)
+}
+
+// A caller who was never the owner must still get 403 — the conflict
+// special-case must not leak ticket state to third parties.
+func TestAssign_NonOwnerStillForbidden(t *testing.T) {
+	previousOwner := uuid.New()
+	stranger := uuid.New()
+	repo := &fakeRepo{
+		forUpdate: &Ticket{
+			OwnerUserID:         uuid.New(),
+			OriginalOwnerUserID: &previousOwner,
+			Status:              "CONFIRMED",
+			IsAssigned:          true,
+		},
+		userStatus: "ACTIVE",
+	}
+	s, _ := newSvc(repo, newFakeQRStore())
+	_, err := s.Assign(context.Background(), stranger, uuid.New(), uuid.New())
+	assert.ErrorIs(t, err, ErrTicketForbidden)
+}
+
 func TestAssign_Success(t *testing.T) {
 	owner := uuid.New()
 	target := uuid.New()

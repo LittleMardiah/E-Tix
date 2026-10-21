@@ -271,16 +271,21 @@ Referensi: docs/AUDIT FASE 2 findings H4/H12, opencode review 2026-10-15.
 
 ID: TD-F2-02
 Tanggal: 2026-10-15
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: RENDAH
 Deskripsi: Captcha failed-attempt counter + lockout mechanism tidak ada.
   Attacker bisa brute-force /queue/verify-captcha tanpa lockout (rate limit
   3/5min per IP masih mitigate).
 Rencana Fix: Redis INCR failed:captcha:{ip}, lockout 15m setelah 3 fails
   (pattern sama admin 2FA lockout FASE 8).
-Trigger: FASE 8 atau saat abuse report.
 Referensi: docs/AUDIT FASE 2 findings H9.
-
+Fix: internal/queue/service.go — Redis counter captcha_fails:{userID} (TTL 15m) +
+  lockout flag captcha_lockout:{userID} (TTL 15m), max 3 gagal; methods baru
+  CaptchaLockoutState / RecordCaptchaFailure / ClearCaptchaFailures.
+  internal/queue/handler.go — cek lockout sebelum verify (429 CAPTCHA_LOCKED),
+  failure di-record saat captcha invalid, counter di-clear saat sukses.
+Verified: internal/queue/queue_p9a7_test.go (4 test baru) + go test ./internal/queue/... PASS.
+Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ID: TD-F2-03
 Tanggal: 2026-10-15
 Status: ⏸️ DEFERRED
@@ -322,7 +327,7 @@ Referensi: docs/AUDIT FASE 3 findings H11, opencode review 2026-10-15.
 
 ID: TD-F3-02
 Tanggal: 2026-10-15
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: RENDAH
 Deskripsi: Reservation seat_owner:{key}:{pos} key TTL 7d, tapi mapping
   booking:{id} TTL 7d. Kalau seat bits persistent + owner TTL 7d, seat yang
@@ -331,9 +336,13 @@ Deskripsi: Reservation seat_owner:{key}:{pos} key TTL 7d, tapi mapping
   case kalau ada bug/eviction.
 Root Cause: TTL trade-off antara persistence dan garbage collection.
 Rencana Fix: Bump owner TTL sync dengan booking TTL atau event_end_time.
-Trigger: saat ada insiden "seat stuck > 7d" atau monitoring anomali.
 Referensi: docs/AUDIT FASE 3, H2 fix (scripts/lock_seats.lua).
-
+Fix: internal/booking/service.go — const lockKeyTTLSeconds = lockTTLSeconds + 120
+  (300s) sebagai single source, diteruskan ke Lua sebagai ARGV[4].
+  internal/booking/scripts/lock_seats.lua — TTL owner key + mapping booking:{id}
+  memakai ARGV[4] (default 300); sebelumnya hardcode 604800 (7d) di Lua saja.
+Verified: TestLockSeats_OwnerAndBookingKeyTTLSyncedWithHold (internal/booking/service_test.go) PASS.
+Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ID: TD-F3-03
 Tanggal: 2026-10-15
 Status: ⏸️ DEFERRED
@@ -508,7 +517,7 @@ Referensi: Audit B2 2026-10-16, L1-L3.
 
 ID: TD-F5-04
 Tanggal: 2026-10-16
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: MEDIUM
 Deskripsi: Concurrent PATCH /tickets/{id}/assign losers return 403 (ErrTicketForbidden)
   bukan 409 (ErrAssignConflict). Root: owner check runs before IsAssigned check;
@@ -517,9 +526,13 @@ Deskripsi: Concurrent PATCH /tickets/{id}/assign losers return 403 (ErrTicketFor
 Root Cause: Order check di TicketService.Assign — owner dulu, baru IsAssigned.
 Rencana Fix: Reorder check atau tambah special-case: jika owner check fail TAPI
   original_owner_user_id == ownerID (artinya baru dipindah), return ErrAssignConflict.
-Trigger: FASE 6 atau saat API contract sync audit.
 Referensi: docs/AUDIT FASE 5, E9-B2 override log.
-
+Fix: internal/ticket/service.go Assign — owner check gagal dengan
+  original_owner_user_id == ownerID (ticket baru dipindah winner) →
+  ErrAssignConflict (409); selain itu tetap ErrTicketForbidden (403).
+Verified: internal/ticket/service_test.go — TestAssign_ConcurrentLoserReturnsConflictNotForbidden
+  + TestAssign_NonOwnerStillForbidden; go test ./internal/ticket/... PASS.
+Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ID: TD-F5-05
 Tanggal: 2026-10-16
 Status: ⏸️ DEFERRED
@@ -578,7 +591,7 @@ Referensi: docs/AUDIT FASE 5, audit-B finding #5.
 
 ID: TD-F5-09
 Tanggal: 2026-10-17
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: LOW
 Deskripsi: Traceability gap STP ↔ test func. STP v1.1 §3.2 list UT-TICK-001..004 
   (4) dan IT-TICK ID tidak explicit di header; ROADMAP FASE 5 expect 9 unit 
@@ -587,10 +600,17 @@ Deskripsi: Traceability gap STP ↔ test func. STP v1.1 §3.2 list UT-TICK-001..
 Root Cause: Test naming konvensi beda; tidak strict map ke STP IDs.
 Rencana Fix: Rename atau tambah komentar `// UT-TICK-005` di fungsi test. 
   Atau update STP v1.1 dengan ID baru.
-Trigger: FASE 9 atau saat audit traceability.
 Referensi: docs/AUDIT FASE 5, audit-C finding #7/#9.
-
-
+Fix: docs/STP.txt → v1.2, traceability matrix STP ID ↔ file test backend + gap list
+  (§3.2); komentar ID STP ditambahkan di file test: auth (jwt, blacklist),
+  booking, payment (bulkassign, handler_extra), ticket (qr_generator, repository),
+  gate, resale, worker (booking_expiry, worker_p9a6), queue.
+  Range ID memakai ID terverifikasi; prompt menyebut UT-FAN-001..008 /
+  UT-GATE-001..010 / UT-RESALE-001..008 yang tidak ada di STP v1.1 §3.2.
+Verified: gofmt clean + go test ./internal/... 0 FAIL. GAP tersisa dicatat di
+  STP §3.2 (UT-AUTH-001/002, UT-PAY-001/002, UT-TICK-002/003, UT-GATE-004/006,
+  UT-ADMIN-001, UT-WORK-003/004, UT-UTIL-001..003, modul fan-score/queue/captcha).
+Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ---
 
 ID: TD-F4-08
@@ -774,39 +794,48 @@ Referensi: FASE 6 C2 diagnostic 2026-10-20 05:21 WIB, prompt_f6_mig003 log.
 
 ID: TD-F6-11
 Tanggal: 2026-10-20
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: LOW
 Deskripsi: DATABASE_SCHEMA.txt v2.9 line ~708-770 masih dokumentasikan trigger
   generate_post_event_report() versi buggy (dengan DECLARE gate_utilization).
   Kode = truth (migration 003 fix), tapi docs belum sync.
 Rencana Fix: Amend DATABASE_SCHEMA.txt ke v2.9.1 (hapus DECLARE gate_utilization).
-Trigger: FASE 9 doc polish.
 Referensi: TD-F6-10, R2 (code = source of truth).
-
+Fix: docs/DATABASE SCHEMA.txt → v2.9.1; DECLARE gate_utilization JSONB dihapus
+  dari generate_post_event_report() + komentar FIX P9a-7 TD-F6-11 (SQLSTATE
+  42702, migration 003_fix_post_event_trigger.up.sql).
+Verified: grep 'gate_utilization JSONB' → 0 di DECLARE block; cocok dengan migration 003.
+Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ID: TD-F6-12
 Tanggal: 2026-10-20
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: LOW
 Deskripsi: `_ = s.repo.InsertScan(ctx, ...)` di gate ScanQR INVALID path
   swallows error. Analytics fraud detection tidak capture kalau insert
   INVALID scan gagal (FK violation, DB down). Silent failure.
 Rencana Fix: Log warning kalau InsertScan error di INVALID path. Atau tambah
   retry.
-Trigger: FASE 9 observability polish.
 Referensi: FASE 6 code review, B5 fix context.
-
+Fix: internal/gate/service.go — error InsertScan di INVALID path di-log via
+  zap.L().Warn("gate: insert INVALID scan failed", ...) (package gate tidak punya
+  logger; pakai global zap sesuai pola internal/booking + internal/queue).
+Verified: go build + go vet + go test ./internal/gate/... PASS.
+Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ID: TD-F6-13
 Tanggal: 2026-10-20
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: LOW
 Deskripsi: `_ = w.repo.InsertInsight(...)` di feedback_loop.go (3 tempat:
   generateGATE_STAFFING, generateBOT_BLACKLIST, generatePRICE_RECOMMENDATION)
   swallows InsertInsight errors. Kalau insert gagal, insight silent tidak
   terbuat — dashboard EO kosong tanpa alert.
 Rencana Fix: Log warning atau return error up (workflow worker sudah log).
-Trigger: FASE 9 polish.
 Referensi: FASE 6 diagnostic D4 (2026-10-20), pattern sama dengan TD-F6-12.
-
+Fix: internal/worker/feedback_loop.go — 3 call InsertInsight (GATE_STAFFING,
+  BOT_BLACKLIST, PRICE_RECOMMENDATION) di-log via w.logger.Warn("feedback loop:
+  InsertInsight failed", ...).
+Verified: go build + go vet + go test ./internal/worker/... PASS.
+Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ---
 
 ID: TD-F7-01
@@ -887,24 +916,34 @@ Referensi: ROADMAP FASE 7 E9-S1-T19 (extend).
 
 ID: TD-F8-01
 Tanggal: 2026-10-21
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: MEDIUM
 Deskripsi: BulkCancelWorker.Run = ticker stub, not consumer loop. Actual consumption
   via queueConn.Consume("admin_bulk_cancel") NOT wired in main.go (P8h wire pending).
 Rencana Fix: Add queue consumer loop in Run(ctx) reading from Connection.Consume.
-Trigger: FASE 9 integration test.
 Referensi: P8g-b bulk_cancel.go, FASE 7 PayoutWorker pattern reference.
-
+Fix: internal/worker/bulk_cancel.go — Run(ctx) jadi consumer loop RabbitMQ queue
+  "admin_bulk_cancel" (Connection.Consume + Ack/Nack requeue, ctx cancel → close
+  channel); constructor menerima *queue.Connection; nil conn → error
+  "bulk cancel: mq connection not set".
+  cmd/api/main.go — worker di-wire dengan mq + goroutine dijalankan.
+Verified: internal/worker/worker_p9a6_test.go (TestP9a6_BulkCancelWorker_Run_WithoutMQConnection_ReturnsError)
+  + go build/vet/test PASS.
+Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ID: TD-F8-02
 Tanggal: 2026-10-21
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-22)
 Prioritas: MEDIUM
 Deskripsi: ForceRelease Redis key uses eventIDPlaceholder (returns "") — section
   event_id not fetched. Bitmap release may target wrong key. Need GetEventIDBySection.
 Rencana Fix: Add repo.GetSectionEventID(ctx, sectionID) and use it in ForceRelease.
-Trigger: FASE 9 integration test.
 Referensi: P8g-a service.go ForceRelease, TD-F7-05 pattern.
-
+Fix: N/A — sudah fixed di commit 666435a (FASE 8 P8g). ForceRelease memakai
+  booking.EventID asli yang di-populate GetBookingForUpdate (JOIN sections s);
+  eventIDPlaceholder tidak ada di source, jadi tidak ada perubahan kode.
+Verified: grep 'eventIDPlaceholder' → 0; grep 'GetSectionEventID' → 0 (method itu
+  tidak pernah ada di repo dan tidak dibutuhkan).
+Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ID: TD-F8-03
 Tanggal: 2026-10-21
 Status: ⏸️ DEFERRED
@@ -925,12 +964,15 @@ Deskripsi: Extended test coverage — admin pkg (27 methods = 1 sentinel only),
 Root Cause: MVP scope per-fase; extended tests = ROADMAP FASE 9 Epic A.
 Rencana Fix: FASE 9 Epic A (Full STP Execution: Unit + Integration + API + E2E
   + Load + Security + Chaos).
+Progress: P9a-7 (2026-10-22) — unit coverage 57.9% -> 62.0%; test baru untuk
+  analytics (service + HTTP handler), config, db, redis. Sisa coverage:
+  auth 38.8%, admin 47.9%, worker 43.5% (lihat STP v1.2 §3.2 gap list).
 Trigger: FASE 9 kickoff.
 Referensi: PA0 report 2026-10-21, ROADMAP FASE 9 Epic A.
 
 ID: TD-F9-02
 Tanggal: 2026-10-21
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: LOW
 Deskripsi: Docs drift — API_CONTRACT claims 37 endpoints, actual 43 (admin 11
   + direct 32). Coverage gap (admin resale/event plain 0% due -tags integration
@@ -938,12 +980,17 @@ Deskripsi: Docs drift — API_CONTRACT claims 37 endpoints, actual 43 (admin 11
 Root Cause: Incremental per-fase route adds post contract-lock.
 Rencana Fix: FASE 9 Epic D (Portfolio Polish) — update API_CONTRACT to v1.3 +
   clarify measurement note in DATABASE_SCHEMA coverage section.
-Trigger: FASE 9 Epic D.
 Referensi: PA1 STAGE 5 docs check 2026-10-21.
-
+Fix: docs/API CONTRACT.txt → v1.3, endpoint count 37 → 43 (32 direct + 11 admin,
+  diverifikasi dari cmd/api/main.go), changelog + footer di-sync.
+  docs/STP.txt → v1.2 (count 37 → 43, refer API_CONTRACT v1.3).
+  DATABASE_SCHEMA tidak punya 'coverage section' — measurement note (admin/resale/
+  event 0% akibat artefak -tags integration) dicatat di entri ini.
+Verified: grep '37 endpoints' di API CONTRACT + STP → 0.
+Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ID: TD-F9-03
 Tanggal: 2026-10-21
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: LOW
 Deskripsi: Process lesson (Rule V13 candidate) — audit prompts should cap at 30
   commands; validate ENUM counts against DATABASE_SCHEMA.txt before assuming;
@@ -951,9 +998,12 @@ Deskripsi: Process lesson (Rule V13 candidate) — audit prompts should cap at 3
 Root Cause: My prompt-design bugs #81-86 (awk $NF, CI grep pipe, endpoint
   undercount, ENUM count assumed 10 vs actual 11, RLS superuser bypass).
 Rencana Fix: Add V13 rule to LOGBOOK; apply to FASE 9+ audit prompts.
-Trigger: LOGBOOK append during FASE 9 pre-flight.
 Referensi: PA0+PA1 session 2026-10-21.
-
+Fix: LOGBOOK.txt — RULE V13 (audit prompt discipline) appended: ≤30 commands per
+  prompt, verify ENUM count vs DATABASE_SCHEMA, RLS test non-superuser, verify
+  grep vs format log aktual, cross-check endpoint count vs cmd/api/main.go.
+Verified: entry 'RULE V13' ada di LOGBOOK.txt (timestamp dari date command).
+Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ---
 
 ID: TD-F9-04

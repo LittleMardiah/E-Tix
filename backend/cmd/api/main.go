@@ -206,8 +206,7 @@ func main() {
 	adminH := admin.NewAdminHandler(adminSvc)
 	admin2fa := admin.NewTwoFAService("E-Tix Flash")
 	admin2faMiddleware := admin.Admin2FAMiddleware(rdb.Client, admin2fa, logger)
-	bulkCancelWorker := worker.NewBulkCancelWorker(pgPool, rdb.Client, paymentGateway, logger)
-	_ = bulkCancelWorker
+	bulkCancelWorker := worker.NewBulkCancelWorker(pgPool, rdb.Client, paymentGateway, logger, mq)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -434,6 +433,13 @@ func main() {
 	go func() {
 		if err := feedbackWorker.Run(context.Background()); err != nil {
 			logger.Error("feedback loop worker stopped", zap.Error(err))
+		}
+	}()
+	// FASE 9 P9a-7 TD-F8-01: bulk cancel worker is a real MQ consumer now
+	// (admin BulkCancel publishes to the "admin_bulk_cancel" queue).
+	go func() {
+		if err := bulkCancelWorker.Run(ctx); err != nil {
+			logger.Error("bulk cancel worker stopped", zap.Error(err))
 		}
 	}()
 

@@ -1,5 +1,9 @@
 package worker
 
+// STP traceability: UT-WORK-001..004 — UT-WORK-001/002 are mapped in
+// booking_expiry_test.go; UT-WORK-003 (resale expiry TTL) + UT-WORK-004
+// (DB queue sync) have no test yet (gap tracked in TD-F5-09).
+
 import (
 	"context"
 	"encoding/json"
@@ -250,7 +254,7 @@ func TestP9a6_PgxBlacklistRepo_Constructor(t *testing.T) {
 
 func TestP9a6_BulkCancelWorker_Handle_PoisonPayload_Acknowledged(t *testing.T) {
 	client, _ := p9a6GoRedis(t)
-	w := NewBulkCancelWorker(nil, client, nil, zap.NewNop())
+	w := NewBulkCancelWorker(nil, client, nil, zap.NewNop(), nil)
 
 	err := w.Handle(context.Background(), []byte("not-json"))
 	require.NoError(t, err, "poison payload must be acknowledged, not requeued")
@@ -258,18 +262,21 @@ func TestP9a6_BulkCancelWorker_Handle_PoisonPayload_Acknowledged(t *testing.T) {
 
 func TestP9a6_BulkCancelWorker_Constructor(t *testing.T) {
 	client, _ := p9a6GoRedis(t)
-	w := NewBulkCancelWorker(nil, client, nil, zap.NewNop())
+	w := NewBulkCancelWorker(nil, client, nil, zap.NewNop(), nil)
 	require.NotNil(t, w)
 }
 
-func TestP9a6_BulkCancelWorker_Run_ExitsOnContextCancel(t *testing.T) {
+// STP traceability: no UT-WORK-* ID in STP v1.1 §3.2 for bulk-cancel MQ
+// consumption (module gap tracked in TD-F5-09).
+// FIX P9a-7 TD-F8-01: Run is a real MQ consumer loop (PayoutWorker pattern),
+// so a missing MQ connection must surface as an error, not a silent ticker.
+func TestP9a6_BulkCancelWorker_Run_WithoutMQConnection_ReturnsError(t *testing.T) {
 	client, _ := p9a6GoRedis(t)
-	w := NewBulkCancelWorker(nil, client, nil, zap.NewNop())
+	w := NewBulkCancelWorker(nil, client, nil, zap.NewNop(), nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	require.NoError(t, w.Run(ctx))
+	err := w.Run(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mq connection not set")
 }
 
 func TestP9a6_BulkCancelPayload_JSONRoundtrip(t *testing.T) {

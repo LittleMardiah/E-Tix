@@ -18,6 +18,18 @@ import (
 
 const lockTTLSeconds = 180
 
+// lockKeyTTLSeconds is the TTL of the Redis keys written by the lock script
+// (per-seat owner key + booking:{id} mapping).
+//
+// FIX P9a-7 TD-F3-02: the two keys were hard-coded to 7 days while the actual
+// seat hold is lockTTLSeconds (180s). A key that outlives the booking by
+// days is garbage (and the release path could not verify ownership once the
+// owner key was gone). The keys now expire shortly after the hold: 180s hold
+// + 120s grace for the expiry worker to release the seat. Both keys MUST
+// share this TTL — the release script needs the owner key and the
+// layout_version snapshot at the same time.
+const lockKeyTTLSeconds = lockTTLSeconds + 120 // 300s
+
 // DelayedPublisher abstracts the delayed message publisher for testability.
 type DelayedPublisher interface {
 	PublishDelayed(ctx context.Context, queueName string, payload []byte, delay time.Duration) error
@@ -108,7 +120,7 @@ func (s *BookingService) LockSeats(ctx context.Context, userID, eventID, section
 	}
 
 	res, err := s.rdb.EvalScript(ctx, s.scripts.Lock, []string{key},
-		string(seatsJSON), bookingID.String(), string(bookingData))
+		string(seatsJSON), bookingID.String(), string(bookingData), lockKeyTTLSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("booking: lock seats: %w", err)
 	}

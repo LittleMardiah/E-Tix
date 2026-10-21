@@ -2,6 +2,7 @@ package queue
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -114,16 +115,33 @@ func (h *QueueHandler) VerifyCaptcha(c *gin.Context) {
 		return
 	}
 
+	// FASE 9 P9a-7 TD-F2-02: failed-attempt lockout. Brute-forcing
+	// /queue/verify-captcha from one IP is blocked for 15m after 3 failed
+	// verifications (pattern: admin 2FA lockout, internal/admin/middleware.go).
+	clientIP := c.ClientIP()
+	if locked, ttl := h.svc.CaptchaLockoutState(c.Request.Context(), clientIP); locked {
+		writeError(c, http.StatusTooManyRequests, "CAPTCHA_LOCKED",
+			fmt.Sprintf("too many failed captcha attempts, retry in %ds", int(ttl.Seconds())))
+		return
+	}
+
 	resp, err := h.svc.VerifyCaptcha(c.Request.Context(), uid, &req)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrCaptchaInvalid):
+			if _, locked := h.svc.RecordCaptchaFailure(c.Request.Context(), clientIP); locked {
+				writeError(c, http.StatusTooManyRequests, "CAPTCHA_LOCKED",
+					fmt.Sprintf("too many failed captcha attempts, locked for %ds", int(CaptchaLockoutTTL.Seconds())))
+				return
+			}
 			writeError(c, http.StatusUnauthorized, "INVALID_REQUEST", "invalid captcha")
 		default:
 			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		}
 		return
 	}
+
+	h.svc.ClearCaptchaFailures(c.Request.Context(), clientIP)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

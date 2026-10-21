@@ -2,6 +2,8 @@
 
 package ticket
 
+// STP traceability: UT-TICK-004 (mapped below).
+
 import (
 	"context"
 	"os"
@@ -188,6 +190,7 @@ func TestRepo_UpdateAssign_AlreadyAssigned(t *testing.T) {
 
 // ---------- MarkFallbackPINUsed ----------
 
+// UT-TICK-004: FallbackPIN_Reuse_ReturnsInvalid
 func TestRepo_MarkFallbackPINUsed_SingleUse(t *testing.T) {
 	pool := setupRepoPool(t)
 	r := NewPostgresTicketRepository(pool)

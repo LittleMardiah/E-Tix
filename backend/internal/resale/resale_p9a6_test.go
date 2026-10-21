@@ -1,5 +1,7 @@
 package resale
 
+// STP traceability: UT-RESALE-001..003 — all three mapped below.
+
 import (
 	"context"
 	"encoding/json"
@@ -339,6 +341,7 @@ func TestP9a6_ListTicket_HasActiveListingError(t *testing.T) {
 	assert.ErrorIs(t, err, sentinel)
 }
 
+// UT-RESALE-002: ListTicket_AlreadyListed_Returns409
 func TestP9a6_ListTicket_ListingAlreadyExists(t *testing.T) {
 	repo := &p9a6ResaleRepo{ticket: p9a6TicketInfo(), hasActive: true}
 	svc := p9a6Service(repo, &p9a6ResaleDB{}, nil)
@@ -361,6 +364,7 @@ func TestP9a6_ListTicket_CapQueryError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no config row")
 }
 
+// UT-RESALE-001: ListTicket_PriceExceedsCap10_Returns422
 func TestP9a6_ListTicket_PriceExceedsCap(t *testing.T) {
 	repo := &p9a6ResaleRepo{ticket: p9a6TicketInfo()}
 	db := &p9a6ResaleDB{row: &p9a6ResaleRow{capPercent: 10}}
@@ -548,6 +552,7 @@ func TestP9a6_Buy_AlreadyReserved(t *testing.T) {
 	assert.ErrorIs(t, err, ErrResaleAlreadyReserved)
 }
 
+// UT-RESALE-003: BuyResale_OwnListing_Returns422
 func TestP9a6_Buy_OwnListing(t *testing.T) {
 	repo := &p9a6ResaleRepo{byID: p9a6PendingResale()}
 	svc := p9a6Service(repo, &p9a6ResaleDB{tx: &p9a6ResaleTx{}}, nil)
