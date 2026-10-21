@@ -45,6 +45,23 @@ jobs:
 
   backend-unit:
     runs-on: ubuntu-latest
+    services:
+      # FIX P9a-9 TD-014: unit suite includes DB-backed repository tests
+      # (internal/<pkg>/*_test.go). They skip when TEST_DB_URL is unset, so a
+      # missing service degrades coverage instead of failing the job.
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: etix_flash_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: backend
@@ -64,7 +81,14 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Run migrations
+        env:
+          TEST_DB_URL: postgresql://postgres:postgres@localhost:5432/etix_flash_test?sslmode=disable
+        run: go run ./cmd/migrate -database "$TEST_DB_URL" up
+
       - name: Unit tests
+        env:
+          TEST_DB_URL: postgresql://postgres:postgres@localhost:5432/etix_flash_test?sslmode=disable
         run: go test -v -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage
@@ -156,3 +180,32 @@ jobs:
           TEST_DB_URL: postgresql://postgres:postgres@localhost:5432/etix_flash_test?sslmode=disable
           REDIS_URL: redis://localhost:6379
         run: go test -p 1 -tags integration -coverpkg=./internal/... -cover -count=1 ./tests/integration/...
+
+  # FIX P9a-9 TD-014: API contract tests (Newman).
+  # Disabled by default: enable with repo variable ENABLE_API_CONTRACT=true
+  # and secret STAGING_API_URL pointing at a deployed instance.
+  api-contract:
+    name: API Contract (Newman)
+    runs-on: ubuntu-latest
+    needs: [backend-unit]
+    if: ${{ vars.ENABLE_API_CONTRACT == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Newman
+        run: npm install -g newman newman-reporter-html
+      - name: Run collection
+        run: |
+          newman run backend/postman_collection.json \
+            --env-var baseUrl=${{ secrets.STAGING_API_URL }} \
+            --reporters cli,html \
+            --reporter-html-export newman-report.html
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: newman-report
+          path: newman-report.html
