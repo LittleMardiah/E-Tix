@@ -1692,3 +1692,65 @@ FASE 9 kickoff ready. Next session: PA0 (fresh) → P9a-P9o split prompts
 ================================================================================
 END OF FASE 8 CLEAN CLOSE 98%
 ================================================================================
+
+[2026-10-21 07:40] FASE 9 PRE-FLIGHT COMPLETE — HARD STOP + NEXT SESSION PLAN
+
+Pre-flight results (read-only, no fixes):
+- Frontend 1/24 pages (95% unbuilt) = Epic C ~73 jam (60% FASE 9)
+- Deploy zero-state (no Dockerfile, render.yaml, vercel.json) = Epic E scaffold needed
+- Tools missing: ZAP, axe-core, govulncheck, gitleaks (Playwright available via npx, unpinned)
+- ROADMAP duration = ~120 jam (my 157 estimate was wrong)
+- Build unverified (read-only constraint)
+- TD OPEN = 0, TD-F9-01/02/03 all DEFERRED
+
+Bug #87 registered: V2 verify grep pattern `/FASE 9 READINESS SUMMARY/` mismatch
+(log uses markdown `## STAGE 7` heading). Total session bugs: 87 (all prompt/verify,
+zero code debt in repo).
+
+=== NEXT SESSION PLAN (fresh, ~2-4 jam first session) ===
+
+Phase 0 — Pre-flight + Tools Install (~1 jam):
+1. Verify git clean (HEAD 4256948)
+2. Install tools:
+   - sudo apt install zaproxy (or docker pull ghcr.io/zaproxy/zaproxy)
+   - go install golang.org/x/vuln/cmd/govulncheck@latest
+   - go install github.com/gitleaks/gitleaks/v8@latest (or brew/apt)
+   - cd frontend && npm i -D @axe-core/cli @playwright/test (pin versions)
+3. Fix .env.example → backend/.env.example (for Docker build)
+4. Verify `cd frontend && npm run build` PASS
+
+Phase 1 — Epic A kickoff (P9a, ~3 jam):
+- P9a scope: unit test coverage boost — admin pkg (27 methods) + HTTP layer tests
+- Target: admin 0% → 40%+, HTTP endpoints covered by httptest
+- Per-prompt gate: build/vet/lint/coverage
+
+Phase 2 — P9b-P9y (next sessions):
+- P9b: integration tests extend (payments/webhook/events/users/gate)
+- P9c: API Newman (43 endpoints)
+- P9d: E2E Playwright (5 journeys)
+- P9e: k6 load tests
+- P9f: ZAP security scan
+- P9g: chaos (Redis/MQ down)
+- P9h: a11y axe-core
+- P9i-P9l: DR drills
+- P9m-P9t: Frontend 24 screens (Epic C, ~73 jam, biggest block)
+- P9u-P9v: Portfolio polish + doc sync (TD-F9-02)
+- P9w-P9y: Deploy + demo + smoke
+
+Pre-flight prerequisite checklist NEXT SESSION:
+[ ] git status clean
+[ ] ZAP installed
+[ ] govulncheck installed
+[ ] gitleaks installed
+[ ] axe-core + Playwright pinned in package.json
+[ ] backend/Dockerfile created
+[ ] render.yaml + vercel.json created
+[ ] backend/.env.example created
+[ ] `npm run build` PASS
+
+FASE 8 = CLEAN CLOSE 98% LOCKED (4256948).
+FASE 9 = ready to kickoff after Phase 0 (tools install).
+
+Total bugs this session: 87 (all prompt/verify, 0 code debt).
+Rule V13 confirmation: audit prompts ≤30 commands; verify counts vs schema;
+verify grep patterns against actual log format (6 verify bugs today #82-87).
