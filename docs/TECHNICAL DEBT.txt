@@ -969,3 +969,43 @@ Rencana Fix: FASE 9 P9f (security scan) — alternative secret scan via:
   3. OR upgrade Go to 1.23.8+ (requires sudo, deferred)
 Trigger: FASE 9 Epic A P9f (security testing).
 Referensi: Phase 0 manual run 2026-10-21, log /tmp/s_f9_phase0.log.
+
+---
+
+ID: TD-F9-08
+Tanggal: 2026-10-21
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: 2 statement branch coverage gap di service.go:118, 122 — 
+  `s.queue.PublishToQueue` di BulkCancel. Nil guard `s.queue != nil` 
+  covered; actual Publish path needs live RabbitMQ (zero-value Connection panics).
+Root Cause: AMQP Connection stub not injectable (queue.Connection embeds 
+  *amqp.Connection directly, no interface).
+Rencana Fix: FASE 9 P9d (E2E/load with live MQ) OR refactor queue.Connection 
+  to interface (post-demo, TD-F9-06 batch).
+Trigger: FASE 9 P9d OR 80% overall coverage push (TD-F9-06).
+Referensi: P9a-3 OpenCode log 2026-10-21, service.go:118,122.
+
+ID: TD-F9-06
+Tanggal: 2026-10-21
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Push overall project coverage 30-40% → 80% (post-FASE 9 demo).
+  Currently ~22-30% weighted; FASE 9 Epic A progressive push to ~65-70%.
+  Remaining gap to 80% = worker, analytics, helper modules.
+Root Cause: FASE 9 Epic A budget (~50 jam) insufficient for 80% overall.
+Rencana Fix: Dedicated 40-jam phase post-demo (test worker deep, analytics 
+  edge cases, config/db/notification/redis wrappers).
+Trigger: Post-FASE 9 demo complete + portfolio review.
+Referensi: Coverage strategy 2026-10-21, PA0 audit.
+
+ID: TD-F9-07
+Tanggal: 2026-10-21
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Push overall coverage 80% → 85%+ (edge cases, concurrency).
+  Diminishing returns (< 2% confidence gain, ~50 jam extra).
+Root Cause: Industry empirical — 80% = ~95% regression catch, 90% = ~97%.
+Rencana Fix: Optional post-TD-F9-06. Skip if cost > value.
+Trigger: User decide post-FASE 9 demo.
+Referensi: Coverage strategy 2026-10-21 (my honest analysis §6).
