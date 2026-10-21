@@ -21,6 +21,9 @@ type LogTicketNotification struct {
 
 // NewLogTicketNotification constructs a LogTicketNotification.
 func NewLogTicketNotification(logger *zap.Logger) *LogTicketNotification {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	return &LogTicketNotification{logger: logger}
 }
 

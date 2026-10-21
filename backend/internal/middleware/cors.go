@@ -10,6 +10,9 @@ import (
 )
 
 func CORSMiddleware(origins []string, logger *zap.Logger) gin.HandlerFunc {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	// no origins configured; CORS disabled — return no-op middleware instead of
 	// panicking. gin-contrib/cors panics with "all origins disabled" when
 	// AllowOrigins is empty, so we guard against it here (defensive).

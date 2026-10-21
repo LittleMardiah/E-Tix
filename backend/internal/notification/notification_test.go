@@ -175,12 +175,16 @@ func TestSendFallbackPIN_CanceledContextStillDispatches(t *testing.T) {
 	assert.Equal(t, 1, logs.Len())
 }
 
-func TestSendFallbackPIN_NilLoggerPanics(t *testing.T) {
-	// Characterisation test: NewLogTicketNotification does not guard a nil
-	// logger, so SendFallbackPIN panics. Callers must always pass a logger.
+func TestSendFallbackPIN_NilLoggerDoesNotPanic(t *testing.T) {
+	// BUG #102 FIX: NewLogTicketNotification now substitutes zap.NewNop() for a
+	// nil logger, so a caller that forgot to wire a logger must not crash the
+	// request path. Previously this panicked with a nil-pointer dereference.
 	n := NewLogTicketNotification(nil)
 
-	assert.Panics(t, func() {
+	require.NotNil(t, n)
+	assert.NotNil(t, n.logger, "nil logger must be replaced with a no-op logger")
+
+	assert.NotPanics(t, func() {
 		_ = n.SendFallbackPIN(context.Background(), uuid.New(), "user@test.local", "+628123456789", "PIN123")
 	})
 }

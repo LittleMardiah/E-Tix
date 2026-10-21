@@ -73,6 +73,42 @@ func mwContainsCI(haystack, needle string) bool {
 	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
 }
 
+// ---------- CORSMiddleware nil-logger regression (BUG #103) ----------
+
+func TestCORSMiddleware_NilLoggerDoesNotPanic(t *testing.T) {
+	// BUG #103 FIX: CORSMiddleware now substitutes zap.NewNop() for a nil
+	// logger. Previously the "no origins configured" branch called
+	// logger.Warn(...) on a nil *zap.Logger and panicked, taking down the
+	// whole API process at wiring time.
+	assert.NotPanics(t, func() {
+		r, _ := mwRouter(CORSMiddleware([]string{}, nil))
+		w := mwDo(r, httptest.NewRequest(http.MethodGet, "/test", nil))
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
+func TestCORSMiddleware_NilLoggerInvalidOriginDoesNotPanic(t *testing.T) {
+	// The invalid-origin branch calls logger.Error(...) — same nil-logger
+	// panic risk as the empty-origins branch.
+	assert.NotPanics(t, func() {
+		r, _ := mwRouter(CORSMiddleware([]string{"app.example.com"}, nil))
+		w := mwDo(r, httptest.NewRequest(http.MethodGet, "/test", nil))
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
+func TestCORSMiddleware_NilLoggerValidOriginStillSetsCORSHeaders(t *testing.T) {
+	// A nil logger must not disable CORS — only the logging is stubbed out.
+	r, _ := mwRouter(CORSMiddleware([]string{"https://app.example.com"}, nil))
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Origin", "https://app.example.com")
+
+	w := mwDo(r, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, mwContainsCI(w.Header().Get("Access-Control-Allow-Origin"), "app.example.com"))
+}
+
 // ---------- CORSMiddleware (internal/middleware/cors.go) ----------
 
 func TestCORSMiddleware_EmptyOriginsDisablesCORS(t *testing.T) {
