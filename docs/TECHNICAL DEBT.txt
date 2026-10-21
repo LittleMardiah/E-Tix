@@ -912,3 +912,44 @@ Prioritas: LOW
 Deskripsi: Extended test coverage (30 ROADMAP FASE 8 E10 tasks) — only 1 sentinel test baseline.
 Rencana Fix: FASE 9 full STP sweep.
 Trigger: FASE 9.
+
+---
+
+ID: TD-F9-01
+Tanggal: 2026-10-21
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Extended test coverage — admin pkg (27 methods = 1 sentinel only),
+  HTTP layer (payments, webhook, events CRUD, users/me, gate verify/sync not
+  tested at HTTP boundary), event/middleware pkg (tested indirectly).
+Root Cause: MVP scope per-fase; extended tests = ROADMAP FASE 9 Epic A.
+Rencana Fix: FASE 9 Epic A (Full STP Execution: Unit + Integration + API + E2E
+  + Load + Security + Chaos).
+Trigger: FASE 9 kickoff.
+Referensi: PA0 report 2026-10-21, ROADMAP FASE 9 Epic A.
+
+ID: TD-F9-02
+Tanggal: 2026-10-21
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Docs drift — API_CONTRACT claims 37 endpoints, actual 43 (admin 11
+  + direct 32). Coverage gap (admin resale/event plain 0% due -tags integration
+  measurement artifact). LOGBOOK cumulative size.
+Root Cause: Incremental per-fase route adds post contract-lock.
+Rencana Fix: FASE 9 Epic D (Portfolio Polish) — update API_CONTRACT to v1.3 +
+  clarify measurement note in DATABASE_SCHEMA coverage section.
+Trigger: FASE 9 Epic D.
+Referensi: PA1 STAGE 5 docs check 2026-10-21.
+
+ID: TD-F9-03
+Tanggal: 2026-10-21
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Process lesson (Rule V13 candidate) — audit prompts should cap at 30
+  commands; validate ENUM counts against DATABASE_SCHEMA.txt before assuming;
+  RLS tests must use non-superuser role for meaningful validation.
+Root Cause: My prompt-design bugs #81-86 (awk $NF, CI grep pipe, endpoint
+  undercount, ENUM count assumed 10 vs actual 11, RLS superuser bypass).
+Rencana Fix: Add V13 rule to LOGBOOK; apply to FASE 9+ audit prompts.
+Trigger: LOGBOOK append during FASE 9 pre-flight.
+Referensi: PA0+PA1 session 2026-10-21.

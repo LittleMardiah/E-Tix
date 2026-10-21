@@ -1670,3 +1670,25 @@ Known carry-overs (TD-F8-01/02/03):
 - BulkCancelWorker.Run = stub ticker (actual consumer in main.go pending)
 - ForceRelease Redis key placeholder (eventID needed)
 - Extended tests deferred FASE 9
+
+[2026-10-21 07:35] FASE 8 CLEAN CLOSE 98% + AUDIT TOTAL 0-8 PASS
+- FASE 8 commit chain: 5 P8 commits + 3 HIGH fix (666435a) = functional complete.
+- PA0 behavioral audit: 57 tests PASS (9 unit + 38 integration + 10 security),
+  0 FAIL, 0 SKIP.
+- PA1 structural audit: 11 ENUMs, 8 triggers, 13 tables (12 + schema_migrations),
+  43 routes (32 direct + 11 admin), 10 docs present, CI green.
+- Audit verdict: FASE 0-8 = CLEAN. Zero code bugs. Zero OPEN TD.
+- Coverage 22.5% avg → gaps = FASE 9 Epic A pre-planned (TD-F9-01).
+- Docs drift 37 vs 43 routes → FASE 9 Epic D (TD-F9-02).
+- Process lesson V13 candidate (TD-F9-03).
+
+Session bugs registered: 86 total (all prompt/verify, zero code debt).
+Rule V13 (candidate): audit prompts ≤30 commands; verify ENUM counts vs schema
+before assuming; RLS tests must use non-superuser.
+
+FASE 9 kickoff ready. Next session: PA0 (fresh) → P9a-P9o split prompts
+(per Epic A-E, no mega).
+
+================================================================================
+END OF FASE 8 CLEAN CLOSE 98%
+================================================================================
