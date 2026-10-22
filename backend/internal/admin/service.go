@@ -24,7 +24,7 @@ type AdminServiceImpl struct {
 	db      TxBeginner
 	rdb     *redis.Client
 	gw      adapter.PaymentGateway
-	queue   *queue.Connection
+	queue   queue.Publisher
 	log     *zap.Logger
 	sysUUID uuid.UUID
 }
@@ -34,7 +34,7 @@ func NewAdminService(
 	db TxBeginner,
 	rdb *redis.Client,
 	gw adapter.PaymentGateway,
-	q *queue.Connection,
+	q queue.Publisher,
 	log *zap.Logger,
 	sysUUID uuid.UUID,
 ) *AdminServiceImpl {

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/analytics"
@@ -16,14 +15,14 @@ import (
 // FeedbackLoopWorker generates insights for COMPLETED events (daily ticker).
 // Idempotent: ExistsByEventAndType check before insert.
 type FeedbackLoopWorker struct {
-	pool     *pgxpool.Pool
+	pool     Pool
 	repo     analytics.AnalyticsRepository
 	logger   *zap.Logger
 	interval time.Duration
 }
 
 // NewFeedbackLoopWorker constructs a FeedbackLoopWorker.
-func NewFeedbackLoopWorker(pool *pgxpool.Pool, repo analytics.AnalyticsRepository, logger *zap.Logger) *FeedbackLoopWorker {
+func NewFeedbackLoopWorker(pool Pool, repo analytics.AnalyticsRepository, logger *zap.Logger) *FeedbackLoopWorker {
 	return &FeedbackLoopWorker{pool: pool, repo: repo, logger: logger, interval: 24 * time.Hour}
 }
 

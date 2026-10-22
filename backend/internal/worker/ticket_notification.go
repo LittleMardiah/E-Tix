@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/notification"
@@ -30,7 +29,7 @@ type ticketNotificationRow struct {
 // TicketNotificationWorker polls for newly-created CONFIRMED tickets and
 // dispatches their fallback PIN to the owner.
 type TicketNotificationWorker struct {
-	pool     *pgxpool.Pool
+	pool     Pool
 	notifier notification.TicketNotification
 	rdb      *redisclient.Client
 	logger   *zap.Logger
@@ -39,7 +38,7 @@ type TicketNotificationWorker struct {
 
 // NewTicketNotificationWorker constructs a TicketNotificationWorker.
 func NewTicketNotificationWorker(
-	pool *pgxpool.Pool,
+	pool Pool,
 	notifier notification.TicketNotification,
 	rdb *redisclient.Client,
 	logger *zap.Logger,

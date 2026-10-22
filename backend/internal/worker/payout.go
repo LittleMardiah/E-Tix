@@ -6,7 +6,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/config"
@@ -16,15 +15,15 @@ import (
 )
 
 type PayoutWorker struct {
-	pool *pgxpool.Pool
+	pool Pool
 	repo resale.ResaleRepository
 	gw   adapter.PaymentGateway
 	log  *zap.Logger
 	cfg  *config.Config
-	conn *queue.Connection
+	conn queue.Consumer
 }
 
-func NewPayoutWorker(pool *pgxpool.Pool, repo resale.ResaleRepository, gw adapter.PaymentGateway, log *zap.Logger, cfg *config.Config, conn *queue.Connection) *PayoutWorker {
+func NewPayoutWorker(pool Pool, repo resale.ResaleRepository, gw adapter.PaymentGateway, log *zap.Logger, cfg *config.Config, conn queue.Consumer) *PayoutWorker {
 	return &PayoutWorker{conn: conn, pool: pool, repo: repo, gw: gw, log: log, cfg: cfg}
 }
 

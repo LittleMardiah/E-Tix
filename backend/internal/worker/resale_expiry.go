@@ -6,19 +6,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/resale"
 )
 
 type ResaleExpiryWorker struct {
-	pool *pgxpool.Pool
+	pool Pool
 	repo resale.ResaleRepository
 	log  *zap.Logger
 }
 
-func NewResaleExpiryWorker(pool *pgxpool.Pool, repo resale.ResaleRepository, log *zap.Logger) *ResaleExpiryWorker {
+func NewResaleExpiryWorker(pool Pool, repo resale.ResaleRepository, log *zap.Logger) *ResaleExpiryWorker {
 	return &ResaleExpiryWorker{pool: pool, repo: repo, log: log}
 }
 

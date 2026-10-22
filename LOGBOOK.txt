@@ -1814,3 +1814,91 @@ Doc sync 3 item (FIX P9a-9b):
   docs/TECHNICAL DEBT.txt (tanpa bump: v6/v7 membaca toolchain directive,
   go.mod sudah punya go directive eksplisit 1.26.10).
 Deviasi logged per TEAM_CONTRACT v2.2 section 11.5.
+
+[2026-10-22 08:22] FASE 9 P9a-9c — Epic A Closer (worker coverage 45.4% -> 86.5%, TD-F9-08 + TD-F3-03 FIXED)
+
+Target: worker 45.4% -> 65%+ (actual 86.5%), overall unit weighted 70.7% -> 75.5%,
+close TD-F9-08 + TD-F3-03.
+
+Root cause worker coverage macet (bukan test yang lemah, tapi design yang tidak injectable):
+- internal/worker/*..go memegang `*pgxpool.Pool` dan `*queue.Connection` konkret.
+  Pool tidak bisa di-substitute; queue.Connection embed `*amqp.Connection` langsung
+  (panic di zero-value). Semua branch DB-backed & MQ-backed stuck 0%.
+- Test yang ada (P9a-9b) hanya hit constructor + branch poison payload.
+
+Fix (refactor interface, tanpa dependency baru, tanpa live service):
+- internal/queue/interfaces.go (baru): type Consumer {Consume/Ack/Nack} + type
+  Publisher {PublishToQueue}, compile-time proof `var _ Consumer = (*Connection)(nil)`.
+- internal/worker/pool.go (baru): type Pool {TxBeginner + Query/QueryRow/Exec};
+  *pgxpool.Pool satisfies it.
+- internal/admin/service.go:27 `queue *queue.Connection` -> `queue queue.Publisher`.
+- internal/worker/{booking_expiry,bulk_cancel,fan_score,payout}.go:
+  `conn *queue.Connection` -> `conn queue.Consumer`.
+- internal/worker/{booking_expiry_repo,webhook_reconciliation_repo,fan_score}.go +
+  {bulk_cancel,payout,resale_expiry,feedback_loop,qr_regeneration,ticket_notification}.go:
+  `pool/db *pgxpool.Pool` -> `Pool`.
+- cmd/api/main.go TIDAK berubah (*queue.Connection & *pgxpool.Pool tetap satisfy interface).
+
+Test baru:
+- internal/worker/worker_p9a9c_test.go (40 test): fake Pool/Rows/Row/Tx/Consumer/
+  Acknowledger/Notifier/ResaleRepo -> Run loop, Handle body, RunOnce cycle,
+  Pgx repo worker. Coverage worker 45.4% -> 86.5% (404/467 statement).
+- internal/admin/admin_p9a9c_test.go: mock publisher -> service.go:118 count 0 -> 1.
+- internal/booking/benchmark_p9a9c_test.go: benchmark + test pembanding read path.
+
+TD-F9-08 FIXED (2026-10-22): queue.Connection -> queue.Consumer/Publisher interface;
+  service.go:118 (2 stmt) covered; admin 61.9% -> 62.3%.
+TD-F3-03 FIXED (2026-10-22): read path GET /seats SUDAH pakai 1x Redis GET + decode
+  Go (readLockedBitmap, service.go:318) — tidak ada loop GETBIT di kode produksi
+  (grep: 1 hit SetBit di admin/service.go:204 = write path). Benchmark 5000 seat:
+  production 237.036 us/op (0,24 ms) vs per-bit GETBIT 415.807.115 ns/op (415,8 ms).
+  Trigger TD (p95 > 100 ms) TIDAK terpenuhi; MGET/GETBIT justru regresi ~1750x.
+  Test TestP9a9cReadLockedBitmap_MatchesPerBitReference: lock set identik.
+
+Deviations (TEAM_CONTRACT v2.2 section 11.5) — prompt mengandung fakta salah:
+- [OVERRIDE-1] Prompt: "TD-F9-08: 2-stmt gap di BulkCancel `s.queue.PublishToQueue`" +
+  Stage 3 mengarahkan edit ke internal/worker/bulk_cancel.go.
+  Kenyataan (bukti file:line): gap ada di internal/admin/service.go:118,122
+  (field `queue *queue.Connection` di service.go:27); internal/worker/bulk_cancel.go
+  tidak punya PublishToQueue sama sekali (grep: 0 hit) — worker cuma Consumer.
+  Fix: refactor + test diarahkan ke internal/admin/service.go (tetap 1 file yang
+  sama-sama disebut prompt: "refactor queue.Connection to interface").
+- [OVERRIDE-2] Prompt Stage 2: NewPayoutWorker(nil,nil,nil,logger,nil) (5 arg),
+  NewBookingExpiryWorker(...8 arg) + w.Handle().
+  Kenyataan (bukti file:line): NewPayoutWorker punya 6 arg (payout.go:27),
+  NewBookingExpiryWorker punya 8 arg (booking_expiry.go:73) dan method-nya
+  ProcessOne (bukan Handle) di booking_expiry.go:119.
+  Fix: test ditulis ulang mengikuti signature nyata (R2: kode = source of truth).
+- [OVERRIDE-3] Prompt Stage 2: "worker.NewFeedbackLoopWorker(nil, nil, logger)" +
+  expect Run exit on ctx cancel.
+  Kenyataan (bukti file:line): signature-nya valid (feedback_loop.go:26) TAPI
+  Run mengembalikan ctx.Err() (feedback_loop.go:36) — bukan nil. Test disesuaikan.
+- [OVERRIDE-4] Prompt Stage 4: benchmark "GETBIT per-seat vs MGET".
+  Kenyataan (bukti file:line): MGET tidak bisa dipakai untuk bitmap (bukan key per
+  seat); kode produksi sudah fetch raw slice 1x GET. Fix: benchmark mengukur
+  path produksi vs varian per-bit GETBIT sebagai pembanding, dan TD ditutup
+  dengan angka, bukan dengan implementasi MGET yang akan jadi regresi.
+
+[2026-10-22 08:35] FASE 9 P9a-9c — EXTENSION (deviasi logged, TEAM_CONTRACT v2.2 section 11.5): publisher decoupling di payment + resale
+
+Tambahan scope kecil di dalam scope prompt (Stage 3 "refactor queue.Connection
+to interface agar bisa di-mock"), logged per TEAM_CONTRACT v2.2 section 11.5.
+Alasan: re-scan coverage profile menunjukkan 2 gap PERSIS KELAS yang sama
+(siapapun yang butuh publish AMQP tidak bisa di-mock) — bukan masalah baru.
+
+- internal/payment/service.go:63 `mq *queue.Connection` -> `mq queue.Publisher`;
+  SetResaleWebhookDeps(..., mq queue.Publisher). Test: internal/payment/payment_p9a9c_test.go
+  (HandleWebhook resale branch -> publish "resale_payout" + 2 negative case).
+- internal/resale/service.go:23 `queue *queue.Connection` -> `queue queue.DelayedPublisher`
+  (interface baru DelayedPublisher di internal/queue/interfaces.go, compile-time proof
+  `var _ DelayedPublisher = (*Connection)(nil)`). Test: internal/resale/resale_p9a9c_test.go
+  (BuyResaleTicket -> publish delayed "resale_expiry_check" 180s + case tanpa publisher).
+- Catatan: internal/booking/service.go punya interface lokal DelayedPublisher
+  sendiri (dipakai 3 file test booking) — TIDAK diubah (menghindari churn di test
+  file existing; Go interface struktural => keduanya interoperabel).
+
+Coverage: payment 81.1% -> 81.5%, resale 70.4% -> 71.1%,
+  weighted total 3101 -> 3105 / 4110 stmt (75.5%).
+Gates: gofmt 0 unformatted, go build ./... RC 0, go vet ./... RC 0,
+  go test ./internal/... -count=1 semua ok (0 FAIL),
+  go test -p 1 -tags integration ./internal/... -cover -count=1 semua ok (0 FAIL).

@@ -7,15 +7,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // PgxBookingExpiryRepo implements bookingExpiryRepo against Postgres.
 type PgxBookingExpiryRepo struct {
-	db *pgxpool.Pool
+	db Pool
 }
 
-func NewPgxBookingExpiryRepo(db *pgxpool.Pool) *PgxBookingExpiryRepo {
+func NewPgxBookingExpiryRepo(db Pool) *PgxBookingExpiryRepo {
 	return &PgxBookingExpiryRepo{db: db}
 }
 

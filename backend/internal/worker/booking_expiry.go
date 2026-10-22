@@ -59,7 +59,7 @@ type refundGateway interface {
 // Idempotent Lazy-Check pattern (LOGIC_FLOW §3.3): the message is never
 // cancelled; at delivery time we re-read booking state and act accordingly.
 type BookingExpiryWorker struct {
-	conn        *queue.Connection
+	conn        queue.Consumer
 	db          TxBeginner
 	repo        bookingExpiryRepo
 	obligations payment.PaymentObligationRepository
@@ -71,7 +71,7 @@ type BookingExpiryWorker struct {
 
 // NewBookingExpiryWorker wires the worker.
 func NewBookingExpiryWorker(
-	conn *queue.Connection,
+	conn queue.Consumer,
 	db TxBeginner,
 	repo bookingExpiryRepo,
 	obligations payment.PaymentObligationRepository,

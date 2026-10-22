@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	redisclient "github.com/LittleMardiah/E-Tix/backend/internal/redis"
@@ -29,7 +28,7 @@ type qrRegenRow struct {
 // every QRTimestampBlockSeconds. Batch-pipeline writes to Redis with a TTL
 // slightly longer than the block window (latency grace).
 type QRRegenerationWorker struct {
-	pool     *pgxpool.Pool
+	pool     Pool
 	rdb      *redisclient.Client
 	logger   *zap.Logger
 	interval time.Duration
@@ -38,7 +37,7 @@ type QRRegenerationWorker struct {
 
 // NewQRRegenerationWorker constructs a QRRegenerationWorker.
 func NewQRRegenerationWorker(
-	pool *pgxpool.Pool,
+	pool Pool,
 	rdb *redisclient.Client,
 	logger *zap.Logger,
 	interval time.Duration,

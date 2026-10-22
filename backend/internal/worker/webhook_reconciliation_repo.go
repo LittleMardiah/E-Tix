@@ -5,15 +5,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // PgxReconciliationRepo implements reconciliationRepo against Postgres.
 type PgxReconciliationRepo struct {
-	db *pgxpool.Pool
+	db Pool
 }
 
-func NewPgxReconciliationRepo(db *pgxpool.Pool) *PgxReconciliationRepo {
+func NewPgxReconciliationRepo(db Pool) *PgxReconciliationRepo {
 	return &PgxReconciliationRepo{db: db}
 }
 

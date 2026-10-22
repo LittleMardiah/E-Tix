@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/queue"
@@ -22,13 +21,13 @@ type FanScoreRepo interface {
 }
 
 type FanScoreWorker struct {
-	conn   *queue.Connection
+	conn   queue.Consumer
 	rdb    *redis.Client
 	repo   FanScoreRepo
 	logger *zap.Logger
 }
 
-func NewFanScoreWorker(conn *queue.Connection, rdb *redis.Client, repo FanScoreRepo, logger *zap.Logger) *FanScoreWorker {
+func NewFanScoreWorker(conn queue.Consumer, rdb *redis.Client, repo FanScoreRepo, logger *zap.Logger) *FanScoreWorker {
 	return &FanScoreWorker{conn: conn, rdb: rdb, repo: repo, logger: logger}
 }
 
@@ -99,10 +98,10 @@ func calculateDynamicScore(meta queue.FanScoreMetadata) int {
 }
 
 type PgxBlacklistRepo struct {
-	db *pgxpool.Pool
+	db Pool
 }
 
-func NewPgxBlacklistRepo(db *pgxpool.Pool) *PgxBlacklistRepo {
+func NewPgxBlacklistRepo(db Pool) *PgxBlacklistRepo {
 	return &PgxBlacklistRepo{db: db}
 }
 

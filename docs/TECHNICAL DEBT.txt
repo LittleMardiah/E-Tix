@@ -348,7 +348,7 @@ Verified: TestLockSeats_OwnerAndBookingKeyTTLSyncedWithHold (internal/booking/se
 Trigger: — (fixed di FASE 9 P9a-7, 2026-10-22).
 ID: TD-F3-03
 Tanggal: 2026-10-15
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: RENDAH
 Deskripsi: GET /seats membaca bitmap bitmap untuk LOCKED status (H1 fix),
   tapi granularity per-bit via loop GETBIT (position-by-position). Untuk
@@ -356,8 +356,24 @@ Deskripsi: GET /seats membaca bitmap bitmap untuk LOCKED status (H1 fix),
 Root Cause: MVP read path, per-bit loop.
 Rencana Fix: Pipeline GETBIT via Redis MGET batched, atau fetch raw byte
   slice + decode di Go (mirip readLockedBitmap).
-Trigger: profil latency p95 > 100ms di staging/prod.
-Referensi: docs/AUDIT FASE 3, H1 fix.
+Fix: Tidak ada perubahan kode produksi yang dibutuhkan — read path SUDAH
+  memakai bentuk yang sama dengan "Rencana Fix" (fetch raw byte slice +
+  decode di Go). BookingService.readLockedBitmap (internal/booking/service.go:318)
+  = 1x Redis GET untuk seluruh bitmap + decode bit di Go (bitAt, service.go:337).
+  Tidak ada loop GETBIT di seluruh kode produksi: grep -iE "getbit|setbit"
+  (non-test) menghasilkan hanya 1 hit — SetBit di internal/admin/service.go:204
+  yang itu WRITE path (ForceRelease), bukan read path GET /seats.
+  Benchmark (internal/booking/benchmark_p9a9c_test.go, section 5000 seat):
+    BenchmarkReadLockedBitmap_ProductionPath   237.036 ns/op... 237.036 us/op
+      (1 GET + decode Go) = 0,24 ms
+    BenchmarkReadLockedBitmap_PerBitGetBit     415.807.115 ns/op = 415,8 ms/op
+  Test pembanding: TestP9a9cReadLockedBitmap_MatchesPerBitReference — lock set
+  hasil decode 1-GET identik dengan walk per-bit GETBIT.
+Verified: benchmark di atas + test identical-set PASS; latensi 0,24 ms << trigger
+  100 ms (p95). Implementasi MGET/GETBIT justru regresi ~1750x, jadi sengaja
+  TIDAK dilakukan.
+Trigger: — (closed di FASE 9 P9a-9c, 2026-10-22).
+Referensi: docs/AUDIT FASE 3, H1 fix; internal/booking/service.go:318-340.
 
 
 ---
@@ -1075,7 +1091,7 @@ Referensi: Phase 0 manual run 2026-10-21, log /tmp/s_f9_phase0.log.
 
 ID: TD-F9-08
 Tanggal: 2026-10-21
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED (2026-10-22)
 Prioritas: LOW
 Deskripsi: 2 statement branch coverage gap di service.go:118, 122 — 
   `s.queue.PublishToQueue` di BulkCancel. Nil guard `s.queue != nil` 
@@ -1084,7 +1100,29 @@ Root Cause: AMQP Connection stub not injectable (queue.Connection embeds
   *amqp.Connection directly, no interface).
 Rencana Fix: FASE 9 P9d (E2E/load with live MQ) OR refactor queue.Connection 
   to interface (post-demo, TD-F9-06 batch).
-Trigger: FASE 9 P9d OR 80% overall coverage push (TD-F9-06).
+Fix: Refactor queue.Connection ke interface (opsi kedua di Rencana Fix):
+  - internal/queue/interfaces.go (baru): type Consumer { Consume/Ack/Nack } dan
+    type Publisher { PublishToQueue } + compile-time proof
+    `var _ Consumer = (*Connection)(nil)` / `var _ Publisher = (*Connection)(nil)`.
+  - internal/admin/service.go:27 `queue *queue.Connection` -> `queue queue.Publisher`.
+  - internal/worker/*.go: field `conn *queue.Connection` -> `conn queue.Consumer`
+    (booking_expiry, bulk_cancel, fan_score, payout).
+  - Test: internal/admin/admin_p9a9c_test.go (mock publisher) +
+    internal/worker/worker_p9a9c_test.go (mock consumer).
+  Produksi tidak berubah: *queue.Connection tetap implementasinya, cmd/api/main.go
+  tidak perlu dimodifikasi (satisfies interface).
+  Extension scope (logged per TEAM_CONTRACT v2.2 section 11.5): 2 gap identik di
+  class yang sama ditemukan
+  saat coverage re-scan dan ikut ditutup dengan interface yang sama:
+  - internal/payment/service.go:507 `s.mq.PublishToQueue(ctx, "resale_payout", body)`
+    -> `mq queue.Publisher`; test internal/payment/payment_p9a9c_test.go.
+  - internal/resale/service.go:164 `s.queue.PublishDelayed(ctx, "resale_expiry_check", ...)`
+    -> `queue queue.DelayedPublisher` (interface baru di internal/queue/interfaces.go);
+    test internal/resale/resale_p9a9c_test.go.
+Verified: coverage profile internal/admin/service.go:118 -> count=1 (sebelumnya 0);
+  `go test ./internal/admin/... -cover` = 62.3% (dari 61.9%).
+  payment 81.1% -> 81.5%; resale 70.4% -> 71.1%; 0 blok publish tersisa uncovered.
+Trigger: — (fixed di FASE 9 P9a-9c, 2026-10-22).
 Referensi: P9a-3 OpenCode log 2026-10-21, service.go:118,122.
 
 ID: TD-F9-06
@@ -1094,6 +1132,9 @@ Prioritas: MEDIUM
 Deskripsi: Push overall project coverage 30-40% → 80% (post-FASE 9 demo).
   Currently ~22-30% weighted; FASE 9 Epic A progressive push to ~65-70%.
   Remaining gap to 80% = worker, analytics, helper modules.
+Progress (2026-10-22, P9a-9c): unit coverage weighted 70.7% -> 75.5%
+  (3105/4110 statement). Worker 45.4% -> 86.5% (404/467). Sisa gap ke 80%:
+  analytics 49.0%, event 58.1%, admin 62.3%, gate 68.0%, resale 71.1%.
 Root Cause: FASE 9 Epic A budget (~50 jam) insufficient for 80% overall.
 Rencana Fix: Dedicated 40-jam phase post-demo (test worker deep, analytics 
   edge cases, config/db/notification/redis wrappers).

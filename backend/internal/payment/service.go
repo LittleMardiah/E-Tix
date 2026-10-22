@@ -60,7 +60,7 @@ type PaymentService struct {
 	gateway    adapter.PaymentGateway
 	idempotent *IdempotencyService
 	resaleRepo ResaleWebhookLookup // P3b: optional resale branch
-	mq         *queue.Connection   // P3b: for PayoutPayload enqueue
+	mq         queue.Publisher     // P3b: for PayoutPayload enqueue (interface: testable without live MQ)
 }
 
 // NewPaymentService wires the service. booking may be nil for read-only paths.
@@ -82,7 +82,7 @@ func NewPaymentService(
 
 // SetResaleWebhookDeps wires resale repo + mq for the resale webhook branch.
 // Setter pattern (not constructor param) to avoid breaking FASE 4 call sites.
-func (s *PaymentService) SetResaleWebhookDeps(repo ResaleWebhookLookup, mq *queue.Connection) {
+func (s *PaymentService) SetResaleWebhookDeps(repo ResaleWebhookLookup, mq queue.Publisher) {
 	s.resaleRepo = repo
 	s.mq = mq
 }

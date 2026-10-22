@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
@@ -22,14 +21,14 @@ type BulkCancelPayload struct {
 }
 
 type BulkCancelWorker struct {
-	pool *pgxpool.Pool
+	pool Pool
 	rdb  *redis.Client
 	gw   adapter.PaymentGateway
 	log  *zap.Logger
-	conn *queue.Connection
+	conn queue.Consumer
 }
 
-func NewBulkCancelWorker(pool *pgxpool.Pool, rdb *redis.Client, gw adapter.PaymentGateway, log *zap.Logger, conn *queue.Connection) *BulkCancelWorker {
+func NewBulkCancelWorker(pool Pool, rdb *redis.Client, gw adapter.PaymentGateway, log *zap.Logger, conn queue.Consumer) *BulkCancelWorker {
 	return &BulkCancelWorker{pool: pool, rdb: rdb, gw: gw, log: log, conn: conn}
 }
 

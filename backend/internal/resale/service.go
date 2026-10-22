@@ -20,12 +20,12 @@ type TxBeginner interface {
 type ResaleService struct {
 	repo    ResaleRepository
 	db      TxBeginner
-	queue   *queue.Connection      // FIX #13: actual type from publisher.go:10
+	queue   queue.DelayedPublisher // FIX #13: publisher interface (testable without live MQ)
 	gw      adapter.PaymentGateway // P3: BuyResaleTicket payment init (S5-1)
 	feeRate string
 }
 
-func NewResaleService(repo ResaleRepository, db TxBeginner, q *queue.Connection, gw adapter.PaymentGateway, feeRate string) *ResaleService {
+func NewResaleService(repo ResaleRepository, db TxBeginner, q queue.DelayedPublisher, gw adapter.PaymentGateway, feeRate string) *ResaleService {
 	return &ResaleService{repo: repo, db: db, queue: q, gw: gw, feeRate: feeRate}
 }
 
