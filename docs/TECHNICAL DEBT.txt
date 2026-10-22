@@ -1148,3 +1148,19 @@ Rencana Fix: Proper fix post-demo — testcontainers per test file OR unique sch
   prefix per test OR transaction rollback per test via harness (~15-20 jam).
 Trigger: P9a-9 (integration close) OR post-demo test hardening.
 Referensi: P9a-7 OpenCode log 2026-10-22; V2.6 §11.2 worktree comparison.
+
+---
+
+ID: TD-F9-13
+Tanggal: 2026-10-22
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: .github/workflows/test.yml uses actions/setup-go@v5 (current
+v5.6.0). v6/v7 adds support for reading toolchain directive from go.mod
+(currently ignores it; uses go directive only). No functional impact for
+current setup since go.mod has explicit go 1.26.10.
+Root Cause: Pin to v5 stable; v6/v7 newer with minor improvements.
+Rencana Fix: Bump to actions/setup-go@v6 in next CI touch. Verify all 4
+jobs still green after upgrade.
+Trigger: When adding toolchain directive OR CI deprecation notice OR Dependabot.
+Referensi: P9a-9b OpenCode log 2026-10-22, [OVERRIDE-2] of CVE fix session.

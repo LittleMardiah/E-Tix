@@ -1796,3 +1796,21 @@ Session work (FASE 9 P9a-7, uncommitted — no push per R10):
   UT-RESALE-001..003, UT-WORK-001..004) + gap list. TD-F8-02 tidak diubah
   (sudah fixed). Wiring main.go untuk TD-F8-01 ditambahkan (belum ada di
   prompt).
+
+[2026-10-22 07:09] FASE 9 P9a-9b — DOC SYNC (FIX P9a-9b TD-F9-11 / TD-F9-12 / TD-F9-13)
+
+Doc sync 3 item (FIX P9a-9b):
+- TD-F9-11 — Go version drift. Source of truth backend/go.mod = go 1.26.10
+  (commit b865e10, CVE GO-2026-6809 crypto/x509). docs/AUDIT FASE 0.md baris
+  71 + 102 disinkronkan 1.26.9 -> 1.26.10 + section 9 "DRIFT FIX" ditambahkan.
+  Mentri historis "167c344 bump Go 1.22.2 -> 1.26.9" di LOGBOOK.txt TIDAK
+  diubah (akurat untuk masanya) sesuai R2 (kode = source of truth).
+- TD-F9-12 — Catatan upgrade govulncheck lokal (scanner lawas go1.22 vs
+  go.mod go1.26). docs/LOCAL_SETUP.md dibuat (belum ada sebelumnya;
+  docs/DEPLOYMENT.md juga tidak ada -> fallback prompt tidak terpakai).
+  Isi: GOTOOLCHAIN=go1.26.10 go install golang.org/x/vuln/cmd/govulncheck@latest.
+  CI tidak terpengaruh (install fresh per run di .github/workflows/test.yml).
+- TD-F9-13 — actions/setup-go@v5 -> v6/register sebagai DEFERRED di
+  docs/TECHNICAL DEBT.txt (tanpa bump: v6/v7 membaca toolchain directive,
+  go.mod sudah punya go directive eksplisit 1.26.10).
+Deviasi logged per TEAM_CONTRACT v2.2 section 11.5.

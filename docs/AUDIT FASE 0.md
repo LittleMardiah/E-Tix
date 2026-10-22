@@ -68,7 +68,7 @@
 - [✅] T29 — CodeCov + badge (5e25d77)
 - [✅] T30 — govulncheck + gitleaks (5e25d77)
 - [✅] T28b — deferred (testcontainers belum perlu; belum ada test real)
-- [✅] B1 — Go directive bump 1.22.2 → 1.26.9 (167c344)
+- [✅] B1 — Go directive bump 1.22.2 → 1.26.9 (167c344); re-bump 1.26.9 → 1.26.10 (b865e10, CVE GO-2026-6809 crypto/x509)
 - [✅] B2-B4 — deps bump + golangci-lint v2 + errcheck fix (9085bc4)
 
 ### E7 (Deployment)
@@ -99,7 +99,7 @@
 - [✅] Auth shim (auth.uid() + auth.jwt()) guarded IF NOT EXISTS
 
 ### Dependency vs TDD
-- [✅] Go 1.26.9 (upgraded dari 1.22.2)
+- [✅] Go 1.26.10 (upgraded dari 1.22.2; was 1.26.9 sebelum CVE GO-2026-6809 fix)
 - [✅] Gin v1.12.0 (>= 1.10 requirement)
 - [✅] pgx/v5 v5.11.0
 - [✅] golang-migrate v4.17.1
@@ -201,6 +201,25 @@
 | Fallback | Manual (sed) | 2026-10-14 | ✅ USED |
 
 **STATUS: FASE 0 READY TO CLOSE**
+
+---
+
+## 9. DRIFT FIX — Go version (FIX P9a-9b TD-F9-11)
+
+**Tanggal fix**: 2026-10-22
+**Source of truth**: `backend/go.mod` → `go 1.26.10`
+**Trigger**: CVE GO-2026-6809 (crypto/x509) — bump 1.26.9 → 1.26.10 (commit `b865e10`).
+
+Per-code-is-source-of-truth (TEAM_CONTRACT R2), versi Go pada dokumen ini
+disinkronkan ke `go.mod`:
+
+| Lokasi | Sebelum | Sesudah |
+|--------|---------|----------|
+| §2 E6 — baris "B1 — Go directive bump" | 1.26.9 (167c344) | 1.26.9 (167c344) → **1.26.10** (b865e10) |
+| §3 DRIFT CHECK — "Dependency vs TDD" | Go 1.26.9 | **Go 1.26.10** |
+
+Referensi `1.26.9` yang lain (mis. LOGBOOK.txt entri commit `167c344`) adalah
+catatan historis commit dan sengaja tidak diubah — pada masanya memang 1.26.9.
 
 ---
 
