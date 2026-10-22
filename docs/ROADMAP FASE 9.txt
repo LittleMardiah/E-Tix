@@ -2,10 +2,11 @@
 ROADMAP FASE (9): TESTING, PORTFOLIO POLISH & LIVE DEMO — E-Tix Flash
 ================================================================================
 
-Version:         1.1-FINAL
+Version:         1.2
 Last Updated:    2026-10-22
 Author:          M. Arif Aulia
-Status:          🔄 IN PROGRESS (Epic A: P9a-1..P9a-7 done)
+Status:          🔄 IN PROGRESS (Epic A: P9a-1..P9a-10 done — unit/integration
+                 lanes complete; residual E2E/load/security/chaos/a11y → TD-F9-14)
 Blueprint Ref:   BLUEPRINT ROADMAP v1.0-FINAL, FASE 9 (TERAKHIR)
 Depends On:      FASE 0-8 (all LOCKED)
 
@@ -13,12 +14,25 @@ EXECUTION PROGRESS (live — updated 2026-10-22):
   Epic A — Full STP Execution
     P9a-1..P9a-6  ✅ DONE  (FASE 8 clean close + FASE 9 pre-flight)
     P9a-7         ✅ DONE  (7 TD fixes + 4 doc syncs + Rule V13, 2026-10-22)
-  Epic B (DR Drills)          ⏳ Not Started
+    P9a-8         ✅ DONE  (14 TD fixes + TD-F9-10, coverage 57.9% → 69.5%, 2026-10-22)
+    P9a-9         ✅ DONE  (CVE bump go 1.26.10 + postman 44 item + newman CI, 2026-10-22)
+    P9a-9b        ✅ DONE  (7 test file: config 96.7% / queue 76.6% / gate 68.0%, 2026-10-22)
+    P9a-9c        ✅ DONE  (queue interfaces + worker 86.5%, TD-F9-08/03 closed, 2026-10-22)
+    P9a-10        ✅ DONE  (repo DBPool seam + coverage boost 4 paket, 2026-10-22)
+  Epic A residual — P9d..P9h (E2E/k6/ZAP/chaos/a11y + unit ≥ 85%) → TD-F9-14
+  Epic B (DR Drills)          ⏳ Next
   Epic C (Frontend Full)      ⏳ Not Started
   Epic D (Portfolio Polish)   ⏳ Not Started
   Epic E (Demo + Deploy)      ⏳ Not Started
-  Detail: LOGBOOK.txt entri [2026-10-22 00:12]; docs/TECHNICAL DEBT.txt —
-  11 TD ter-update (10 ✅ FIXED, 1 ✅ CLOSED).
+  Detail: LOGBOOK.txt entri [2026-10-22 P9a-10]; docs/TECHNICAL DEBT.txt —
+  TD-F6-09 + TD-F9-01 ✅ CLOSED, TD-F9-14 + TD-F9-15 registered.
+
+  Unit coverage (go test ./internal/... -cover -count=1, 2026-10-22, unit-only):
+    admin 86.9% | analytics 96.1% | auth 86.0% | booking 76.5% | config 96.7%
+    db 100.0% | event 97.5% | gate 77.1% | middleware 100.0% | notification 100.0%
+    payment 85.9% | queue 76.6% | redis 94.6% | resale 71.2% | ticket 76.8%
+    worker 86.5%  →  WEIGHTED 3462/4110 stmt = 84.23%
+    Target P9a-10 "semua paket ≥ 70%" ✅ tercapai; DoD ≥ 85% → TD-F9-14.
 
 ================================================================================
 📌 BISMILLAH — ROADMAP FASE 9 FINAL VERSION (FASE TERAKHIR)
@@ -54,7 +68,7 @@ Nama Fase:         Testing, Portfolio Polish & Live Demo
 Fitur Utama:       Konsolidasi F001-F006 + Testing + Frontend Full + Demo + Deploy
 Estimasi Durasi:   Week 9-12 (3-4 minggu, ~120 jam kerja)
 Dependencies:      FASE 0-8 (semua fitur bisnis + backend + skeleton frontend)
-Status:            🔄 In Progress (Epic A: P9a-1..P9a-7 done)
+Status:            🔄 In Progress (Epic A: P9a-1..P9a-10 done; residual → TD-F9-14)
 
 Ringkasan:
   FASE KONSOLIDASI & FINALISASI. Bukan fase coding fitur baru — melainkan 
@@ -83,7 +97,7 @@ SECTION 2 — SCOPE & OBJECTIVES
 ✅ EPIC A — FULL STP EXECUTION:
    - Unit tests: 85%+ coverage across all modules
    - Integration tests: all critical flows (booking, payment, resale, gate)
-   - API tests: 37 endpoints via Newman
+   - API tests: 43 endpoints via Newman (postman collection 44 item)
    - E2E tests: 5 critical user journeys (Playwright)
    - Load tests: k6 (normal 20k RPS + peak 50k RPS + spike)
    - Security tests: OWASP ZAP baseline + manual IDOR/BOLA + replay + header sanitize
@@ -155,7 +169,7 @@ SECTION 2 — SCOPE & OBJECTIVES
 
 1. Unit test coverage ≥ 85% (all modules)
 2. Integration tests 100% pass
-3. API tests 37 endpoints pass
+3. API tests 43 endpoints pass (postman collection 44 item)
 4. E2E tests 5/5 journeys pass
 5. Load tests: p95 < 100ms @ 20k RPS (target PRD)
 6. Security: no CRITICAL vulnerabilities (OWASP Top 10)
@@ -170,6 +184,12 @@ SECTION 2 — SCOPE & OBJECTIVES
 ────────────────────────────────────────────────────────────────────────────────
 
 Mengacu pada PRD §Success Metrics + STP §8.1 DoD:
+
+Catatan status (2026-10-22, P9a-10): checklist di bawah = definisi target.
+  Terverifikasi saat ini: Integration 100% pass ✅ | unit coverage 84.23%
+  weighted (semua paket ≥ 71.2%, target ≥ 85% → TD-F9-14) | Regression
+  unit+integration hijau (1 flaky redis → TD-F9-15). Belum dieksekusi: E2E,
+  load, ZAP, chaos, a11y, DR, demo → TD-F9-14 + Section 9 DoD.
 
 - [x] All quality gates from STP v1.1 §8.1 passed
 - [x] Coverage 85%+ across all modules
@@ -204,7 +224,7 @@ Level 2 — Integration Tests (Testcontainers):
   - Idempotency L1+L2 (IT-IDEMPOTENCY)
 
 Level 3 — API Tests (Postman/Newman):
-  - 37 endpoints × (happy + error)
+  - 43 endpoints × (happy + error)
   - Header validation (X-Idempotency-Key, X-Queue-Token, X-Admin-2FA-Token)
 
 Level 4 — E2E Tests (Playwright):
@@ -748,9 +768,9 @@ SECTION 6 — ACCEPTANCE CRITERIA
 6.1 FUNCTIONAL AC
 ────────────────────────────────────────────────────────────────────────────────
 
-  [ ] Unit test coverage ≥ 85% all modules
-  [ ] Integration tests 100% pass
-  [ ] API tests 37/37 endpoints pass
+  [ ] Unit test coverage ≥ 85% all modules (84.23% weighted; semua paket ≥ 71.2% — TD-F9-14)
+  [x] Integration tests 100% pass (P9a-10: -tags integration vs PG 15433, 0 FAIL)
+  [ ] API tests 43/43 endpoints pass (postman 44 item + newman CI job; run via CI)
   [ ] E2E tests 5/5 journeys pass
   [ ] Load test: p95 < 100ms @ 20k RPS
   [ ] Security: no CRITICAL vuln
@@ -870,15 +890,15 @@ SECTION 9 — DEFINITION OF DONE (DoD)
 ────────────────────────────────────────────────────────────────────────────────
 
 Epic A (STP Execution):
-  [ ] Unit tests ≥ 85% coverage
-  [ ] Integration tests 100% pass
-  [ ] API tests 43/43 pass
-  [ ] E2E tests 5/5 pass
-  [ ] Load test target met
-  [ ] Security scan pass
-  [ ] Chaos tests pass
-  [ ] Accessibility pass
-  [ ] Regression full pass
+  [ ] Unit tests ≥ 85% coverage            (84.23% weighted; semua paket ≥ 71.2% — TD-F9-14)
+  [x] Integration tests 100% pass          (P9a-10: -tags integration vs PG 15433, 0 FAIL)
+  [ ] API tests 43/43 pass                 (postman 44 item + newman CI job; run via CI — TD-F9-14)
+  [ ] E2E tests 5/5 pass                   (P9d — TD-F9-14)
+  [ ] Load test target met                 (P9e — TD-F9-14)
+  [ ] Security scan pass                   (govulncheck + gitleaks CI hijau; OWASP ZAP P9f — TD-F9-14)
+  [ ] Chaos tests pass                     (P9g — TD-F9-14)
+  [ ] Accessibility pass                   (P9h — TD-F9-14)
+  [ ] Regression full pass                 (unit + integration hijau; 1 flaky redis → TD-F9-15)
 
 Epic B (DR Drills):
   [ ] Backup restoration tested
@@ -1019,6 +1039,11 @@ SECTION 10 — NOTES & REFERENCES
 |          |            |              | approved (Opsi A): Frontend full impl di FASE 9  |
 |          |            |              | (durasi 3-4 minggu); Demo video + production     |
 |          |            |              | deploy full stack.                                |
+| 1.1-FINAL| 2026-10-22 | M. Arif Aulia| P9a-7 status sync (Epic A: P9a-1..P9a-7 done).   |
+| 1.2      | 2026-10-22 | M. Arif Aulia| P9a-8/9/9b/9c/10 progress + coverage sync:      |
+|          |            |              | unit weighted 84.23% (semua paket ≥ 71.2%);     |
+|          |            |              | TD-F6-09 + TD-F9-01 ✅ CLOSED; residual Epic A  |
+|          |            |              | lanes (E2E/k6/ZAP/chaos/a11y + ≥ 85%) → TD-F9-14. |
 
 ================================================================================
 📋 FASE 9 SYNC CHECKLIST (100% COMPLIANCE)
@@ -1105,7 +1130,7 @@ Pipeline SUSUNAN DOKUMEN.txt TUNTAS.
 Project E-Tix Flash = READY TO EXECUTE.
 
 ================================================================================
-END OF ROADMAP FASE (9) v1.1-FINAL
+END OF ROADMAP FASE (9) v1.2
 ================================================================================
 
 ✅ 100% READY TO EXECUTE
@@ -1117,5 +1142,5 @@ END OF ROADMAP FASE (9) v1.1-FINAL
 ✅ 2 flags pre-approved (Opsi A)
 ✅ No full code injection (pseudocode only)
 
-Last Updated: 2026-10-22 by FASE 9 P9a-7 (status + endpoint count sync)
+Last Updated: 2026-10-22 by FASE 9 P9a-10 (Epic A unit+integration lanes, coverage sync)
 Bismillah — Final Version. 100% Complete. LOCKED.

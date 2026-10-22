@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/ticket"
 )
@@ -84,13 +84,25 @@ type GateRepository interface {
 // ErrTicketNotFound is returned when no ticket matches the given lookup.
 var ErrTicketNotFound = ticket.ErrTicketNotFound
 
+// DBPool is the minimal pgx surface used by PostgresGateRepository.
+//
+// FIX P9a-10 (TD-F9-01): the repository held a concrete *pgxpool.Pool, so the
+// SQL layer could not be unit-tested (no fake pool could be injected) and
+// stayed at 0% coverage. *pgxpool.Pool satisfies DBPool, therefore the
+// production wiring in cmd/api/main.go is unchanged.
+type DBPool interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // PostgresGateRepository is the pgx-backed implementation of GateRepository.
 type PostgresGateRepository struct {
-	pool *pgxpool.Pool
+	pool DBPool
 }
 
 // NewPostgresGateRepository constructs a PostgresGateRepository.
-func NewPostgresGateRepository(pool *pgxpool.Pool) *PostgresGateRepository {
+func NewPostgresGateRepository(pool DBPool) *PostgresGateRepository {
 	return &PostgresGateRepository{pool: pool}
 }
 

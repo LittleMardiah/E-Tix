@@ -832,7 +832,7 @@ Verified: grep NOT_IMPLEMENTED docs.
 
 ID: TD-F6-09
 Tanggal: 2026-10-20
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-22)
 Prioritas: SEDANG
 Deskripsi: FASE 6 test coverage gap. Delivered: analytics 4 unit, gate 0. 
   ROADMAP E9 targets: unit ≥90%, 7 integration, Postman, conflict IT. 
@@ -840,6 +840,16 @@ Deskripsi: FASE 6 test coverage gap. Delivered: analytics 4 unit, gate 0.
 Rencana Fix: FASE 9 full test suite (~6 jam).
 Trigger: FASE 9.
 Referensi: FASE 6 mega audit 2026-10-20.
+Fix: Ditutup lewat FASE 9 P9a-1..P9a-10 (Epic A lane unit + integration + API).
+  Unit coverage (go test ./internal/... -cover -count=1, 2026-10-22):
+  analytics 49.0% -> 96.1%, event 58.1% -> 97.5%, gate 68.0% -> 77.1%,
+  admin 62.3% -> 86.9%. Weighted internal 3462/4110 stmt = 84.23%
+  (semua paket >= 71.15%, target P9a-10 ">= 70% semua paket" tercapai).
+  Integration (-tags integration, PG 15433): semua paket ok, 0 FAIL.
+  API contract: postman_collection.json 44 item + newman CI job (P9a-9).
+  Residual lane (E2E/k6/ZAP/chaos/a11y) + target unit 85% -> TD-F9-14.
+Verified: go test ./internal/... -cover -count=1 (0 FAIL);
+  go test -p 1 -tags integration ./internal/... -cover -count=1 (0 FAIL).
 
 
 ---
@@ -1017,13 +1027,18 @@ Status: ⏸️ DEFERRED
 Prioritas: LOW
 Deskripsi: Extended test coverage (30 ROADMAP FASE 8 E10 tasks) — only 1 sentinel test baseline.
 Rencana Fix: FASE 9 full STP sweep.
+Progress: P9a-1..P9a-10 (2026-10-22) — STP sweep FASE 9 sudah jalan di lane
+  unit + integration + API: unit weighted 84.23% (semua paket >= 71.15%),
+  integration 0 FAIL, postman 44 item + newman CI. Status tetap DEFERRED
+  (di luar scope P9a-10) sampai target unit >= 85% dan lane E2E/k6/ZAP/chaos/
+  a11y selesai -> TD-F9-14; closing dilakukan di review berikutnya.
 Trigger: FASE 9.
 
 ---
 
 ID: TD-F9-01
 Tanggal: 2026-10-21
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-22)
 Prioritas: MEDIUM
 Deskripsi: Extended test coverage — admin pkg (27 methods = 1 sentinel only),
   HTTP layer (payments, webhook, events CRUD, users/me, gate verify/sync not
@@ -1034,6 +1049,16 @@ Rencana Fix: FASE 9 Epic A (Full STP Execution: Unit + Integration + API + E2E
 Progress: P9a-7 (2026-10-22) — unit coverage 57.9% -> 62.0%; test baru untuk
   analytics (service + HTTP handler), config, db, redis. Sisa coverage:
   auth 38.8%, admin 47.9%, worker 43.5% (lihat STP v1.2 §3.2 gap list).
+  P9a-8 -> 69.5% (14 TD fix). P9a-9b -> config 96.7%, queue 76.6%, gate 68.0%.
+  P9a-9c -> worker 86.5% (queue interfaces). P9a-10 -> admin 86.9%,
+  analytics 96.1%, event 97.5%, gate 77.1%; weighted internal 3462/4110 =
+  84.23% (semua paket >= 71.15%).
+  HTTP boundary yang tadinya kosong (payments, webhook, events CRUD,
+  users/me, gate verify/sync) + 22 admin method + admin register kini
+  ter-cover.
+Fix: Ditutup di P9a-10 (2026-10-22) — seluruh gap test di TD ini punya test
+  + integration suite hijau. Residual: unit >= 85% (84.23%) dan lane
+  E2E/k6/ZAP/chaos/a11y -> TD-F9-14.
 Trigger: FASE 9 kickoff.
 Referensi: PA0 report 2026-10-21, ROADMAP FASE 9 Epic A.
 
@@ -1205,3 +1230,49 @@ Rencana Fix: Bump to actions/setup-go@v6 in next CI touch. Verify all 4
 jobs still green after upgrade.
 Trigger: When adding toolchain directive OR CI deprecation notice OR Dependabot.
 Referensi: P9a-9b OpenCode log 2026-10-22, [OVERRIDE-2] of CVE fix session.
+
+---
+
+ID: TD-F9-14
+Tanggal: 2026-10-22
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Residual Epic A lane belum dieksekusi + DoD unit >= 85% belum tercapai.
+  a) E2E Playwright 5 journey (A1-T4) — dep @playwright/test terpasang tapi
+  frontend/ belum punya file .spec.ts (0 file). b) Load test k6 (A1-T5) —
+  belum ada script/hasil k6 di repo. c) OWASP ZAP scan (A1-T6) — CI baru
+  govulncheck + gitleaks. d) Chaos test Redis/MQ down (A1-T8) — belum ada
+  report. e) Accessibility axe-core (A1-T9) — dep terpasang, belum ada report.
+  f) Unit coverage weighted 84.23% (< 85% DoD); paket di bawah 85%:
+  resale 71.15%, queue 76.58%, booking 76.45%, ticket 76.84%, gate 77.07%.
+  g) 1 flaky test redis (lihat TD-F9-15).
+Root Cause: P9a-1..P9a-10 hanya menjalankan lane unit + integration + API
+  contract. Lane yang butuh browser/tool eksternal (Playwright, k6, ZAP,
+  axe) + environment load/chaos belum dianggarkan di sesi-sesi tersebut
+  (planning awal LOE P9d..P9h).
+Rencana Fix: Sesi P9d (E2E), P9e (k6), P9f (ZAP), P9g (chaos), P9h (a11y)
+  sesuai urutan ROADMAP; coverage ke >= 85% all modules lewat seam DBPool yang
+  sama (repository resale/ticket/booking/queue) — butuh ~+131 stmt.
+  85% tidak achieved:Epic A DoD tetap terbuka sampai item ini selesai.
+Trigger: sebelum GO-TO-LAUNCH; Epic B boleh mulai paralel.
+Referensi: ROADMAP FASE 9 v1.2 §9.1 Epic A, LOGBOOK.txt [2026-10-22 P9a-10].
+
+---
+
+ID: TD-F9-15
+Tanggal: 2026-10-22
+Status: ⏸️ DEFERRED
+Prioritas: LOW
+Deskripsi: Flaky test internal/redis TestP9a7_Health_ServerDown. Gagal 1x pada
+  full run P9a-10 (internal/redis), Lolos 3/3 saat run isolated dan pada 2
+  full-run berikutnya. Paket redis tidak disentuh di P9a-10 (pre-existing,
+  bukan regresi).
+Root Cause: Hipotesis (belum di-verifikasi): connection pool masih punya
+  koneksi hidup ke miniredis saat mr.Close() dipanggil, sehingga write pertama
+  pada socket yang sudah di-close_by_peer masih sukses dan Health() tidak
+  mengembalikan error.
+Rencana Fix: Reproduksi 20x (go test ./internal/redis -count=20 -run
+  TestP9a7_Health_ServerDown) lalu tegaskan determinisme: tutup client
+  sebelum assert, atau gunakan expectasi error yang eksplisit.
+Trigger: P9a-11 / sebelum GO-TO-LAUNCH (DoD "zero flaky tests").
+Referensi: backend/internal/redis/redis_p9a7_test.go:41, P9a-10 log 2026-10-22.

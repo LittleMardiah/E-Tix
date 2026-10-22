@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // EventRepository provides read access to the event catalog.
@@ -31,12 +31,24 @@ type ListFilter struct {
 	Limit  int
 }
 
-// PostgresEventRepository is the pgx-backed EventRepository.
-type PostgresEventRepository struct {
-	db *pgxpool.Pool
+// DBPool is the minimal pgx surface used by PostgresEventRepository.
+//
+// FIX P9a-10 (TD-F9-01): the repository held a concrete *pgxpool.Pool, so the
+// SQL layer could not be unit-tested (no fake pool could be injected) and
+// stayed at 0% coverage. *pgxpool.Pool satisfies DBPool, therefore the
+// production wiring in cmd/api/main.go is unchanged.
+type DBPool interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-func NewPostgresEventRepository(db *pgxpool.Pool) *PostgresEventRepository {
+// PostgresEventRepository is the pgx-backed EventRepository.
+type PostgresEventRepository struct {
+	db DBPool
+}
+
+func NewPostgresEventRepository(db DBPool) *PostgresEventRepository {
 	return &PostgresEventRepository{db: db}
 }
 

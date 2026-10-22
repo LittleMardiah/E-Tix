@@ -1902,3 +1902,91 @@ Coverage: payment 81.1% -> 81.5%, resale 70.4% -> 71.1%,
 Gates: gofmt 0 unformatted, go build ./... RC 0, go vet ./... RC 0,
   go test ./internal/... -count=1 semua ok (0 FAIL),
   go test -p 1 -tags integration ./internal/... -cover -count=1 semua ok (0 FAIL).
+
+[2026-10-22 09:10] FASE 9 P9a-10 — COVERAGE BOOST 4 PAKET (analytics/event/gate/admin) + DOC CLOSE (TD-F6-09, TD-F9-01) + ROADMAP v1.2
+
+Target sesi: analytics/event/gate/admin >= 70% unit, tutup TD-F6-09 + TD-F9-01,
+update ROADMAP FASE 9 (Epic A).
+
+ROOT CAUSE (bukti file:line + coverage profile):
+  Prompt Stage 2-5 HOAH: paket analytics/event/gate/admin SUDAH punya test
+  service/handler yang tinggi (analytics service 100%, event service+handler
+  100%, gate service 123/134, admin service+handler+idempotency+envelope 100%).
+  Gap ada di LAPISAN REPOSITORY PostgreSQL: analytics repo 0/128 stmt,
+  event repo 19/104, gate repo 0/70, admin repo 5/204. Repository bergantung
+  langsung ke *pgxpool.Pool sehingga tidak bisa di-mock tanpa DB.
+  Fix (seam, tanpa dependency baru): interface DBPool
+  (Exec/Query/QueryRow) di 4 repository, + fake pgx in-memory di test file
+  (p9a10FakePool/Rows/Row). Precedent: internal/queue/interfaces.go
+  (Consumer/Publisher), internal/resale/service.go (TxBeginner).
+  *pgxpool.Pool tetap memenuhi DBPool -> cmd/api/main.go + tests/integration
+  tidak berubah (verified: go build ./... RC 0).
+
+PERUBAHAN KODE:
+  - backend/internal/analytics/repository.go: +interface DBPool, field
+    pool DBPool, NewPostgresAnalyticsRepository(pool DBPool).
+  - backend/internal/event/repository.go: +interface DBPool, field db DBPool,
+    NewPostgresEventRepository(db DBPool).
+  - backend/internal/gate/repository.go: +interface DBPool, field pool DBPool,
+    NewPostgresGateRepository(pool DBPool).
+  - backend/internal/admin/repository.go: +interface DBPool, field pool DBPool,
+    NewPostgresAdminRepository(pool DBPool).
+  - backend/internal/{analytics,event,gate,admin}/*_p9a10_test.go (baru):
+    fake pgx + test query repository (scan, error map, state transition).
+  - docs/TECHNICAL DEBT.txt: TD-F6-09 CLOSED, TD-F9-01 CLOSED, TD-F8-03
+    +Progress, TD-F9-14 (residual lane Epic A) + TD-F9-15 (flaky redis)
+    registered.
+  - docs/ROADMAP FASE 9.txt: v1.1-FINAL -> v1.2, status + EXECUTION PROGRESS
+    P9a-8..P9a-10 + coverage table, DoD 9.1 Epic A evidence, AC 6.1,
+    VERSION HISTORY, endpoint count drift 37 -> 43 (API_CONTRACT v1.2).
+
+COVERAGE (go test ./internal/... -cover -count=1, unit-only, 2026-10-22):
+  admin 62.3% -> 86.9% | analytics 49.0% -> 96.1% | event 58.1% -> 97.5%
+  gate 68.0% -> 77.1%  |  weighted internal 3462/4110 stmt = 84.23%
+  (semua paket >= 71.15% -> target P9a-10 "semua paket >= 70%" tercapai).
+
+GATES:
+  gofmt -l . -> kosong | go build ./... RC 0 | go vet ./... RC 0
+  go test ./internal/... -count=1 -> 0 FAIL
+  go test -p 1 -tags integration ./internal/... -cover -count=1 (PG 15433) -> 0 FAIL
+  go test -p 1 -tags integration ./tests/... -count=1 -> 0 FAIL
+  Catatan: internal/redis TestP9a7_Health_ServerDown flaky 1x (lolos 3/3
+  isolated + 2 full-run berikutnya) -> TD-F9-15, paket redis tidak disentuh.
+
+[OVERRIDE-1] Prompt Stage 2-5: contoh kode test (analytics.NewService,
+  DashboardData/AnalyticsData/ReportData, mock interface event/gate/admin
+  dengan signature constructor berbeda).
+  Kenyataan (bukti file:line): analytics.NewAnalyticsService(repo
+  AnalyticsRepository, owners EventOwnerReader) (analytics/service.go), type
+  data yang dipakai = DashboardMetrics/MathData, GetDashboard(ctx, callerID,
+  eventID, callerRole); interface mock event/gate/admin tidak punya method
+  yang dipakai prompt. Mock service/handler yang ada di repo justru SUDAH
+  ter-cover 80-100% sehingga menambah mock tidak menaikkan coverage.
+  Fix: coverage dip naikkan di lapisan repository (SQL) lewat seam DBPool +
+  fake pgx, mengikuti API nyata repo (R2: kode = source of truth).
+[OVERRIDE-2] Prompt Stage 7: replacement string docs (ROADMAP "Version: 1.2",
+  "Epic A: COMPLETE as of P9a-10", TD "Prioritas: MEDIUM\nDeskripsi:
+  Extended test coverage (Epic A)", "Analytics repo tests") TIDAK match file
+  aktual (ROADMAP = 1.1-FINAL; TD-F9-01 = "admin pkg (27 methods = 1
+  sentinel only)"; TD-F6-09 = "Prioritas: SEDANG"; tidak ada entry
+  "Analytics repo tests").
+  Kenyataan (bukti file:line): grep 'Epic A: P9a-1..P9a-7 done' -> 2 hit
+  (ROADMAP:8, ROADMAP:57); 'Prioritas: MEDIUM' + 'Extended test coverage
+  (Epic A)' -> 0 hit. Fix: edit pakai string aktual yang diverifikasi
+  (python3 exact-match, setiap replacement dicek count==1) + verifikasi
+  grep sesudahnya.
+[OVERRIDE-3] Prompt: "tutup Epic A" -> ditulis sebagai status IN PROGRESS
+  dengan lane yang benar-benar ter-verifikasi, bukan "Epic A COMPLETE".
+  Kenyataan (bukti repo): tidak ada artefak E2E Playwright (frontend/ = 0 file
+  .spec.ts walau @playwright/test terpasang), tidak ada script k6, tidak ada
+  report OWASP ZAP / chaos / axe-core; unit weighted 84.23% < 85% (DoD
+  §9.1). LOGBOOK planning (line ~1730) juga sudah menjadwalkan lane ini
+  sebagai P9d..P9h.
+  Fix: DoD §9.1 Epic A dicentang hanya untuk item ber-bukti (Integration
+  100% pass); sisanya diberi anotasi evidence + pointer TD-F9-14; status
+  header ROADMAP ditulis jujur + version history 1.2 dicatat. Tidak ada
+  klaim palsu di dokumen.
+[OVERRIDE-4] Prompt: sample mock/test minimum tanpa threshold per-paket.
+  Kenyataan: threshold P9a-10 tertulis "semua paket >= 70%" (unit).
+  Fix: dipakai persis (min paket = resale 71.15%); target 85% (DoD §9.1)
+  dicatat terpisah sebagai TD-F9-14, tidak diklaim tercapai.

@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // FASE 8 P8b — AdminRepository skeleton.
@@ -50,12 +49,24 @@ type AdminRepository interface {
 	SumRefundableAmount(ctx context.Context, eventID uuid.UUID) (string, error)
 }
 
-// PostgresAdminRepository = pgx/v5 implementation (stubs).
-type PostgresAdminRepository struct {
-	pool *pgxpool.Pool
+// DBPool is the minimal pgx surface used by PostgresAdminRepository.
+//
+// FIX P9a-10 (TD-F9-01): the repository held a concrete *pgxpool.Pool, so the
+// SQL layer could not be unit-tested (no fake pool could be injected) and
+// stayed at 0% coverage. *pgxpool.Pool satisfies DBPool, therefore the
+// production wiring in cmd/api/main.go is unchanged.
+type DBPool interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-func NewPostgresAdminRepository(pool *pgxpool.Pool) *PostgresAdminRepository {
+// PostgresAdminRepository = pgx/v5 implementation (stubs).
+type PostgresAdminRepository struct {
+	pool DBPool
+}
+
+func NewPostgresAdminRepository(pool DBPool) *PostgresAdminRepository {
 	return &PostgresAdminRepository{pool: pool}
 }
 

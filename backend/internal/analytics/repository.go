@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // InsightRecord is the DB-mapped row for the insights table.
@@ -68,13 +68,25 @@ type AnalyticsRepository interface {
 // ErrAnalyticsNotFound is returned when the target event doesn't exist.
 var ErrAnalyticsNotFound = errors.New("analytics: event not found")
 
+// DBPool is the minimal pgx surface used by PostgresAnalyticsRepository.
+//
+// FIX P9a-10 (TD-F9-01): the repository held a concrete *pgxpool.Pool, so the
+// SQL layer could not be unit-tested (no fake pool could be injected) and
+// stayed at 0% coverage. *pgxpool.Pool satisfies DBPool, therefore the
+// production wiring in cmd/api/main.go is unchanged.
+type DBPool interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // PostgresAnalyticsRepository is the pgx-backed implementation.
 type PostgresAnalyticsRepository struct {
-	pool *pgxpool.Pool
+	pool DBPool
 }
 
 // NewPostgresAnalyticsRepository constructs a PostgresAnalyticsRepository.
-func NewPostgresAnalyticsRepository(pool *pgxpool.Pool) *PostgresAnalyticsRepository {
+func NewPostgresAnalyticsRepository(pool DBPool) *PostgresAnalyticsRepository {
 	return &PostgresAnalyticsRepository{pool: pool}
 }
 
