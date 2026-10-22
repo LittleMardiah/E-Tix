@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -229,10 +230,8 @@ func TestReadLockLayoutVersion_InvalidJSON(t *testing.T) {
 }
 
 func TestReadLockLayoutVersion_RedisError(t *testing.T) {
-	_, mr := newBookingTestRedis(t)
-	addr := mr.Addr()
-	mr.Close()
-	svc, _ := newTestService(t, &fakeRepo{}, newDeadRedis(t, addr), &fakePublisher{})
+	// FIX P9a-12 TD-F9-16: exclusively owned dead port (see deadRedisAddr).
+	svc, _ := newTestService(t, &fakeRepo{}, newDeadRedis(t), &fakePublisher{})
 
 	_, err := svc.readLockLayoutVersion(context.Background(), uuid.New())
 
@@ -275,11 +274,9 @@ func TestReadLockedBitmap_ReturnsSetBitsOnly(t *testing.T) {
 }
 
 func TestReadLockedBitmap_RedisError(t *testing.T) {
-	_, mr := newBookingTestRedis(t)
-	addr := mr.Addr()
-	mr.Close()
+	// FIX P9a-12 TD-F9-16: exclusively owned dead port (see deadRedisAddr).
 	eid, sid := uuid.New(), uuid.New()
-	svc, _ := newTestService(t, &fakeRepo{}, newDeadRedis(t, addr), &fakePublisher{})
+	svc, _ := newTestService(t, &fakeRepo{}, newDeadRedis(t), &fakePublisher{})
 
 	_, err := svc.readLockedBitmap(context.Background(), eid, sid, 1, 10)
 
@@ -361,12 +358,10 @@ func TestLockSeats_DuplicateSeatPosition(t *testing.T) {
 }
 
 func TestLockSeats_MarkUsedRedisFailure(t *testing.T) {
-	_, mr := newBookingTestRedis(t)
-	addr := mr.Addr()
-	mr.Close()
+	// FIX P9a-12 TD-F9-16: exclusively owned dead port (see deadRedisAddr).
 	eid, sid := uuid.New(), uuid.New()
 	repo := &fakeRepo{section: newSection(eid, sid, 10)}
-	svc, qt := newTestService(t, repo, newDeadRedis(t, addr), &fakePublisher{})
+	svc, qt := newTestService(t, repo, newDeadRedis(t), &fakePublisher{})
 	tok := newValidToken(t, qt)
 
 	_, err := svc.LockSeats(context.Background(), uuid.New(), eid, sid,
@@ -518,12 +513,10 @@ func TestGetSeatAvailability_TakenTakesPrecedenceOverLocked(t *testing.T) {
 }
 
 func TestGetSeatAvailability_BitmapFailureFallsBackToTicketsOnly(t *testing.T) {
-	_, mr := newBookingTestRedis(t)
-	addr := mr.Addr()
-	mr.Close()
+	// FIX P9a-12 TD-F9-16: exclusively owned dead port (see deadRedisAddr).
 	eid, sid := uuid.New(), uuid.New()
 	repo := &fakeRepo{section: newSection(eid, sid, 5), taken: []int{1}}
-	svc, _ := newTestService(t, repo, newDeadRedis(t, addr), &fakePublisher{})
+	svc, _ := newTestService(t, repo, newDeadRedis(t), &fakePublisher{})
 
 	resp, err := svc.GetSeatAvailability(context.Background(), eid, sid)
 
@@ -695,11 +688,8 @@ func TestHandler_LockSeats_TokenAlreadyUsedReturns409(t *testing.T) {
 // ============================================================
 
 func TestLoadLuaScripts_RedisFailure(t *testing.T) {
-	_, mr := newBookingTestRedis(t)
-	addr := mr.Addr()
-	mr.Close()
-
-	_, err := LoadLuaScripts(context.Background(), newDeadRedis(t, addr))
+	// FIX P9a-12 TD-F9-16: exclusively owned dead port (see deadRedisAddr).
+	_, err := LoadLuaScripts(context.Background(), newDeadRedis(t))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "lua_scripts")
@@ -709,13 +699,56 @@ func TestLoadLuaScripts_RedisFailure(t *testing.T) {
 // Helpers local to this file
 // ============================================================
 
+// deadRedisAddr returns the address of a TCP port that this test owns
+// exclusively for its whole lifetime and that never speaks the Redis
+// protocol: every accepted connection is closed immediately, so any client
+// command fails (EOF) instead of hanging.
+//
+// FIX P9a-12 TD-F9-16: miniredis binds an OS-assigned ephemeral port and
+// mr.Close() releases it back to the OS. During a full-suite run
+// (go test ./internal/... executes packages concurrently) a miniredis started
+// by another package can re-bind that exact port inside the window between
+// mr.Close() and the assertion. The client then talks to the WRONG server,
+// receives +PONG and the "server is down" assertion fails -> flaky test.
+// Owning the port with our own listener removes the race: no other process
+// can bind it while the test runs.
+func deadRedisAddr(t *testing.T) string {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	t.Cleanup(func() {
+		_ = ln.Close()
+		<-done
+	})
+
+	return ln.Addr().String()
+}
+
 // newDeadRedis returns a client pointed at a server that is already gone.
 // MaxRetries=-1 disables the go-redis retry ladder so the outage-path tests
 // fail fast instead of burning seconds on backoff.
-func newDeadRedis(t *testing.T, addr string) *redis.Client {
+//
+// FIX P9a-12 TD-F9-16: the target port is now owned exclusively by this test
+// (see deadRedisAddr) instead of being a miniredis port that was closed and
+// released back to the OS.
+func newDeadRedis(t *testing.T) *redis.Client {
 	t.Helper()
 	client := &redis.Client{Client: goredis.NewClient(&goredis.Options{
-		Addr:        addr,
+		Addr:        deadRedisAddr(t),
 		MaxRetries:  -1,
 		DialTimeout: 50 * time.Millisecond,
 	})}

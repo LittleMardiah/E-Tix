@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,8 +14,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
 )
 
 func init() { gin.SetMode(gin.TestMode) }
@@ -57,6 +61,59 @@ func mwFakeRefreshToken(sub string) string {
 		panic(err)
 	}
 	return "header." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+}
+
+// deadRedisAddr returns the address of a TCP port that this test owns
+// exclusively for its whole lifetime and that never speaks the Redis
+// protocol: every accepted connection is closed immediately, so any client
+// command fails (EOF) instead of hanging.
+//
+// FIX P9a-12 TD-F9-16: miniredis binds an OS-assigned ephemeral port and
+// mr.Close() releases it back to the OS. During a full-suite run
+// (go test ./internal/... executes packages concurrently) a miniredis started
+// by another package can re-bind that exact port inside the window between
+// mr.Close() and the assertion. The client then talks to the WRONG server,
+// receives +PONG and the "server is down" assertion fails -> flaky test.
+// Owning the port with our own listener removes the race: no other process
+// can bind it while the test runs.
+func deadRedisAddr(t *testing.T) string {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	t.Cleanup(func() {
+		_ = ln.Close()
+		<-done
+	})
+
+	return ln.Addr().String()
+}
+
+// newDeadAuthRedis returns a redis client pointed at deadRedisAddr(t).
+// MaxRetries=-1 disables the go-redis retry ladder so the outage-path tests
+// fail fast instead of burning seconds on backoff.
+func newDeadAuthRedis(t *testing.T) *redis.Client {
+	t.Helper()
+	client := &redis.Client{Client: goredis.NewClient(&goredis.Options{
+		Addr:        deadRedisAddr(t),
+		MaxRetries:  -1,
+		DialTimeout: 50 * time.Millisecond,
+	})}
+	t.Cleanup(func() { _ = client.Close() })
+	return client
 }
 
 // mwErrorCode extracts the envelope error code from an auth response body.
@@ -314,7 +371,10 @@ func TestAuthMiddleware_BlacklistedTokenRejected(t *testing.T) {
 }
 
 func TestAuthMiddleware_RedisUnavailableFailsClosedWith503(t *testing.T) {
-	client, mr := newTestRedisClient(t)
+	// FIX P9a-12 TD-F9-16: point the client at an exclusively owned dead
+	// port instead of closing miniredis (which releases its ephemeral port
+	// and lets another package's miniredis re-bind it -> flaky test).
+	client := newDeadAuthRedis(t)
 	jwtSvc := newTestJWTService(t)
 	token, err := jwtSvc.GenerateAccessToken(newTestUser(), "bronze")
 	require.NoError(t, err)
@@ -322,8 +382,6 @@ func TestAuthMiddleware_RedisUnavailableFailsClosedWith503(t *testing.T) {
 	r := gin.New()
 	r.Use(AuthMiddleware(jwtSvc, NewTokenBlacklistService(client)))
 	r.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
-
-	mr.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -580,10 +638,9 @@ func TestExtractUserIDFromRefreshToken_RestoresRequestBody(t *testing.T) {
 // ---------- rate limit resilience & scope constants ----------
 
 func TestRateLimitMiddleware_RedisDownFailsOpen(t *testing.T) {
-	client, mr := newTestRedisClient(t)
+	// FIX P9a-12 TD-F9-16: see deadRedisAddr doc comment.
+	client := newDeadAuthRedis(t)
 	r, _ := mwRouter(RateLimitMiddleware(client, 1, time.Minute))
-
-	mr.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.RemoteAddr = "6.6.6.6:6666"

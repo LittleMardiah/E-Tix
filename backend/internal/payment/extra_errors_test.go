@@ -3,8 +3,10 @@ package payment
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -176,6 +178,111 @@ func newTestRedisWithServer(t *testing.T) (*redis.Client, *miniredis.Miniredis) 
 	return rdb, mr
 }
 
+// errRedisDown is returned by killableRedis.dial once the simulated outage
+// has started.
+var errRedisDown = errors.New("payment: simulated redis outage")
+
+// killableRedis drives a go-redis client whose connections can be severed on
+// demand, so a test can simulate a Redis outage in the middle of a request.
+//
+// FIX P9a-12 TD-F9-16: the previous version closed the miniredis server to
+// simulate the outage. miniredis binds an OS-assigned ephemeral port and
+// mr.Close() releases it back to the OS, so a miniredis started by another
+// package running in parallel can re-bind that exact port before the
+// assertion runs. The client then talks to the WRONG server and the L1 write
+// unexpectedly succeeds -> flaky test.
+//
+// The fix keeps miniredis alive for the whole test (its port is therefore
+// never released and no other process can take it over) and routes every
+// dial through a custom dialer that can be killed: after Kill() the dialer
+// refuses new connections and drops the pooled ones, which is what a client
+// observes when Redis goes away.
+type killableRedis struct {
+	mu    sync.Mutex
+	dead  bool
+	conns map[net.Conn]struct{}
+}
+
+// newKillableRedis returns a redis client plus its kill switch. The
+// miniredis server behind it stays alive until the test ends.
+func newKillableRedis(t *testing.T) (*redis.Client, *killableRedis) {
+	t.Helper()
+
+	mr := miniredis.RunT(t)
+	k := &killableRedis{conns: map[net.Conn]struct{}{}}
+
+	rdb := &redis.Client{Client: goredis.NewClient(&goredis.Options{
+		Addr:       mr.Addr(),
+		MaxRetries: -1,
+		Dialer:     k.dial,
+	})}
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	return rdb, k
+}
+
+// dial opens a connection to the backing server unless the outage started.
+func (k *killableRedis) dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	k.mu.Lock()
+	dead := k.dead
+	k.mu.Unlock()
+	if dead {
+		return nil, errRedisDown
+	}
+
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	k.mu.Lock()
+	if k.dead {
+		k.mu.Unlock()
+		_ = conn.Close()
+		return nil, errRedisDown
+	}
+	k.conns[conn] = struct{}{}
+	k.mu.Unlock()
+
+	return conn, nil
+}
+
+// Kill starts the simulated outage: pooled connections are dropped and new
+// dials are refused. Idempotent.
+func (k *killableRedis) Kill() {
+	k.mu.Lock()
+	k.dead = true
+	conns := make([]net.Conn, 0, len(k.conns))
+	for conn := range k.conns {
+		conns = append(conns, conn)
+	}
+	k.conns = map[net.Conn]struct{}{}
+	k.mu.Unlock()
+
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+}
+
+// TestKillableRedis_LiveThenKilled documents the contract of the outage
+// simulator used by TestInitiatePayments_StoreL1FailureIsNonFatal: the
+// server is reachable until Kill() is called, and unreachable afterwards.
+//
+// FIX P9a-12 TD-F9-16.
+func TestKillableRedis_LiveThenKilled(t *testing.T) {
+	rdb, kill := newKillableRedis(t)
+	ctx := context.Background()
+
+	require.NoError(t, rdb.Set(ctx, "kill-probe", "v", time.Minute).Err())
+
+	kill.Kill()
+
+	require.Error(t, rdb.Set(ctx, "kill-probe", "v2", time.Minute).Err(),
+		"commands must fail once the outage started")
+	require.Error(t, rdb.Get(ctx, "kill-probe").Err(),
+		"commands must fail once the outage started")
+}
+
 // newDeadPayRedis points a client at a closed port so every call fails fast.
 func newDeadPayRedis(t *testing.T) *redis.Client {
 	t.Helper()
@@ -243,13 +350,16 @@ func TestInitiatePayments_CommitError(t *testing.T) {
 }
 
 func TestInitiatePayments_StoreL1FailureIsNonFatal(t *testing.T) {
-	rdb, mr := newTestRedisWithServer(t)
+	// FIX P9a-12 TD-F9-16: the outage is simulated through the kill switch
+	// (see killableRedis) so the miniredis port is never released back to
+	// the OS and cannot be re-bound by another package running in parallel.
+	rdb, kill := newKillableRedis(t)
 	repo := &errObligationRepo{memObligationRepo: &memObligationRepo{}}
 	leader := uuid.New()
 	snap := &BookingSnapshot{ID: uuid.New(), LeaderUserID: leader, PaymentStatus: StatusPending}
 	// Kill Redis right before the L1 write: the DB already holds the
 	// obligations, so the call must still succeed.
-	repo.onCreate = func() { mr.Close() }
+	repo.onCreate = func() { kill.Kill() }
 	svc := newErrPayEnv(t, &fakeBeginner{tx: &fakeTx{}}, repo, &fakeBookingReader{snap: snap}, &fakeGateway{}, rdb)
 
 	resp, err := svc.InitiatePayments(context.Background(), leader, snap.ID, splitReq(leader), "idem-l1-store")

@@ -1297,7 +1297,7 @@ Referensi: backend/internal/redis/redis_p9a7_test.go, backend/internal/redis/
 
 ID: TD-F9-16
 Tanggal: 2026-10-22
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-22)
 Prioritas: MEDIUM
 Deskripsi: Pola race port-reuse yang sama seperti TD-F9-15 masih dipakai di 3
   paket lain untuk mensimulasikan "redis/server mati": test ini bisa gagal
@@ -1323,7 +1323,7 @@ Referensi: backend/internal/auth/middleware_test.go, backend/internal/booking/
 
 ID: TD-F9-17
 Tanggal: 2026-10-22
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-22)
 Prioritas: MEDIUM
 Deskripsi: Epic B (DR Drills) selesai PARTIAL: 3 dari 9 playbook DRP dieksekusi
   lokal (Playbook #1 Postgres, #2 Redis, #3 RabbitMQ) — 16/16 check PASS. Yang

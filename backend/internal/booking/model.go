@@ -20,6 +20,19 @@ var ErrDuplicateSeatPosition = errors.New("booking: duplicate seat position")
 var ErrBookingNotFound = errors.New("booking: not found")
 var ErrQueueTokenInvalid = errors.New("booking: queue token invalid")
 
+// ErrServiceUnavailable is returned when the Redis circuit breaker is open,
+// i.e. Redis is unreachable (degraded mode).
+//
+// P9a-12 TD-F9-17: the seat-lock request is parked in the durable DB queue
+// (see SeatLockQueue) and the caller is told to retry later ("sistem sedang
+// sibuk"). The HTTP layer maps it to 503 Service Unavailable.
+var ErrServiceUnavailable = errors.New("booking: service unavailable")
+
+// ErrQueuedSeatLockExpired is returned when a parked seat-lock request is
+// replayed after its hold deadline (P9a-12 TD-F9-17). The client has to
+// re-queue instead of receiving a stale booking.
+var ErrQueuedSeatLockExpired = errors.New("booking: queued seat lock expired")
+
 type Booking struct {
 	ID            uuid.UUID `json:"id"`
 	EventID       uuid.UUID `json:"event_id"`

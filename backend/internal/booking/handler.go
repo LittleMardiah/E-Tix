@@ -175,6 +175,12 @@ func (h *BookingHandler) LockSeats(c *gin.Context) {
 			writeError(c, http.StatusUnprocessableEntity, "UNPROCESSABLE_ENTITY", "max group seats exceeded")
 		case errors.Is(err, ErrInvalidPaymentMode):
 			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "payment_mode must be SPLIT or BULK")
+		case errors.Is(err, ErrServiceUnavailable):
+			// P9a-12 TD-F9-17: Redis is down, the request is parked in the
+			// DB queue and replayed later. 503 + Retry-After tells the client
+			// to retry ("sistem sedang sibuk", LOGIC FLOW §9.4).
+			c.Header("Retry-After", "30")
+			writeError(c, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "system is busy, please retry shortly")
 		default:
 			h.logger.Error("lock seats failed", zap.Error(err))
 			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")

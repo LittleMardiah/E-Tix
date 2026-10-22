@@ -1,6 +1,6 @@
 package auth
 
-// STP traceability: UT-AUTH-004 (mapped below).
+// STP traceability: UT-AUTH-004 (mapped below)
 
 import (
 	"context"

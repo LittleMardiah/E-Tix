@@ -43,6 +43,33 @@ func parseOrigins(csv string) []string {
 	return origins
 }
 
+// parseDurationEnv parses a duration env value ("30s", "5m"). Empty or
+// invalid values fall back to the given default (P9a-12 TD-F9-17: the
+// circuit breaker tuning must never crash the boot).
+func parseDurationEnv(value string, fallback time.Duration) time.Duration {
+	if value == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
+}
+
+// parseIntEnv parses an int env value. Empty or invalid values fall back to
+// the given default.
+func parseIntEnv(value string, fallback int) int {
+	if value == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -134,7 +161,17 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to load lua scripts", zap.Error(err))
 	}
-	bookingSvc := booking.NewBookingService(bookingRepo, rdb, luaScripts, queueTokenSvc, mq)
+	// P9a-12 TD-F9-17: Redis circuit breaker + durable seat-lock queue.
+	// While the breaker is open the seat-lock requests are parked in
+	// PostgreSQL (table seat_lock_queue) and replayed by the
+	// DBQueueSyncWorker once Redis recovered (LOGIC FLOW §9.4).
+	redisCB := booking.NewRedisCircuitBreakerWith(
+		parseDurationEnv(cfg.CircuitBreakerInterval, 5*time.Second),
+		parseDurationEnv(cfg.CircuitBreakerTimeout, 30*time.Second),
+		uint32(parseIntEnv(cfg.CircuitBreakerMaxRequests, 5)),
+	)
+	seatLockQueue := booking.NewPgxSeatLockQueue(pgPool)
+	bookingSvc := booking.NewBookingServiceWithCircuitBreaker(bookingRepo, rdb, luaScripts, queueTokenSvc, mq, redisCB, seatLockQueue)
 	bookingHandler := booking.NewBookingHandler(bookingSvc, rdb, logger)
 
 	paymentRepo := payment.NewPostgresPaymentObligationRepository(pgPool)
@@ -194,6 +231,12 @@ func main() {
 	bookingExpiryRepo := worker.NewPgxBookingExpiryRepo(pgPool)
 	refundAdapter := worker.NewGatewayRefundAdapter(paymentGateway)
 	bookingExpiryWorker := worker.NewBookingExpiryWorker(mq, pgPool, bookingExpiryRepo, paymentRepo, bookingSvc, refundAdapter, systemUserUUID, logger)
+
+	// P9a-12 TD-F9-17: drains the durable seat-lock queue once the Redis
+	// circuit breaker closed again (LOGIC FLOW §9.4).
+	dbQueueSyncWorker := worker.NewDBQueueSyncWorker(seatLockQueue, bookingSvc, func() bool {
+		return !bookingSvc.RedisCircuitBreakerOpen()
+	}, logger)
 
 	reconciliationRepo := worker.NewPgxReconciliationRepo(pgPool)
 	statusFetcher := worker.NewGatewayStatusFetcher(paymentGateway)
@@ -447,6 +490,12 @@ func main() {
 	go func() {
 		if err := bulkCancelWorker.Run(ctx); err != nil {
 			logger.Error("bulk cancel worker stopped", zap.Error(err))
+		}
+	}()
+	// P9a-12 TD-F9-17: DB queue sync worker (drains the parked seat locks).
+	go func() {
+		if err := dbQueueSyncWorker.Run(ctx); err != nil {
+			logger.Error("db queue sync worker stopped", zap.Error(err))
 		}
 	}()
 
