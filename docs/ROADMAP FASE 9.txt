@@ -2,11 +2,12 @@
 ROADMAP FASE (9): TESTING, PORTFOLIO POLISH & LIVE DEMO — E-Tix Flash
 ================================================================================
 
-Version:         1.2
+Version:         1.3
 Last Updated:    2026-10-22
 Author:          M. Arif Aulia
-Status:          🔄 IN PROGRESS (Epic A: P9a-1..P9a-10 done — unit/integration
-                 lanes complete; residual E2E/load/security/chaos/a11y → TD-F9-14)
+Status:          🔄 IN PROGRESS (Epic A: P9a-1..P9a-11 done — unit/integration
+                 lanes complete + TD-F9-15 CLOSED; residual E2E/load/security/a11y
+                 → TD-F9-14; Epic B: PARTIAL — Playbook #1-#3 rehearsed)
 Blueprint Ref:   BLUEPRINT ROADMAP v1.0-FINAL, FASE 9 (TERAKHIR)
 Depends On:      FASE 0-8 (all LOCKED)
 
@@ -19,13 +20,17 @@ EXECUTION PROGRESS (live — updated 2026-10-22):
     P9a-9b        ✅ DONE  (7 test file: config 96.7% / queue 76.6% / gate 68.0%, 2026-10-22)
     P9a-9c        ✅ DONE  (queue interfaces + worker 86.5%, TD-F9-08/03 closed, 2026-10-22)
     P9a-10        ✅ DONE  (repo DBPool seam + coverage boost 4 paket, 2026-10-22)
+    P9a-11        ✅ DONE  (TD-F9-15 CLOSED + Epic B: DR drill Playbook #1-#3
+                             rehearsed lokal, 16/16 check PASS, 2026-10-22)
   Epic A residual — P9d..P9h (E2E/k6/ZAP/chaos/a11y + unit ≥ 85%) → TD-F9-14
-  Epic B (DR Drills)          ⏳ Next
+  Epic B (DR Drills)          🔄 PARTIAL (3/9 playbook + B1-T11/B1-T13 partial;
+                             B1-T12 failover Render + PB#4-#9 SaaS live → TD-F9-17)
   Epic C (Frontend Full)      ⏳ Not Started
   Epic D (Portfolio Polish)   ⏳ Not Started
   Epic E (Demo + Deploy)      ⏳ Not Started
-  Detail: LOGBOOK.txt entri [2026-10-22 P9a-10]; docs/TECHNICAL DEBT.txt —
-  TD-F6-09 + TD-F9-01 ✅ CLOSED, TD-F9-14 + TD-F9-15 registered.
+  Detail: LOGBOOK.txt entri [2026-10-22 P9a-11]; docs/TECHNICAL DEBT.txt —
+  TD-F6-09 + TD-F9-01 + TD-F9-15 ✅ CLOSED, TD-F9-14 + TD-F9-16 + TD-F9-17
+  registered. Laporan drill: docs/DR DRILL REPORT FASE 9.md.
 
   Unit coverage (go test ./internal/... -cover -count=1, 2026-10-22, unit-only):
     admin 86.9% | analytics 96.1% | auth 86.0% | booking 76.5% | config 96.7%
@@ -68,7 +73,8 @@ Nama Fase:         Testing, Portfolio Polish & Live Demo
 Fitur Utama:       Konsolidasi F001-F006 + Testing + Frontend Full + Demo + Deploy
 Estimasi Durasi:   Week 9-12 (3-4 minggu, ~120 jam kerja)
 Dependencies:      FASE 0-8 (semua fitur bisnis + backend + skeleton frontend)
-Status:            🔄 In Progress (Epic A: P9a-1..P9a-10 done; residual → TD-F9-14)
+Status:            🔄 In Progress (Epic A: P9a-1..P9a-11 done, TD-F9-15 ✅
+                   CLOSED; Epic B PARTIAL 3/9 playbook; residual → TD-F9-14/TD-F9-17)
 
 Ringkasan:
   FASE KONSOLIDASI & FINALISASI. Bukan fase coding fitur baru — melainkan 
@@ -185,11 +191,12 @@ SECTION 2 — SCOPE & OBJECTIVES
 
 Mengacu pada PRD §Success Metrics + STP §8.1 DoD:
 
-Catatan status (2026-10-22, P9a-10): checklist di bawah = definisi target.
+Catatan status (2026-10-22, P9a-11): checklist di bawah = definisi target.
   Terverifikasi saat ini: Integration 100% pass ✅ | unit coverage 84.23%
   weighted (semua paket ≥ 71.2%, target ≥ 85% → TD-F9-14) | Regression
-  unit+integration hijau (1 flaky redis → TD-F9-15). Belum dieksekusi: E2E,
-  load, ZAP, chaos, a11y, DR, demo → TD-F9-14 + Section 9 DoD.
+  unit+integration hijau (flaky redis TD-F9-15 ✅ CLOSED di P9a-11) | DR drill
+  lokal Playbook #1-#3 ✅ 16/16 check (3/9 playbook → TD-F9-17). Belum
+  dieksekusi: E2E, load, ZAP, chaos app-level, a11y, demo → TD-F9-14 + §9 DoD.
 
 - [x] All quality gates from STP v1.1 §8.1 passed
 - [x] Coverage 85%+ across all modules
@@ -463,6 +470,10 @@ A1-T10 [2 jam] — Regression suite full pass
 ────────────────────────────────────────────────────────────────────────────────
 EPIC B: DR DRILLS
 ────────────────────────────────────────────────────────────────────────────────
+
+Status (2026-10-22, P9a-11): 🔄 PARTIAL — B1-T11 partial ✅ | B1-T12 ⏳ (butuh
+akun Render live) | B1-T13 partial ✅ | B1-T14 🔄 3/9 playbook. Laporan drill +
+bukti ukur: docs/DR DRILL REPORT FASE 9.md. Sisa → TD-F9-17.
 
 B1-T11 [4 jam] — Backup restoration test
    Deliverable: restore report
@@ -898,13 +909,20 @@ Epic A (STP Execution):
   [ ] Security scan pass                   (govulncheck + gitleaks CI hijau; OWASP ZAP P9f — TD-F9-14)
   [ ] Chaos tests pass                     (P9g — TD-F9-14)
   [ ] Accessibility pass                   (P9h — TD-F9-14)
-  [ ] Regression full pass                 (unit + integration hijau; 1 flaky redis → TD-F9-15)
+  [x] Regression full pass                 (unit + integration hijau; flaky redis
+                                         TD-F9-15 ✅ CLOSED di P9a-11)
 
-Epic B (DR Drills):
-  [ ] Backup restoration tested
-  [ ] Failover tested
-  [ ] Circuit breaker chaos tested
-  [ ] Full 9 playbooks rehearsed
+Epic B (DR Drills) — P9a-11 (3/9 playbook; sisanya → TD-F9-17):
+  [ ] Backup restoration tested         (pg_dump/pg_restore + integrity 12 tabel
+                                         ✅ PASS; PITR terenkripsi + Redis
+                                         purge/rebuild anti Ghost Lock → TD-F9-17)
+  [ ] Failover tested                   (region switch Render.com butuh akun
+                                         + region live → TD-F9-17)
+  [ ] Circuit breaker chaos tested      (readiness probe degraded + recovery
+                                         ✅ PASS; app-level CB + DBQueueSyncWorker
+                                         belum ada → TD-F9-17)
+  [ ] Full 9 playbooks rehearsed        (PB#1/#2/#3 ✅ dry-run PASS; PB#4-#9
+                                         butuh SaaS live → TD-F9-17)
 
 Epic C (Frontend Full):
   [ ] 24 screens implemented
@@ -1044,6 +1062,13 @@ SECTION 10 — NOTES & REFERENCES
 |          |            |              | unit weighted 84.23% (semua paket ≥ 71.2%);     |
 |          |            |              | TD-F6-09 + TD-F9-01 ✅ CLOSED; residual Epic A  |
 |          |            |              | lanes (E2E/k6/ZAP/chaos/a11y + ≥ 85%) → TD-F9-14. |
+| 1.3      | 2026-10-22 | M. Arif Aulia| P9a-11: TD-F9-15 ✅ CLOSED (race port reuse —  |
+|          |            |              | root cause terverifikasi, bukan hipotesis pool);  |
+|          |            |              | Epic B PARTIAL: DR drill Playbook #1-#3 di-    |
+|          |            |              | eksekusi lokal (16/16 check PASS, RTO redis    |
+|          |            |              | 1s/RabbitMQ 8s/pg_restore 1s); sisa Epic B    |
+|          |            |              | → TD-F9-17. Laporan: docs/DR DRILL REPORT       |
+|          |            |              | FASE 9.md.                                        |
 
 ================================================================================
 📋 FASE 9 SYNC CHECKLIST (100% COMPLIANCE)
@@ -1083,7 +1108,8 @@ SECTION 10 — NOTES & REFERENCES
 
 ✅ DRP v1.2 Sync:
   - §7 Testing & Drills ✓
-  - All 9 playbooks rehearsed ✓
+  - All 9 playbooks rehearsed ✓ (dokumen DRP v1.2 memuat 9 playbook; EKSEKUSI
+    lokal yang ter-bukti baru 3/9 — Playbook #1/#2/#3 pada P9a-11 → TD-F9-17)
 
 ✅ STP v1.1 Sync:
   - All 6 test levels executed ✓

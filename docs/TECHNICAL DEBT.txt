@@ -1261,18 +1261,93 @@ Referensi: ROADMAP FASE 9 v1.2 §9.1 Epic A, LOGBOOK.txt [2026-10-22 P9a-10].
 
 ID: TD-F9-15
 Tanggal: 2026-10-22
-Status: ⏸️ DEFERRED
+Status: ✅ CLOSED (2026-10-22)
 Prioritas: LOW
 Deskripsi: Flaky test internal/redis TestP9a7_Health_ServerDown. Gagal 1x pada
   full run P9a-10 (internal/redis), Lolos 3/3 saat run isolated dan pada 2
   full-run berikutnya. Paket redis tidak disentuh di P9a-10 (pre-existing,
-  bukan regresi).
-Root Cause: Hipotesis (belum di-verifikasi): connection pool masih punya
-  koneksi hidup ke miniredis saat mr.Close() dipanggil, sehingga write pertama
-  pada socket yang sudah di-close_by_peer masih sukses dan Health() tidak
-  mengembalikan error.
-Rencana Fix: Reproduksi 20x (go test ./internal/redis -count=20 -run
-  TestP9a7_Health_ServerDown) lalu tegaskan determinisme: tutup client
-  sebelum assert, atau gunakan expectasi error yang eksplisit.
-Trigger: P9a-11 / sebelum GO-TO-LAUNCH (DoD "zero flaky tests").
-Referensi: backend/internal/redis/redis_p9a7_test.go:41, P9a-10 log 2026-10-22.
+  bukan regresi). Dua test sekelas di file yang sama punya kelemahan identik:
+  TestP9a7_PipelineSet_ServerDownReturnsError dan TestP9a7_QRStore_ServerDown.
+Root Cause: TERVERIFIKASI di P9a-11 (hipotesis awal DISALAKAN). Akar masalah
+  bukan connection pool yang masih hidup, tapi PORT REUSE: miniredis.RunT
+  mem-bind 127.0.0.1:0 (port ephemeral OS); mr.Close() menutup server dan
+  melepas port itu, lalu port yang sama di-rebind miniredis milik paket LAIN
+  yang sedang jalan paralel (12+ paket, 23 file test memakai miniredis). Client
+  redis di test kemudian connect ke server miniredis paket lain, sehingga
+  Health()/write/setNx mengembalikan err == nil dan ekspektasi "server down"
+  gagal. Bukti disprove hipotesis pool: client.go:23-25 Health() = Ping tanpa
+  pre-Ping, dan tidak ada write sebelum mr.Close(). Reproduksi deterministik
+  dibuat dengan membind-ulang port yang sama persis.
+Rencana Fix: DONE — helper deadRedisAddr(t) di
+  backend/internal/redis/redis_p9a7_test.go: net.Listen eksklusif pada 127.0.0.1:0
+  (listener tidak pernah accept, jadi tidak ada server yang bisa dilayani),
+  lalu goroutine accept-and-close untuk membuang koneksi masuk. Alamat ini
+  dijamin "tidak menerima" tanpa bergantung pada port ephemeral yang bisa
+  dipakai ulang. 3 test "ServerDown" (Health, PipelineSet, QRStore) memakai
+  helper ini; miniredis tidak lagi dipakai sebagai "server mati".
+Verifikasi: go test ./internal/redis/ -count=50 → OK (122.9s);
+  go test -race ./internal/redis/ -count=5 → OK (12.9s);
+  go vet ./internal/redis/ → OK; gofmt bersih. Pola sama di paket lain
+  (auth/booking/payment) → TD-F9-16.
+Trigger: (closed)
+Referensi: backend/internal/redis/redis_p9a7_test.go, backend/internal/redis/
+  client.go:23-25, LOGBOOK.txt [2026-10-22 P9a-11].
+
+---
+
+ID: TD-F9-16
+Tanggal: 2026-10-22
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Pola race port-reuse yang sama seperti TD-F9-15 masih dipakai di 3
+  paket lain untuk mensimulasikan "redis/server mati": test ini bisa gagal
+  sporadis saat full-suite paralel (gejala sama: ekspektasi error, aktual nil).
+  - internal/auth/middleware_test.go:326,586
+  - internal/booking/service_extra_test.go (helper newDeadRedis, ~baris 715)
+  - internal/payment/extra_errors_test.go:252
+Root Cause: Menyalin pola miniredis.RunT + mr.Close() sebagai simulasi server
+  mati — port ephemeral dilepas dan bisa di-rebind server test lain yang jalan
+  paralel. Root cause yang sama dengan TD-F9-15, hanya belum dihapus di paket
+  yang lain (di luar scope P9a-11 yang fokus ke internal/redis).
+Rencana Fix: Replikasi helper deadRedisAddr (listener eksklusif + goroutine
+  accept-close) di 3 file tersebut, atau better: taruh helper di package test
+  bersama (mis. internal/testutil) agar dipakai lintas paket. Verifikasi
+  dengan go test ./... -count=20 dan -race.
+Trigger: sebelum GO-TO-LAUNCH (DoD "zero flaky tests"); boleh paralel dengan
+  Epic C (frontend).
+Referensi: backend/internal/auth/middleware_test.go, backend/internal/booking/
+  service_extra_test.go, backend/internal/payment/extra_errors_test.go,
+  LOGBOOK.txt [2026-10-22 P9a-11].
+
+---
+
+ID: TD-F9-17
+Tanggal: 2026-10-22
+Status: ⏸️ DEFERRED
+Prioritas: MEDIUM
+Deskripsi: Epic B (DR Drills) selesai PARTIAL: 3 dari 9 playbook DRP dieksekusi
+  lokal (Playbook #1 Postgres, #2 Redis, #3 RabbitMQ) — 16/16 check PASS. Yang
+  belum tercakup dan komponen DRP yang tidak ada di codebase:
+  (a) tidak ada circuit breaker level aplikasi (hanya field config
+      CIRCUIT_BREAKER_* di internal/config/config.go:56-58,105-107);
+  (b) internal/worker/db_queue_sync.go = stub 1 baris (DBQueueSyncWorker yang
+      disebut DoD B1-T13 tidak diimplementasikan);
+  (c) tidak ada script redis_seats_rebuild.go untuk purge + rebuild seat
+      (anti Ghost Lock) yang disebut DRP §5.3 Phase 1;
+  (d) PITR terenkripsi + Redis resync (DRP §5.2) belum diuji — drill memakai
+      pg_dump custom format lokal;
+  (e) B1-T12 (failover region Render.com) dan 6 playbook lain (Upstash,
+      CloudAMQP, Supabase, dsb.) butuh akun/kredensial + biaya live.
+Root Cause: Scope P9a-11 dibatasi pada komponen yang ada di repo lokal
+  (Docker compose: Postgres/Redis/RabbitMQ). Failover region dan managed
+  service tidak bisa disimulasikan tanpa environment live.
+Rencana Fix: (1) Implementasikan app-level circuit breaker + isi
+  internal/worker/db_queue_sync.go (DBQueueSyncWorker) + redis_seats_rebuild.go
+  sebagai bagian hardening DRP; (2) Ulangi drill Playbook #4-#9 + B1-T12 saat
+  environment Render/Upstash/Supabase live tersedia (butuh kredensial, catat
+  di ENVIRONMENT.md); (3) Untuk produksi: PITR terenkripsi + backup off-site
+  (pg_dump custom format hanya untuk data dev, JANGAN untuk data produksi).
+Trigger: sebelum GO-TO-LAUNCH (Epic B DoD).
+Referensi: docs/DRP.txt §5.2-§5.4 + §7.2-§7.3, docs/DR DRILL REPORT FASE 9.md,
+  backend/scripts/dr_drill.sh, backend/tests/chaos/dr_drill_test.go,
+  LOGBOOK.txt [2026-10-22 P9a-11].

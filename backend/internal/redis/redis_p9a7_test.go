@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -23,6 +24,45 @@ func p9a7Client(t *testing.T) (*Client, *miniredis.Miniredis) {
 	return c, mr
 }
 
+// deadRedisAddr returns the address of a TCP port that this test owns
+// exclusively for its whole lifetime and that never speaks the Redis
+// protocol: every accepted connection is closed immediately, so any client
+// command fails (EOF) instead of hanging.
+//
+// FIX P9a-11 TD-F9-15: miniredis binds an OS-assigned ephemeral port and
+// mr.Close() releases it back to the OS. During a full-suite run
+// (go test ./internal/... executes packages concurrently) a miniredis started
+// by another package can re-bind that exact port inside the window between
+// mr.Close() and the assertion. The client then talks to the WRONG server,
+// receives +PONG and the "server is down" assertion fails -> flaky test.
+// Owning the port with our own listener removes the race: no other process
+// can bind it while the test runs.
+func deadRedisAddr(t *testing.T) string {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	t.Cleanup(func() {
+		_ = ln.Close()
+		<-done
+	})
+
+	return ln.Addr().String()
+}
+
 func TestP9a7_NewClient_InvalidURL(t *testing.T) {
 	c, err := NewClient("://bad-url")
 	require.Error(t, err)
@@ -38,12 +78,16 @@ func TestP9a7_NewClient_ValidURL(t *testing.T) {
 	require.NoError(t, c.Close())
 }
 
+// FIX P9a-11 TD-F9-15: port-reuse race, see deadRedisAddr doc comment.
 func TestP9a7_Health_ServerDown(t *testing.T) {
-	mr := miniredis.RunT(t)
-	c, err := NewClient("redis://" + mr.Addr())
+	c, err := NewClient("redis://" + deadRedisAddr(t))
 	require.NoError(t, err)
-	mr.Close()
-	require.Error(t, c.Health(context.Background()))
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	require.Error(t, c.Health(ctx), "Health must fail when Redis is unreachable")
 }
 
 func TestP9a7_SetValue_GetString_Roundtrip(t *testing.T) {
@@ -143,11 +187,11 @@ func TestP9a7_PipelineSet_WritesAllKeys(t *testing.T) {
 	}
 }
 
+// FIX P9a-11 TD-F9-15: port-reuse race, see deadRedisAddr doc comment.
 func TestP9a7_PipelineSet_ServerDownReturnsError(t *testing.T) {
-	mr := miniredis.RunT(t)
-	c, err := NewClient("redis://" + mr.Addr())
+	c, err := NewClient("redis://" + deadRedisAddr(t))
 	require.NoError(t, err)
-	mr.Close()
+	t.Cleanup(func() { _ = c.Close() })
 
 	err = c.PipelineSet(context.Background(), []KVItem{{Key: "p1", Value: "v1"}}, time.Minute)
 	require.Error(t, err)
@@ -179,11 +223,10 @@ func TestP9a7_QRStore_Get_CacheMiss(t *testing.T) {
 	assert.Equal(t, "", got)
 }
 
+// FIX P9a-11 TD-F9-15: port-reuse race, see deadRedisAddr doc comment.
 func TestP9a7_QRStore_ServerDown(t *testing.T) {
-	mr := miniredis.RunT(t)
-	raw := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	raw := goredis.NewClient(&goredis.Options{Addr: deadRedisAddr(t)})
 	t.Cleanup(func() { _ = raw.Close() })
-	mr.Close()
 
 	store := NewQRStore(raw)
 	ctx := context.Background()
