@@ -175,7 +175,7 @@ func TestP9a9TicketNotificationWorker_GetLastSeenMissingKeyReturnsNilUUID(t *tes
 // A corrupted cursor must surface as an error, not a silent uuid.Nil.
 func TestP9a9TicketNotificationWorker_GetLastSeenCorruptValueFails(t *testing.T) {
 	rdb, mr := p9a9RedisClient(t)
-	mr.Set(ticketNotifyLastSeenKey, "not-a-uuid")
+	_ = mr.Set(ticketNotifyLastSeenKey, "not-a-uuid")
 	w := NewTicketNotificationWorker(nil, nil, rdb, zap.NewNop(), time.Hour)
 
 	_, err := w.getLastSeen(context.Background())

@@ -52,7 +52,7 @@ func (f *fakeQueueRepo) Fail(_ context.Context, id uuid.UUID, _ string) error {
 type fakeSeatLocker struct {
 	calls   []booking.QueuedSeatLock
 	err     error
-	errOnce error
+	// errOnce error
 }
 
 func (f *fakeSeatLocker) LockQueuedSeats(_ context.Context, req booking.QueuedSeatLock) error {

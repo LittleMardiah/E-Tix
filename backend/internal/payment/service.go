@@ -242,10 +242,7 @@ func (s *PaymentService) InitiatePayments(
 }
 
 // initiateSplit creates one obligation per member, with seat_position set.
-type gatewayResp struct {
-	txID        string
-	paymentLink string
-}
+// gatewayResp removed (unused)
 
 func (s *PaymentService) initiateSplit(ctx context.Context, tx pgx.Tx, bk *BookingSnapshot, req *InitiatePaymentRequest, hash string) ([]*PaymentObligation, error) {
 	seen := map[int]bool{}

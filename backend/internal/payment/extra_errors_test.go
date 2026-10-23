@@ -174,6 +174,7 @@ func (r *errResaleRepo) UpdateStatus(ctx context.Context, tx pgx.Tx, id uuid.UUI
 
 // newTestRedisWithServer returns a client plus its miniredis server so a
 // test can kill the connection mid-flight.
+//nolint:unused
 func newTestRedisWithServer(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)

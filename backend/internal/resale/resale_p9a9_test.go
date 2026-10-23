@@ -20,8 +20,8 @@ type p9a9ResaleRepo struct {
 	ticketErr       error
 	hasActive       bool
 	hasActiveErr    error
-	capPercent      int
-	capErr          error
+	// capPercent      int
+	// capErr          error
 	createErr       error
 	listPending     []BrowseListing
 	listErr         error

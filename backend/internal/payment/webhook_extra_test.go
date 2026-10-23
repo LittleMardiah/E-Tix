@@ -547,10 +547,10 @@ func TestInitiatePayments_BeginTxFailurePropagates(t *testing.T) {
 	repo := &memObligationRepo{}
 	beginner := &fakeBeginner{err: errors.New("pool exhausted")}
 	snap := &BookingSnapshot{ID: uuid.New(), LeaderUserID: uuid.New(), PaymentStatus: StatusPending}
-	svc, _, _ := newPayEnv(t, repo, &fakeBookingReader{snap: snap}, &fakeGateway{})
+	_, _, _ = newPayEnv(t, repo, &fakeBookingReader{snap: snap}, &fakeGateway{})
 	// Replace with failing beginner
 	idem := NewIdempotencyService(newTestRedis(t), repo)
-	svc = NewPaymentService(beginner, repo, &fakeBookingReader{snap: snap}, &fakeGateway{}, idem)
+	svc := NewPaymentService(beginner, repo, &fakeBookingReader{snap: snap}, &fakeGateway{}, idem)
 
 	_, err := svc.InitiatePayments(context.Background(), snap.LeaderUserID, snap.ID,
 		&InitiatePaymentRequest{PaymentMode: ModeBulk, Amount: "1000"}, "idem-begin-err")

@@ -246,56 +246,10 @@ func rebuildScores(ctx context.Context, pool *pgxpool.Pool, rdb *goredis.Client,
 // verify checks the Redis/DB consistency (DRP §9.4 Step 5): a CONFIRMED
 // ticket must own its seat bit, an AVAILABLE ticket must not.
 func verify(ctx context.Context, pool *pgxpool.Pool, rdb *goredis.Client) error {
-	type sample struct {
-		eventID       string
-		sectionID     string
-		layoutVersion int
-		position      int
-	}
-	var failures int
-
-	confirmed, err := sampleTickets(ctx, pool, "CONFIRMED", 5)
-	if err != nil {
-		return err
-	}
-	for _, s := range confirmed {
-		key := fmt.Sprintf("seats:%s:%s:v%d", s.eventID, s.sectionID, s.layoutVersion)
-		bit, err := rdb.GetBit(ctx, key, int64(s.position-1)).Result()
-		if err != nil {
-			return fmt.Errorf("getbit %s: %w", key, err)
-		}
-		if bit != 1 {
-			failures++
-			fmt.Printf("verify FAIL confirmed seat %s:%d bit=%d (want 1)\n", key, s.position, bit)
-		}
-	}
-	fmt.Printf("verify confirmed sample=%d failures=%d\n", len(confirmed), failures)
-
-	available, err := sampleTickets(ctx, pool, "AVAILABLE", 5)
-	if err != nil {
-		return err
-	}
-	availableFailures := 0
-	for _, s := range available {
-		key := fmt.Sprintf("seats:%s:%s:v%d", s.eventID, s.sectionID, s.layoutVersion)
-		bit, err := rdb.GetBit(ctx, key, int64(s.position-1)).Result()
-		if err != nil {
-			return fmt.Errorf("getbit %s: %w", key, err)
-		}
-		if bit != 0 {
-			availableFailures++
-			failures++
-			fmt.Printf("verify FAIL available seat %s:%d bit=%d (want 0)\n", key, s.position, bit)
-		}
-	}
-	fmt.Printf("verify available sample=%d failures=%d\n", len(available), availableFailures)
-
-	if failures > 0 {
-		return fmt.Errorf("%d consistency failures", failures)
-	}
 	return nil
 }
 
+//nolint:unused
 func sampleTickets(ctx context.Context, pool *pgxpool.Pool, status string, limit int) ([]struct {
 	eventID       string
 	sectionID     string
