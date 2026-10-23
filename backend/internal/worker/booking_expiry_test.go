@@ -115,7 +115,9 @@ type fakeObligations struct {
 	listErr   error
 }
 
-func (f *fakeObligations) UpdateGatewayInfo(ctx context.Context, id uuid.UUID, txID, link string) error { return nil }
+func (f *fakeObligations) UpdateGatewayInfo(ctx context.Context, id uuid.UUID, txID, link string) error {
+	return nil
+}
 
 func (f *fakeObligations) Create(_ context.Context, _ *payment.PaymentObligation) error { return nil }
 func (f *fakeObligations) GetByID(_ context.Context, _ uuid.UUID) (*payment.PaymentObligation, error) {

@@ -57,7 +57,9 @@ type fakePaymentRepo struct {
 	listErr error
 }
 
-func (f *fakePaymentRepo) UpdateGatewayInfo(ctx context.Context, id uuid.UUID, txID, link string) error { return nil }
+func (f *fakePaymentRepo) UpdateGatewayInfo(ctx context.Context, id uuid.UUID, txID, link string) error {
+	return nil
+}
 
 func (f *fakePaymentRepo) Create(_ context.Context, _ *payment.PaymentObligation) error { return nil }
 func (f *fakePaymentRepo) GetByID(_ context.Context, _ uuid.UUID) (*payment.PaymentObligation, error) {

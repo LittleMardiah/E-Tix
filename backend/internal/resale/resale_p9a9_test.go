@@ -16,10 +16,10 @@ import (
 )
 
 type p9a9ResaleRepo struct {
-	ticket          *TicketForResale
-	ticketErr       error
-	hasActive       bool
-	hasActiveErr    error
+	ticket       *TicketForResale
+	ticketErr    error
+	hasActive    bool
+	hasActiveErr error
 	// capPercent      int
 	// capErr          error
 	createErr       error

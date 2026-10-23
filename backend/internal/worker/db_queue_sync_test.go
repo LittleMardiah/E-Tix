@@ -50,8 +50,8 @@ func (f *fakeQueueRepo) Fail(_ context.Context, id uuid.UUID, _ string) error {
 }
 
 type fakeSeatLocker struct {
-	calls   []booking.QueuedSeatLock
-	err     error
+	calls []booking.QueuedSeatLock
+	err   error
 	// errOnce error
 }
 
