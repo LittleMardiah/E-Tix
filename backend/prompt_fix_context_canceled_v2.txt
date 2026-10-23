@@ -1,0 +1,92 @@
+TASK: Fix `context canceled` (13s latency) di POST /bookings/:id/payments yang MASIH terjadi setelah fix sebelumnya.
+      Gejala: INSERT menggantung, database sepertinya terkunci oleh sesuatu (FK lock / row lock).
+
+RULES: docs/TEAM_CONTRACT.txt (§11 + §14 + §16 + R1 + R2 + R3.1 + R3.2 + R8 + R9).
+
+KONTEKS:
+- Error sebelumnya: SQLSTATE 57014 (statement timeout) -> diperbaiki OpenCode -> berubah jadi context canceled.
+- `docker exec etix-postgres psql ... pg_stat_activity` = 0 rows (tidak ada lock idle).
+- Latency 13489ms, ini kena timeout dari Go HTTP server atau Axios client (15s).
+
+STAGES:
+- S0: Cek kode InitiatePayments & repository.go versi terbaru (pasca-fix OpenCode).
+- S1: Reproduksi Lock (Cek pg_stat_activity TEPAT SAAT request jalan).
+- S2: Fix (Tambahkan Query Timeout & Perbaiki Transaksi).
+- S3: Verifikasi (Build, Test, Restart).
+- S4: Laporan.
+
+================================================================
+STAGE 0 — Code Review (Pasca-Fix Sebelumnya)
+================================================================
+echo "=== 0a. Lihat fungsi InitiatePayments di service.go ==="
+sed -n '90,220p' backend/internal/payment/service.go
+
+echo ""
+echo "=== 0b. Lihat fungsi Create di repository.go ==="
+grep -n -A 25 "func (r \*PostgresPaymentRepository) Create" backend/internal/payment/repository.go
+
+echo ""
+echo "=== 0c. Cek apakah ada BeginTx yang tidak di-commit/rollback ==="
+grep -n "BeginTx\|Commit\|Rollback" backend/internal/payment/service.go
+echo "STAGE_0_DONE"
+
+STOP if the code looks correct but the transaction is held too long.
+
+================================================================
+STAGE 1 — Reproduksi Lock (Live Monitoring)
+================================================================
+echo "=== 1a. Siapkan background monitor di WSL untuk lock postgres ==="
+# Jalankan curl (atau minta user untuk klik tombol di frontend) lalu cek lock
+# Kita tidak bisa curl karena butuh JWT. Cukup catat: minta user klik tombol.
+echo "Silakan klik tombol 'Konfirmasi Pembayaran' di frontend, LALU jalankan perintah di bawah ini dengan cepat:"
+echo "docker exec etix-postgres psql -U postgres -d etix_flash_dev -c \"SELECT pid, state, wait_event_type, wait_event, left(query, 100) FROM pg_stat_activity WHERE state != 'idle' AND pid <> pg_backend_pid();\""
+echo "STAGE_1_DONE"
+
+================================================================
+STAGE 2 — Fix (Defensive Query Timeout & FK Check)
+================================================================
+# 1. Pastikan `tx` di InitiatePayments dikasih timeout context yang ketat.
+# 2. Jika INSERT ke payment_obligations selalu lambat karena FK check, buat context timeout 5 detik.
+# 3. Jika ada `SELECT ... FOR UPDATE` di repository.go yang nge-lock tabel `bookings` atau `users`, ubah jadi `FOR NO KEY UPDATE` (jika memungkinkan), ATAU pastikan transaksinya langsung di-commit.
+
+# Terapkan patch python3 di sini:
+python3 << 'PYEOF'
+from pathlib import Path
+p = Path('backend/internal/payment/service.go')
+s = p.read_text()
+
+# Cari BeginTx dan pastikan pakai context timeout 5 detik
+if 'context.WithTimeout' not in s:
+    # Tambahkan import context/time jika belum
+    if '"time"' not in s:
+        s = s.replace('import (', 'import (\n\t"time"', 1)
+    
+    # Ganti BeginTx(ctx, nil) jadi BeginTx(ctx, pgx.TxOptions{}) - sebenarnya butuh timeout
+    # Kita sisipkan timeout di awal InitiatePayments
+    s = s.replace(
+        'func (s *PaymentService) InitiatePayments(',
+        'func (s *PaymentService) InitiatePayments(\n'
+    )
+    # Ini agak risky kalau string replacement salah. Biarkan OpenCode yang ngedit.
+    print("Manual patch needed (OpenCode will edit)")
+PYEOF
+
+# TULIS PERBAIKAN DI SINI (Misal: ubah tx.Exec jadi tx.ExecContext dengan timeout 3s)
+echo "STAGE_2_DONE"
+
+================================================================
+STAGE 3 — Verifikasi
+================================================================
+cd "/mnt/d/AI Engineer/Ticket"
+echo "=== 3a. Build ==="
+cd backend && go build ./... 2>&1; echo "BUILD_RC=$?"
+
+echo "=== 3b. Test ==="
+go test ./internal/payment/... -count=1 2>&1 | grep -E "ok|FAIL"
+echo "STAGE_3_DONE"
+
+================================================================
+STAGE 4 — Laporan
+================================================================
+echo "Silakan restart backend (Ctrl+C -> ./start_deploy.sh) dan tes pembayaran lagi di browser."
+echo "STAGE_4_DONE"

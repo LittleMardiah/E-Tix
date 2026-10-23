@@ -54,6 +54,10 @@ func (r *errObligationRepo) Create(ctx context.Context, o *PaymentObligation) er
 	return r.memObligationRepo.Create(ctx, o)
 }
 
+func (r *errObligationRepo) CreateTx(ctx context.Context, _ pgx.Tx, o *PaymentObligation) error {
+	return r.Create(ctx, o)
+}
+
 func (r *errObligationRepo) ListByBooking(ctx context.Context, id uuid.UUID) ([]PaymentObligation, error) {
 	if r.listErr != nil {
 		return nil, r.listErr

@@ -1,0 +1,73 @@
+TASK: Investigasi & Perbaiki SQLSTATE 57014 (statement timeout) di POST /bookings/:id/payments.
+      Saat ini, transaksi INSERT di tabel payment_obligations menggantung 11 detik sebelum timeout.
+
+RULES: docs/TEAM_CONTRACT.txt (§11 + §14 + §16 + R1 + R2 + R3.1 + R3.2 + R8 + R9 + R14).
+CATATAN: Mock adapter aktif (TEST_MODE=true), tidak ada delay buatan di kode.
+
+KONTEKS:
+- Error: `payment: insert obligation: ERROR: canceling statement due to statement timeout (SQLSTATE 57014)`
+- File terkait: internal/payment/service.go dan internal/payment/repository.go
+- Lingkungan: WSL (Docker Postgres) + Ngrok
+
+STAGES:
+- S0: Baseline & Cek Kondisi Database
+- S1: Code Review (Transaksi & Locking)
+- S2: Root Cause Analysis (Kenapa bisa nge-lock?)
+- S3: Perbaikan (Fix)
+- S4: Verifikasi (Run Test / Curl)
+- S5: Laporan
+
+================================================================
+STAGE 0 — Cek Kondisi Database (LIVE)
+================================================================
+# Cek apakah ada query yang nyangkut/lock
+echo "=== 0a. Active Queries & Locks ==="
+docker exec -it etix-postgres psql -U postgres -d etix_flash_dev -c "SELECT pid, state, wait_event_type, wait_event, query FROM pg_stat_activity WHERE state != 'idle';"
+
+echo "=== 0b. Cek Table Locks ==="
+docker exec -it etix-postgres psql -U postgres -d etix_flash_dev -c "SELECT relation::regclass, mode, granted, pid FROM pg_locks WHERE relation = 'payment_obligations'::regclass OR relation = 'bookings'::regclass;"
+
+echo "STAGE_0_DONE"
+
+================================================================
+STAGE 1 — Code Review
+================================================================
+echo "=== 1a. Lihat fungsi Create di repository.go ==="
+grep -n -A 20 "func (r \*PostgresPaymentRepository) Create" backend/internal/payment/repository.go
+
+echo "=== 1b. Lihat inisialisasi transaksi di InitiatePayments ==="
+sed -n '113,185p' backend/internal/payment/service.go
+
+echo "STAGE_1_DONE"
+
+STOP jika dari STAGE 0 atau 1 terlihat root cause yang jelas (misal: ada transaksi lain yang nyangkut, atau kode nge-lock tabel bookings tanpa commit).
+
+================================================================
+STAGE 2 — Root Cause Analysis & Fix
+================================================================
+# Berdasarkan temuan dari Stage 0 & 1, lakukan perbaikan.
+# Kemungkinan besar penyebabnya:
+# 1. Ada transaksi lain yang nyangkut (idle in transaction). Jika iya, kill PID-nya.
+# 2. Koneksi PgBouncer/Pooling penuh.
+# 3. Di service.go, ada pemanggilan `FOR UPDATE` di tabel booking yang nge-lock terlalu lama.
+
+# Jika masalahnya di kode (misal `FOR UPDATE` nahan lock pas manggil Gateway), 
+# Pindahkan pemanggilan Gateway ke SEBELUM transaksi database dimulai.
+
+echo "TULISKAN PERBAIKAN (jika diperlukan) DI SINI."
+echo "STAGE_2_DONE"
+
+================================================================
+STAGE 3 — Verifikasi
+================================================================
+# Restart backend untuk apply fix (jika ada perubahan kode)
+# Lalu jalankan ulang curl ke endpoint pembayaran
+
+echo "=== 3a. Cek Build ==="
+cd backend && go build ./... && cd ..
+
+echo "=== 3b. Kirim Request Pembayaran (Gunakan ID Dummy yang valid atau abaikan jika butuh auth) ==="
+# Karena butuh JWT, verifikasi dilakukan dengan memastikan backend start tanpa error
+# dan tidak ada query menggantung di pg_stat_activity saat idle.
+
+echo "STAGE_3_DONE"

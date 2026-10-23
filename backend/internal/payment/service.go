@@ -87,6 +87,25 @@ func (s *PaymentService) SetResaleWebhookDeps(repo ResaleWebhookLookup, mq queue
 	s.mq = mq
 }
 
+const paymentDBTimeout = 5 * time.Second
+
+// txObligationCreator is implemented by repositories that can run the insert
+// on the caller's transaction. It is required when the booking row is locked
+// FOR UPDATE in that transaction: inserting the child row from a separate
+// pool connection makes PostgreSQL wait for a KEY SHARE lock on the parent,
+// which cannot be granted until the caller commits. That application-level
+// deadlock ends as SQLSTATE 57014 or context canceled.
+type txObligationCreator interface {
+	CreateTx(ctx context.Context, tx pgx.Tx, o *PaymentObligation) error
+}
+
+func (s *PaymentService) createObligation(ctx context.Context, tx pgx.Tx, o *PaymentObligation) error {
+	if creator, ok := s.repo.(txObligationCreator); ok {
+		return creator.CreateTx(ctx, tx, o)
+	}
+	return s.repo.Create(ctx, o)
+}
+
 // InitiatePayments creates the payment obligations for a booking.
 //
 // SPLIT: N obligations, one per member, seat_position required.
@@ -141,13 +160,8 @@ func (s *PaymentService) InitiatePayments(
 		}
 	}
 
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("payment: begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	bk, err := s.booking.GetByIDForUpdate(ctx, tx, bookingID)
+	// Read booking without long lock if possible; still need to validate.
+	bk, err := s.booking.GetByID(ctx, bookingID)
 	if err != nil {
 		return nil, err
 	}
@@ -158,32 +172,82 @@ func (s *PaymentService) InitiatePayments(
 		return nil, ErrBookingNotPending
 	}
 
+	// Bound the DB phase so a blocked lock cannot pin the request until the
+	// client disconnects. The gateway runs after commit with the request ctx.
+	dbCtx, cancelDB := context.WithTimeout(ctx, paymentDBTimeout)
+	defer cancelDB()
+
+	// Create obligations in the same transaction that holds the booking lock.
+	// A pool-backed insert would wait for a FK KEY SHARE lock on the locked
+	// booking row until statement_timeout (SQLSTATE 57014).
+	tx, err := s.db.Begin(dbCtx)
+	if err != nil {
+		return nil, fmt.Errorf("payment: begin tx: %w", err)
+	}
+	defer func() {
+		// Release the row lock even when the request context was canceled;
+		// otherwise the transaction can stay idle-in-transaction and block
+		// the next request.
+		rbCtx, rbCancel := context.WithTimeout(context.Background(), paymentDBTimeout)
+		defer rbCancel()
+		_ = tx.Rollback(rbCtx)
+	}()
+
+	// Re-check under lock to prevent race conditions.
+	bkLocked, err := s.booking.GetByIDForUpdate(dbCtx, tx, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	if bkLocked.LeaderUserID != userID {
+		return nil, ErrNotLeader
+	}
+	if bkLocked.PaymentStatus != StatusPending {
+		return nil, ErrBookingNotPending
+	}
+	bk = bkLocked
+
 	var obligations []*PaymentObligation
 	if req.PaymentMode == ModeSplit {
-		obligations, err = s.initiateSplit(ctx, bk, req, hash)
+		obligations, err = s.initiateSplit(dbCtx, tx, bk, req, hash)
 	} else {
-		obligations, err = s.initiateBulk(ctx, bk, req, hash)
+		obligations, err = s.initiateBulk(dbCtx, tx, bk, req, hash)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(dbCtx); err != nil {
 		return nil, fmt.Errorf("payment: commit: %w", err)
+	}
+
+	// Call gateway AFTER transaction is committed to avoid holding locks
+	// during external/network calls.
+	if req.PaymentMode == ModeSplit {
+		if err := s.finalizeSplitWithGateway(ctx, bk, req, obligations); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.finalizeBulkWithGateway(ctx, bk, req, obligations); err != nil {
+			return nil, err
+		}
 	}
 
 	resp := s.buildResponse(bookingID, obligations)
 	body, _ := json.Marshal(resp)
 	if err := s.idempotent.StoreL1(ctx, hash, body); err != nil {
 		// Non-fatal: DB has the obligations; L1 will be repopulated on next hit.
-		// Log at caller level if needed.
 		_ = err
 	}
 	return resp, nil
 }
 
 // initiateSplit creates one obligation per member, with seat_position set.
-func (s *PaymentService) initiateSplit(ctx context.Context, bk *BookingSnapshot, req *InitiatePaymentRequest, hash string) ([]*PaymentObligation, error) {
+type gatewayResp struct {
+	txID        string
+	paymentLink string
+}
+
+func (s *PaymentService) initiateSplit(ctx context.Context, tx pgx.Tx, bk *BookingSnapshot, req *InitiatePaymentRequest, hash string) ([]*PaymentObligation, error) {
 	seen := map[int]bool{}
 	out := make([]*PaymentObligation, 0, len(req.Members))
 
@@ -201,16 +265,6 @@ func (s *PaymentService) initiateSplit(ctx context.Context, bk *BookingSnapshot,
 			return nil, fmt.Errorf("payment: invalid member amount %q", m.Amount)
 		}
 
-		gwResp, err := s.gateway.Initiate(ctx, adapter.InitiateRequest{
-			UserID:    m.UserID.String(),
-			BookingID: bk.ID.String(),
-			Amount:    amount.StringFixed(2),
-			Method:    MethodVA,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("payment: gateway initiate (member %d): %w", i, err)
-		}
-
 		// Idempotency key: only the first obligation carries the client hash,
 		// subsequent ones get a suffix so the UNIQUE constraint holds.
 		var key *string
@@ -224,19 +278,17 @@ func (s *PaymentService) initiateSplit(ctx context.Context, bk *BookingSnapshot,
 
 		seatPos := m.SeatPosition
 		o := &PaymentObligation{
-			ID:                    uuid.New(),
-			BookingID:             bk.ID,
-			UserID:                m.UserID,
-			SeatPosition:          &seatPos,
-			Amount:                amount.StringFixed(2),
-			Status:                StatusPending,
-			PaymentLink:           &gwResp.PaymentLink,
-			ExternalTransactionID: &gwResp.TransactionID,
-			IdempotencyKey:        key,
-			CreatedAt:             time.Now().UTC(),
-			UpdatedAt:             time.Now().UTC(),
+			ID:             uuid.New(),
+			BookingID:      bk.ID,
+			UserID:         m.UserID,
+			SeatPosition:   &seatPos,
+			Amount:         amount.StringFixed(2),
+			Status:         StatusPending,
+			IdempotencyKey: key,
+			CreatedAt:      time.Now().UTC(),
+			UpdatedAt:      time.Now().UTC(),
 		}
-		if err := s.repo.Create(ctx, o); err != nil {
+		if err := s.createObligation(ctx, tx, o); err != nil {
 			return nil, fmt.Errorf("payment: insert obligation: %w", err)
 		}
 		out = append(out, o)
@@ -245,13 +297,61 @@ func (s *PaymentService) initiateSplit(ctx context.Context, bk *BookingSnapshot,
 	return out, nil
 }
 
+func (s *PaymentService) finalizeSplitWithGateway(ctx context.Context, bk *BookingSnapshot, req *InitiatePaymentRequest, obligations []*PaymentObligation) error {
+	for i, m := range req.Members {
+		if i >= len(obligations) {
+			break
+		}
+		amount, _ := decimal.NewFromString(m.Amount)
+		gwResp, err := s.gateway.Initiate(ctx, adapter.InitiateRequest{
+			UserID:    m.UserID.String(),
+			BookingID: bk.ID.String(),
+			Amount:    amount.StringFixed(2),
+			Method:    MethodVA,
+		})
+		if err != nil {
+			return fmt.Errorf("payment: gateway initiate (member %d): %w", i, err)
+		}
+		obligations[i].PaymentLink = &gwResp.PaymentLink
+		obligations[i].ExternalTransactionID = &gwResp.TransactionID
+		obligations[i].UpdatedAt = time.Now().UTC()
+		if err := s.repo.UpdateGatewayInfo(ctx, obligations[i].ID, gwResp.PaymentLink, gwResp.TransactionID); err != nil {
+			return fmt.Errorf("payment: update obligation gateway: %w", err)
+		}
+	}
+	return nil
+}
+
 // initiateBulk creates a single obligation (leader pays all, seat_position NULL).
-func (s *PaymentService) initiateBulk(ctx context.Context, bk *BookingSnapshot, req *InitiatePaymentRequest, hash string) ([]*PaymentObligation, error) {
+func (s *PaymentService) initiateBulk(ctx context.Context, tx pgx.Tx, bk *BookingSnapshot, req *InitiatePaymentRequest, hash string) ([]*PaymentObligation, error) {
 	amount, err := decimal.NewFromString(req.Amount)
 	if err != nil || amount.LessThanOrEqual(decimal.Zero) {
 		return nil, fmt.Errorf("payment: invalid bulk amount %q", req.Amount)
 	}
 
+	k := hash
+	o := &PaymentObligation{
+		ID:             uuid.New(),
+		BookingID:      bk.ID,
+		UserID:         bk.LeaderUserID,
+		SeatPosition:   nil,
+		Amount:         amount.StringFixed(2),
+		Status:         StatusPending,
+		IdempotencyKey: &k,
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+	}
+	if err := s.createObligation(ctx, tx, o); err != nil {
+		return nil, fmt.Errorf("payment: insert obligation: %w", err)
+	}
+	return []*PaymentObligation{o}, nil
+}
+
+func (s *PaymentService) finalizeBulkWithGateway(ctx context.Context, bk *BookingSnapshot, req *InitiatePaymentRequest, obligations []*PaymentObligation) error {
+	if len(obligations) == 0 {
+		return nil
+	}
+	amount, _ := decimal.NewFromString(req.Amount)
 	gwResp, err := s.gateway.Initiate(ctx, adapter.InitiateRequest{
 		UserID:    bk.LeaderUserID.String(),
 		BookingID: bk.ID.String(),
@@ -259,27 +359,15 @@ func (s *PaymentService) initiateBulk(ctx context.Context, bk *BookingSnapshot, 
 		Method:    MethodVA,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("payment: gateway initiate: %w", err)
+		return fmt.Errorf("payment: gateway initiate: %w", err)
 	}
-
-	k := hash
-	o := &PaymentObligation{
-		ID:                    uuid.New(),
-		BookingID:             bk.ID,
-		UserID:                bk.LeaderUserID,
-		SeatPosition:          nil,
-		Amount:                amount.StringFixed(2),
-		Status:                StatusPending,
-		PaymentLink:           &gwResp.PaymentLink,
-		ExternalTransactionID: &gwResp.TransactionID,
-		IdempotencyKey:        &k,
-		CreatedAt:             time.Now().UTC(),
-		UpdatedAt:             time.Now().UTC(),
+	obligations[0].PaymentLink = &gwResp.PaymentLink
+	obligations[0].ExternalTransactionID = &gwResp.TransactionID
+	obligations[0].UpdatedAt = time.Now().UTC()
+	if err := s.repo.UpdateGatewayInfo(ctx, obligations[0].ID, gwResp.PaymentLink, gwResp.TransactionID); err != nil {
+		return fmt.Errorf("payment: update obligation gateway: %w", err)
 	}
-	if err := s.repo.Create(ctx, o); err != nil {
-		return nil, fmt.Errorf("payment: insert obligation: %w", err)
-	}
-	return []*PaymentObligation{o}, nil
+	return nil
 }
 
 // buildResponse assembles the API response from freshly-created obligations.

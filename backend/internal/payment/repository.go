@@ -20,6 +20,8 @@ type PaymentObligationRepository interface {
 	GetByExternalTxID(ctx context.Context, txID string) (*PaymentObligation, error)
 	// GetByIdempotencyKey returns an obligation by idempotency key (L2 lookup).
 	GetByIdempotencyKey(ctx context.Context, key string) (*PaymentObligation, error)
+	// UpdateGatewayInfo updates payment link and external transaction id.
+	UpdateGatewayInfo(ctx context.Context, id uuid.UUID, paymentLink, externalTxID string) error
 	// ListByBooking returns all obligations for a booking, ordered by id ASC.
 	ListByBooking(ctx context.Context, bookingID uuid.UUID) ([]PaymentObligation, error)
 
@@ -93,6 +95,32 @@ func (r *PostgresPaymentObligationRepository) Create(ctx context.Context, o *Pay
 		o.ID, o.BookingID, o.UserID, o.SeatPosition, o.Amount, o.Status,
 		o.PaymentMethod, o.PaymentLink, o.ExternalTransactionID, o.IdempotencyKey,
 	)
+	return err
+}
+
+// CreateTx persists a new obligation on the caller's transaction. Use this
+// when the booking row is already locked FOR UPDATE in tx: a pool-backed
+// insert opens a separate transaction and its FK KEY SHARE check on the
+// booking row blocks against that FOR UPDATE lock until statement_timeout.
+func (r *PostgresPaymentObligationRepository) CreateTx(ctx context.Context, tx pgx.Tx, o *PaymentObligation) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO payment_obligations (
+			id, booking_id, user_id, seat_position, amount, status,
+			payment_method, payment_link, external_transaction_id,
+			idempotency_key, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),now())`,
+		o.ID, o.BookingID, o.UserID, o.SeatPosition, o.Amount, o.Status,
+		o.PaymentMethod, o.PaymentLink, o.ExternalTransactionID, o.IdempotencyKey,
+	)
+	return err
+}
+
+// UpdateGatewayInfo updates payment link and external transaction id.
+func (r *PostgresPaymentObligationRepository) UpdateGatewayInfo(ctx context.Context, id uuid.UUID, paymentLink, externalTxID string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE payment_obligations
+		SET payment_link = $1, external_transaction_id = $2, updated_at = now()
+		WHERE id = $3`, paymentLink, externalTxID, id)
 	return err
 }
 

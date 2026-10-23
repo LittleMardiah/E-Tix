@@ -1,0 +1,65 @@
+TASK: Fix `context canceled` (latency 13s) di POST /bookings/:id/payments.
+      Error sebelumnya SQLSTATE 57014 berubah jadi context canceled. Artinya request nyangkut 13 detik lalu timeout.
+      Investigasi transaksi database yang nyangkut, bersihkan lock, dan perbaiki alur eksekusi.
+
+RULES: docs/TEAM_CONTRACT.txt (§11 + §14 + §16 + R1 + R2 + R3.1 + R3.2 + R8 + R9).
+
+STAGES:
+- S0: Bersihkan Transaksi Nyangkut (Zombie Lock) di Postgres.
+- S1: Code Review alur InitiatePayments pasca-fix OpenCode.
+- S2: Tambahkan Defensive Timeout di repository/service (jika query berat).
+- S3: Verifikasi Build & Test.
+- S4: Laporan.
+
+================================================================
+STAGE 0 — Bersihkan Lock Database (CRITICAL)
+================================================================
+echo "=== 0a. Cek Query yang Nyangkut ==="
+docker exec etix-postgres psql -U postgres -d etix_flash_dev -c "SELECT pid, state, wait_event_type, query_start, left(query, 80) FROM pg_stat_activity WHERE state != 'idle' AND pid <> pg_backend_pid();"
+
+echo ""
+echo "=== 0b. Tembak Mati Semua Transaksi Zombie ==="
+docker exec etix-postgres psql -U postgres -d etix_flash_dev -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE state = 'idle in transaction' AND pid <> pg_backend_pid();"
+echo "STAGE_0_DONE"
+
+================================================================
+STAGE 1 — Code Review
+================================================================
+echo "=== 1a. Lihat perbaikan OpenCode sebelumnya (service.go) ==="
+sed -n '90,200p' backend/internal/payment/service.go
+
+echo "=== 1b. Cek apakah ada `FOR UPDATE` di repository ==="
+grep -n -B 2 -A 5 "FOR UPDATE" backend/internal/payment/repository.go
+
+echo "STAGE_1_DONE"
+
+STOP & ANALISIS: Jika `InitiatePayments` memanggil gateway di luar transaksi tapi `GetBookingByID` masih memanggil `FOR UPDATE` tanpa di-commit dengan benar, atau lock masih nyangkut.
+
+================================================================
+STAGE 2 — Perbaikan (Fix)
+================================================================
+# 1. Pastikan `s.gateway.Initiate` benar-benar dipanggil SEBELUM `s.repo.Create`.
+# 2. Pastikan query `INSERT` (s.repo.Create) TIDAK lagi memakan waktu lama.
+# 3. Jika lock masih nyangkut karena koneksi pgxpool tidak di-close dengan benar, benerin penggunaan `tx` / `tx.Rollback()`.
+# 4. Kalau perlu, tambahkan context timeout 5 detik khusus untuk database query di InitiatePayments.
+
+# TULIS PERBAIKAN (jika perlu) DI SINI
+echo "STAGE_2_DONE"
+
+================================================================
+STAGE 3 — Verifikasi
+================================================================
+cd "/mnt/d/AI Engineer/Ticket"
+echo "=== 3a. Build ==="
+cd backend && go build ./... 2>&1; echo "BUILD_RC=$?"
+
+echo "=== 3b. Test Payment ==="
+go test ./internal/payment/... -count=1 2>&1 | grep -E "ok|FAIL"
+echo "STAGE_3_DONE"
+
+================================================================
+STAGE 4 — Laporan & Rekomendasi Restart
+================================================================
+echo "=== FINAL: Restart Backend (WSL) ==="
+echo "Silakan ketik: Ctrl+C di terminal start_deploy.sh, lalu jalankan ulang ./start_deploy.sh"
+echo "STAGE_4_DONE"

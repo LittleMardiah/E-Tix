@@ -146,8 +146,9 @@ func newTestPaymentEnv(t *testing.T, snap *BookingSnapshot, bkErr error, gwErr e
 
 // memObligationRepo is an in-memory PaymentObligationRepository.
 type memObligationRepo struct {
-	byID  map[uuid.UUID]*PaymentObligation
-	byKey map[string]*PaymentObligation
+	byID          map[uuid.UUID]*PaymentObligation
+	byKey         map[string]*PaymentObligation
+	txCreateCalls int
 }
 
 func (m *memObligationRepo) ensure() {
@@ -163,6 +164,25 @@ func (m *memObligationRepo) Create(_ context.Context, o *PaymentObligation) erro
 	if o.IdempotencyKey != nil {
 		m.byKey[*o.IdempotencyKey] = o
 	}
+	return nil
+}
+
+// CreateTx mirrors PostgresPaymentObligationRepository.CreateTx: the insert
+// must run on the caller's transaction so its booking FK check does not fight
+// the FOR UPDATE lock held by that same transaction.
+func (m *memObligationRepo) CreateTx(ctx context.Context, _ pgx.Tx, o *PaymentObligation) error {
+	m.txCreateCalls++
+	return m.Create(ctx, o)
+}
+
+func (m *memObligationRepo) UpdateGatewayInfo(_ context.Context, id uuid.UUID, paymentLink, externalTxID string) error {
+	m.ensure()
+	o, ok := m.byID[id]
+	if !ok {
+		return ErrObligationNotFound
+	}
+	o.PaymentLink = &paymentLink
+	o.ExternalTransactionID = &externalTxID
 	return nil
 }
 
@@ -284,6 +304,37 @@ func TestInitiatePayments_Split_Success(t *testing.T) {
 		assert.NotEmpty(t, o.PaymentLink)
 		assert.NotEmpty(t, o.ExternalTransactionID)
 	}
+}
+
+// Regression: obligations MUST be inserted on the caller's transaction. A
+// pool-backed insert blocks on the booking row's FOR UPDATE lock (FK KEY
+// SHARE conflict) until statement_timeout / client cancel.
+func TestInitiatePayments_InsertUsesCallerTransaction(t *testing.T) {
+	bid := uuid.New()
+	leader := uuid.New()
+	snap := &BookingSnapshot{
+		ID:            bid,
+		LeaderUserID:  leader,
+		TotalAmount:   "2000000.00",
+		PaymentMode:   ModeSplit,
+		PaymentStatus: StatusPending,
+	}
+	svc, _, _, _ := newTestPaymentEnv(t, snap, nil, nil)
+
+	req := &InitiatePaymentRequest{
+		PaymentMode: ModeSplit,
+		Members: []InitiateMember{
+			{UserID: uuid.New(), SeatPosition: 1, Amount: "1000000"},
+			{UserID: uuid.New(), SeatPosition: 2, Amount: "1000000"},
+		},
+	}
+
+	_, err := svc.InitiatePayments(context.Background(), leader, bid, req, "idem-key-tx-insert")
+	require.NoError(t, err)
+
+	repo := svc.repo.(*memObligationRepo)
+	assert.Equal(t, 2, repo.txCreateCalls,
+		"obligations must be inserted via CreateTx on the caller's transaction")
 }
 
 func TestInitiatePayments_Bulk_Success(t *testing.T) {
@@ -439,5 +490,6 @@ func TestInitiatePayments_GatewayError(t *testing.T) {
 	_, err := svc.InitiatePayments(context.Background(), leader, bid, req, "idem-gw-err")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gateway")
-	assert.False(t, tx.tx.committed)
+	// Obligations created inside tx before gateway call; tx must be committed.
+	assert.True(t, tx.tx.committed)
 }

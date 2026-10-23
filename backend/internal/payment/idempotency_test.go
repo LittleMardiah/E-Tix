@@ -22,6 +22,9 @@ type fakeRepoL2 struct {
 }
 
 func (f *fakeRepoL2) Create(ctx context.Context, o *PaymentObligation) error { return nil }
+func (f *fakeRepoL2) UpdateGatewayInfo(ctx context.Context, id uuid.UUID, paymentLink, externalTxID string) error {
+	return nil
+}
 func (f *fakeRepoL2) GetByID(ctx context.Context, id uuid.UUID) (*PaymentObligation, error) {
 	return nil, ErrObligationNotFound
 }
