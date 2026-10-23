@@ -89,3 +89,4 @@ docs/*[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]*
 # JWT keys (sensitive)
 backend/keys/
 backend/.env.local
+*.deb
