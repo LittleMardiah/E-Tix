@@ -4,6 +4,8 @@ const withPWA = withPWAInit({
   dest: "public",
   register: true,
   skipWaiting: true,
+  cacheOnFrontEndNav: true,
+  aggressiveFrontEndNavCaching: true,
   disable: process.env.NODE_ENV === "development",
 });
 

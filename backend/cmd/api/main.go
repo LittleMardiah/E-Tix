@@ -120,7 +120,7 @@ func main() {
 		logger.Fatal("failed to init jwt service", zap.Error(err))
 	}
 
-	notifSvc := auth.NewLogNotification(logger)
+	notifSvc := auth.NewLogNotification(logger, cfg.Environment)
 	blacklistSvc := auth.NewTokenBlacklistService(rdb)
 	authSvc := auth.NewAuthService(userRepo, jwtSvc, rdb, notifSvc, blacklistSvc)
 	authHandler := auth.NewAuthHandler(authSvc, rdb)

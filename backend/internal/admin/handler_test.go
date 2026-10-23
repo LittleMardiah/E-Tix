@@ -42,13 +42,37 @@ type fakeSvc struct {
 	susErr      error
 	unsResp     *admin.UnsuspendUserResponse
 	unsErr      error
+
+	ledgerCalls    int
+	ledgerDateFrom string
+	ledgerDateTo   string
+	ledgerStatus   string
+	ledgerPage     int
+	ledgerLimit    int
+
+	userCalls  int
+	userRole   string
+	userStatus string
+	userSearch string
+	userPage   int
+	userLimit  int
+
+	blCalls int
+	blPage  int
+	blLimit int
 }
 
 func (f *fakeSvc) BulkCancel(_ context.Context, _, _ uuid.UUID, _ *admin.BulkCancelRequest) (*admin.BulkCancelResponse, error) {
 	return f.bulkResp, f.bulkErr
 }
 
-func (f *fakeSvc) GetLedger(_ context.Context, _ uuid.UUID, _, _, _ string, _, _ int) (*admin.LedgerResponse, error) {
+func (f *fakeSvc) GetLedger(_ context.Context, _ uuid.UUID, dateFrom, dateTo, status string, page, limit int) (*admin.LedgerResponse, error) {
+	f.ledgerCalls++
+	f.ledgerDateFrom = dateFrom
+	f.ledgerDateTo = dateTo
+	f.ledgerStatus = status
+	f.ledgerPage = page
+	f.ledgerLimit = limit
 	return f.ledgerResp, f.ledgerErr
 }
 
@@ -64,11 +88,20 @@ func (f *fakeSvc) ForceRelease(_ context.Context, _ uuid.UUID, _ *admin.ForceRel
 	return f.forceResp, f.forceErr
 }
 
-func (f *fakeSvc) ListUsers(_ context.Context, _ uuid.UUID, _, _, _ string, _, _ int) (*admin.UserListResponse, error) {
+func (f *fakeSvc) ListUsers(_ context.Context, _ uuid.UUID, role, status, search string, page, limit int) (*admin.UserListResponse, error) {
+	f.userCalls++
+	f.userRole = role
+	f.userStatus = status
+	f.userSearch = search
+	f.userPage = page
+	f.userLimit = limit
 	return f.userResp, f.userErr
 }
 
-func (f *fakeSvc) ListBlacklist(_ context.Context, _ uuid.UUID, _, _ int) (*admin.BlacklistListResponse, error) {
+func (f *fakeSvc) ListBlacklist(_ context.Context, _ uuid.UUID, page, limit int) (*admin.BlacklistListResponse, error) {
+	f.blCalls++
+	f.blPage = page
+	f.blLimit = limit
 	return f.blResp, f.blErr
 }
 
@@ -214,6 +247,52 @@ func TestH_GetLedger_401_MissingAdmin(t *testing.T) {
 	assertEnvelopeError(t, w, 401)
 }
 
+func TestH_GetLedger_ParsesQuery(t *testing.T) {
+	f := &fakeSvc{ledgerResp: &admin.LedgerResponse{Entries: []admin.LedgerEntry{}}}
+	h := admin.NewAdminHandler(f)
+
+	w := runHandler(h.GetLedger, http.MethodGet,
+		"/admin/ledger?date_from=2026-01-01&date_to=2026-01-31&status=PAID&page=2&limit=25",
+		nil, uuid.New(), nil)
+	assertEnvelopeSuccess(t, w, 200)
+	assert.Equal(t, 1, f.ledgerCalls)
+	assert.Equal(t, "2026-01-01", f.ledgerDateFrom)
+	assert.Equal(t, "2026-01-31", f.ledgerDateTo)
+	assert.Equal(t, "PAID", f.ledgerStatus)
+	assert.Equal(t, 2, f.ledgerPage)
+	assert.Equal(t, 25, f.ledgerLimit)
+}
+
+func TestH_GetLedger_DefaultPagination(t *testing.T) {
+	f := &fakeSvc{ledgerResp: &admin.LedgerResponse{Entries: []admin.LedgerEntry{}}}
+	h := admin.NewAdminHandler(f)
+
+	w := runHandler(h.GetLedger, http.MethodGet, "/admin/ledger", nil, uuid.New(), nil)
+	assertEnvelopeSuccess(t, w, 200)
+	assert.Equal(t, 1, f.ledgerPage)
+	assert.Equal(t, 50, f.ledgerLimit)
+}
+
+func TestH_GetLedger_400_InvalidPagination(t *testing.T) {
+	cases := []string{
+		"/admin/ledger?page=0",
+		"/admin/ledger?page=abc",
+		"/admin/ledger?limit=0",
+		"/admin/ledger?limit=101",
+		"/admin/ledger?limit=abc",
+	}
+	for _, path := range cases {
+		t.Run(path, func(t *testing.T) {
+			f := &fakeSvc{ledgerResp: &admin.LedgerResponse{Entries: []admin.LedgerEntry{}}}
+			h := admin.NewAdminHandler(f)
+
+			w := runHandler(h.GetLedger, http.MethodGet, path, nil, uuid.New(), nil)
+			assertEnvelopeError(t, w, 400)
+			assert.Zero(t, f.ledgerCalls)
+		})
+	}
+}
+
 // ===== E5 ManualReverse =====
 
 func TestH_ManualReverse_200_Success(t *testing.T) {
@@ -340,6 +419,31 @@ func TestH_ListUsers_401_MissingAdmin(t *testing.T) {
 	assertEnvelopeError(t, w, 401)
 }
 
+func TestH_ListUsers_ParsesQuery(t *testing.T) {
+	f := &fakeSvc{userResp: &admin.UserListResponse{Users: []admin.AdminUser{}}}
+	h := admin.NewAdminHandler(f)
+
+	w := runHandler(h.ListUsers, http.MethodGet,
+		"/admin/users?role=customer&status=ACTIVE&search=alice&page=3&limit=100",
+		nil, uuid.New(), nil)
+	assertEnvelopeSuccess(t, w, 200)
+	assert.Equal(t, 1, f.userCalls)
+	assert.Equal(t, "customer", f.userRole)
+	assert.Equal(t, "ACTIVE", f.userStatus)
+	assert.Equal(t, "alice", f.userSearch)
+	assert.Equal(t, 3, f.userPage)
+	assert.Equal(t, 100, f.userLimit)
+}
+
+func TestH_ListUsers_400_InvalidPagination(t *testing.T) {
+	f := &fakeSvc{userResp: &admin.UserListResponse{Users: []admin.AdminUser{}}}
+	h := admin.NewAdminHandler(f)
+
+	w := runHandler(h.ListUsers, http.MethodGet, "/admin/users?limit=101", nil, uuid.New(), nil)
+	assertEnvelopeError(t, w, 400)
+	assert.Zero(t, f.userCalls)
+}
+
 // ===== E8 ListBlacklist =====
 
 func TestH_ListBlacklist_200_Success(t *testing.T) {
@@ -354,6 +458,26 @@ func TestH_ListBlacklist_500_SvcError(t *testing.T) {
 
 	w := runHandler(h.ListBlacklist, http.MethodGet, "/admin/blacklist", nil, uuid.New(), nil)
 	assertEnvelopeError(t, w, 500)
+}
+
+func TestH_ListBlacklist_ParsesPagination(t *testing.T) {
+	f := &fakeSvc{blResp: &admin.BlacklistListResponse{Entries: []admin.BlacklistEntry{}}}
+	h := admin.NewAdminHandler(f)
+
+	w := runHandler(h.ListBlacklist, http.MethodGet, "/admin/blacklist?page=4&limit=10", nil, uuid.New(), nil)
+	assertEnvelopeSuccess(t, w, 200)
+	assert.Equal(t, 1, f.blCalls)
+	assert.Equal(t, 4, f.blPage)
+	assert.Equal(t, 10, f.blLimit)
+}
+
+func TestH_ListBlacklist_400_InvalidPagination(t *testing.T) {
+	f := &fakeSvc{blResp: &admin.BlacklistListResponse{Entries: []admin.BlacklistEntry{}}}
+	h := admin.NewAdminHandler(f)
+
+	w := runHandler(h.ListBlacklist, http.MethodGet, "/admin/blacklist?page=-1", nil, uuid.New(), nil)
+	assertEnvelopeError(t, w, 400)
+	assert.Zero(t, f.blCalls)
 }
 
 func TestH_ListBlacklist_401_MissingAdmin(t *testing.T) {

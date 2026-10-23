@@ -116,7 +116,7 @@ func TestMaskEmailP9a8(t *testing.T) {
 
 func TestLogNotificationSendOTPP9a8(t *testing.T) {
 	core, logs := observer.New(zap.InfoLevel)
-	n := NewLogNotification(zap.New(core))
+	n := NewLogNotification(zap.New(core), "development")
 	require.NotNil(t, n)
 
 	userID := uuid.New()
@@ -124,11 +124,24 @@ func TestLogNotificationSendOTPP9a8(t *testing.T) {
 
 	require.Equal(t, 1, logs.Len())
 	entry := logs.All()[0]
-	assert.Equal(t, "OTP sent (dev mode)", entry.Message)
+	assert.Equal(t, "OTP issued (log fallback)", entry.Message)
 	fields := entry.ContextMap()
 	assert.Equal(t, userID.String(), fields["user_id"])
 	assert.Equal(t, "a***@example.com", fields["email"])
 	assert.Equal(t, "123456", fields["code"])
+	assert.Equal(t, false, fields["code_redacted"])
+}
+
+func TestLogNotificationRedactsOTPInProduction(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	n := NewLogNotification(zap.New(core), "production")
+
+	require.NoError(t, n.SendOTP(context.Background(), uuid.New(), "alice@example.com", "123456"))
+
+	require.Equal(t, 1, logs.Len())
+	fields := logs.All()[0].ContextMap()
+	assert.Equal(t, "******", fields["code"])
+	assert.Equal(t, true, fields["code_redacted"])
 }
 
 type p9a8OTPStub struct {

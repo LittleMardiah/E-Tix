@@ -1,20 +1,55 @@
 {
+  "id": "/",
   "name": "E-Tix Flash",
   "short_name": "E-Tix",
+  "description": "Smart ticketing platform with anti-bot ingress, atomic seat locking, split-pay, and dynamic QR.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#000000",
+  "orientation": "portrait-primary",
+  "lang": "id",
+  "dir": "ltr",
+  "categories": ["entertainment", "tickets", "events"],
+  "background_color": "#FFFFFF",
+  "theme_color": "#2563EB",
   "icons": [
     {
       "src": "/icons/192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "/icons/512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "My Tickets",
+      "short_name": "Tickets",
+      "url": "/customer/my-tickets",
+      "icons": [
+        {
+          "src": "/icons/192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Gate Scanner",
+      "short_name": "Scanner",
+      "url": "/gate/scanner",
+      "icons": [
+        {
+          "src": "/icons/192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
     }
   ]
 }

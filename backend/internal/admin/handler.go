@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -55,6 +56,31 @@ func adminFromCtx(c *gin.Context) (uuid.UUID, bool) {
 	return id, true
 }
 
+// helper: parse page/limit query params (defaults 1/50, max limit 100)
+func adminParsePagination(c *gin.Context) (page, limit int, ok bool) {
+	page, limit = 1, 50
+
+	if raw := c.Query("page"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 1 {
+			adminError(c, 400, "INVALID_REQUEST", "invalid page")
+			return 0, 0, false
+		}
+		page = v
+	}
+
+	if raw := c.Query("limit"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 1 || v > 100 {
+			adminError(c, 400, "INVALID_REQUEST", "invalid limit (must be between 1 and 100)")
+			return 0, 0, false
+		}
+		limit = v
+	}
+
+	return page, limit, true
+}
+
 // ---- E3: Bulk Cancel (§14.1) ----
 
 func (h *AdminHandler) BulkCancel(c *gin.Context) {
@@ -86,9 +112,10 @@ func (h *AdminHandler) GetLedger(c *gin.Context) {
 	if !ok {
 		return
 	}
-	page := 1
-	limit := 50
-	// TODO(P8g): parse page/limit/date_from/date_to/status from query
+	page, limit, ok := adminParsePagination(c)
+	if !ok {
+		return
+	}
 	resp, err := h.svc.GetLedger(c.Request.Context(), adminID,
 		c.Query("date_from"), c.Query("date_to"), c.Query("status"), page, limit)
 	if err != nil {
@@ -160,8 +187,10 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 	if !ok {
 		return
 	}
-	page := 1
-	limit := 50
+	page, limit, ok := adminParsePagination(c)
+	if !ok {
+		return
+	}
 	resp, err := h.svc.ListUsers(c.Request.Context(), adminID,
 		c.Query("role"), c.Query("status"), c.Query("search"), page, limit)
 	if err != nil {
@@ -178,7 +207,11 @@ func (h *AdminHandler) ListBlacklist(c *gin.Context) {
 	if !ok {
 		return
 	}
-	resp, err := h.svc.ListBlacklist(c.Request.Context(), adminID, 1, 50)
+	page, limit, ok := adminParsePagination(c)
+	if !ok {
+		return
+	}
+	resp, err := h.svc.ListBlacklist(c.Request.Context(), adminID, page, limit)
 	if err != nil {
 		adminError(c, 500, "INTERNAL_ERROR", err.Error())
 		return

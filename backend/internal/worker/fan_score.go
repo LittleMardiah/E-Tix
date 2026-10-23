@@ -82,10 +82,10 @@ func (w *FanScoreWorker) processMessage(ctx context.Context, body []byte) error 
 }
 
 // calculateDynamicScore returns a heuristic score in range [-50, 0].
-// TODO: extend queue.FanScoreMetadata with request_interval + user_agent
-// fields so the faster-interval (-30), odd-hour 03:00-05:00 WIB (-20), and
-// non-common User-Agent (-10) rules can run; until then only the
-// FinalScore guards apply.
+// Deferred (TD-F2-01): extend queue.FanScoreMetadata with request_interval
+// and user_agent so the faster-interval (-30), odd-hour 03:00-05:00 WIB (-20),
+// and non-common User-Agent (-10) rules can run. Until that schema/ingress
+// change lands, only the FinalScore guards apply.
 func calculateDynamicScore(meta queue.FanScoreMetadata) int {
 	switch {
 	case meta.FinalScore < 30:

@@ -15,22 +15,30 @@ type OTPNotification interface {
 }
 
 // LogNotification is a development-only OTPNotification that writes the OTP to
-// the application log instead of sending it through a provider.
+// the application log instead of sending it through a provider. Plaintext OTP
+// is only emitted when the environment is "development" or "test"; every other
+// environment logs a redacted code so credentials never leak into production
+// logs. A real SMS/Email provider (Twilio/SendGrid) must be wired for prod.
 type LogNotification struct {
-	logger *zap.Logger
+	logger     *zap.Logger
+	exposeCode bool
 }
 
-func NewLogNotification(logger *zap.Logger) *LogNotification {
-	return &LogNotification{logger: logger}
+func NewLogNotification(logger *zap.Logger, environment string) *LogNotification {
+	exposeCode := environment == "development" || environment == "test"
+	return &LogNotification{logger: logger, exposeCode: exposeCode}
 }
 
-func (n *LogNotification) SendOTP(ctx context.Context, userID uuid.UUID, email string, code string) error {
-	// TODO(prod): OTP code is logged in plaintext for dev only. Remove/mask
-	// this field and wire a real SMS/Email provider (Twilio/SendGrid).
-	n.logger.Info("OTP sent (dev mode)",
+func (n *LogNotification) SendOTP(_ context.Context, userID uuid.UUID, email string, code string) error {
+	loggedCode := "******"
+	if n.exposeCode {
+		loggedCode = code
+	}
+	n.logger.Info("OTP issued (log fallback)",
 		zap.String("user_id", userID.String()),
 		zap.String("email", maskEmail(email)),
-		zap.String("code", code),
+		zap.String("code", loggedCode),
+		zap.Bool("code_redacted", !n.exposeCode),
 	)
 	return nil
 }
