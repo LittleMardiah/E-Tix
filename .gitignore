@@ -90,3 +90,7 @@ docs/*[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]*
 backend/keys/
 backend/.env.local
 *.deb
+
+# AI Prompts
+backend/prompt_*.txt
+prompt_*.txt

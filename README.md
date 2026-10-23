@@ -1,120 +1,75 @@
-# E-Tix Flash ⚡
+# ⚡ E-Tix Flash: Smart, Fair & Scalp-Proof Ticketing Platform
 
-**Smart, fair & scalp-proof ticketing platform.**
+> **"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal di Situasi yang sedang 'Tidak Normal'."** — *Vibe Coder Principle*
 
-## The Story Behind This Project
+E-Tix Flash adalah platform ticketing *high-concurrency* yang dibangun untuk menyelesaikan 3 masalah utama di industri tiket:
+1. **Server Crash** saat *flash sale* (dirancang untuk menahan 20,000 RPS).
+2. **Calo/Bot** yang memborong tiket dalam hitungan detik.
+3. **Grup Gagal Duduk Bareng** karena *race condition* saat pemilihan kursi.
 
-> "I was at a concert with 3 friends. We booked tickets together, but at checkout, 1 seat was gone. We ended up sitting separately. It ruined the experience."
+## 🌐 Live Demo & Architecture
 
-This project started from that frustration. Buying tickets should not feel like a lottery against bots, and a group booking should never scatter friends across the venue. E-Tix Flash is built around three promises: fair access, atomic group seating, and a gate experience that still works when the network does not.
+- **Frontend (Edge):** [https://e-tix-flash.m-arif250602.workers.dev](https://e-tix-flash.m-arif250602.workers.dev)
+- **Deployment:** Frontend dideploy di **Cloudflare Workers (via OpenNext)**. Backend (Go), PostgreSQL, Redis, dan RabbitMQ di-*self-host* secara lokal dan diekspos via **Ngrok Tunnel**. *(Catatan: Demo hanya online selama laptop developer menyala).*
 
-## Why I Built This
+## 🛠️ Tech Stack
+- **Backend:** Golang (Gin), PostgreSQL (Supabase/Pgx), Redis (Upstash/Mini), RabbitMQ (CloudAMQP).
+- **Frontend:** Next.js 15 (App Router), Tailwind CSS, Zustand, React Hook Form + Zod.
+- **Infrastructure:** Docker Compose, Cloudflare Workers, Ngrok, GitHub Actions.
 
-1. **Bots and scalpers eat the best seats.** A normal queue is not enough when automated clients can hit the API thousands of times per second.
-2. **Group checkout is fragile.** Without atomic seat locking, two members can lose the same seat while the group is still deciding.
-3. **Flash sales break ordinary stacks.** Traffic spikes, payment retries, and offline gate devices expose every weak point in the booking lifecycle.
+## 🚀 Core Features (F001 - F006)
+- 🛡️ **Behavioral Ingress:** Sistem antrean dengan *Priority Tier* (Fan Score) dan proteksi *CAPTCHA*.
+- 🔒 **Atomic Group Locking:** Mengunci N kursi secara *atomic* via **Redis Lua Scripts** (Zero Race Condition).
+- 💳 **Hybrid Payment:** Mendukung *Split-Pay* (patungan) dan *Bulk Pay* (satu orang bayar semua).
+- 🎟️ **Dynamic QR + PIN:** QR Code berubah tiap 30 detik + *Fallback PIN* untuk *offline mode*.
+- 🔄 **Controlled Resale:** Pasar sekunder dengan batas maksimal +10% dari harga asli.
+- 👨‍💼 **Admin Emergency Tools:** Pembatalan massal (Bulk Cancel) dan *Force Release* dengan 2FA.
 
-E-Tix Flash is my attempt to solve those problems end-to-end: from waiting room and seat locking to split-pay, controlled resale, dynamic QR, fallback PIN, and offline gate synchronization.
+## 🧠 Technical Challenges Solved (Deep Dive)
+Ini adalah masalah *engineering* nyata yang diselesaikan selama pengembangan:
 
-## What Makes This Different
+1. **PostgreSQL FK Deadlock on Payment:**
+   * *Problem:* Terjadi `statement timeout` (13s) saat transaksi pembayaran karena FK `payment_obligations` memblokir row `bookings` yang sedang di-`FOR UPDATE`.
+   * *Solution:* Memisahkan pemanggilan *Payment Gateway* ke luar transaksi dan menggunakan `CreateTx` (menggunakan koneksi transaksi yang sama) untuk menghindari *KEY SHARE lock*.
+2. **Redis Bitmask Locking:**
+   * Menggunakan `SETBIT` dan `GETBIT` via Lua Script untuk mengecek dan mengunci 10.000+ kursi dalam hitungan milidetik tanpa membebani Database.
+3. **Resilience (Circuit Breaker):**
+   * Jika Redis mati, sistem otomatis masuk ke *Degraded Mode* (Queue berbasis Database) dan pull kembali datanya setelah Redis hidup menggunakan `DBQueueSyncWorker`.
+4. **Cloudflare Workers (OpenNext):**
+   * Menghindari *vendor lock-in* Vercel dengan melakukan *build* Next.js App Router ke runtime Edge Cloudflare via adapter `@opennextjs/cloudflare`.
 
-| Capability | Why it matters |
-|---|---|
-| **Anti-bot ingress** | Two-stage sync + async pipeline absorbs traffic spikes without overselling. |
-| **Atomic group locking** | Redis Lua/bitmask locking keeps a group's seats together in one atomic operation. |
-| **Split-Pay** | Each member can pay their own share instead of one person fronting the whole booking. |
-| **Dynamic QR + fallback PIN** | QR entry with a rotating payload, plus a PIN fallback when a scanner cannot read the code. |
-| **Offline gate sync** | Scans are queued and reconciled later, with deterministic conflict resolution. |
-| **Controlled resale** | Price cap and transparent fees reduce scalping in the secondary market. |
-| **Ledger audit + 2FA** | Admin money movement and emergency actions are traceable. |
+## 🚦 Local Setup
 
-## Tech Stack
+### 1. Prasyarat
+- Go 1.26+
+- Node.js 22+
+- Docker (untuk PostgreSQL, Redis, RabbitMQ)
 
-- **Backend:** Go (Gin), PostgreSQL, Redis (bitmask seat locking), RabbitMQ (delayed queue / async work)
-- **Frontend:** Next.js 15 App Router, React 18, TypeScript, Tailwind CSS, Zustand, Axios, PWA
-- **Testing:** Go unit + integration tests, Playwright E2E, k6 load-test plan
-- **Infrastructure:** Docker Compose for local PostgreSQL, Redis, and RabbitMQ
-
-## Live Demo
-
-**Coming soon.** Production deployment is in progress; the repository currently targets local development and staging-style verification. See [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md) for the local runbook.
-
-## Project Structure
-
-```text
-.
-├── backend/            # Go API, auth, booking, payment, gate, admin, resilience
-├── frontend/           # Next.js app (landing, auth, customer, EO, admin, gate)
-│   ├── app/
-│   ├── components/ui/
-│   ├── lib/
-│   └── tests/e2e/      # Playwright specs
-├── docs/               # API contract, schema, roadmap, rules, technical debt
-├── docker/             # Container support files
-└── docker-compose.yml  # Local PostgreSQL + Redis + RabbitMQ
+### 2. Jalankan Infrastruktur (Docker)
+```bash
+docker compose up -d
 ```
 
-## Getting Started
-
-### Prerequisites
-
-- Go 1.26+ (see `backend/go.mod`)
-- Node.js 20+ and npm
-- Docker Compose v2
-
-### Backend
-
+### 3. Jalankan Backend
 ```bash
 cd backend
-./scripts/dev_setup.sh   # starts containers, runs migrations, seeds fixtures
-go run ./cmd/api
+cp .env.example .env.local
+# Sesuaikan environment variable di .env.local
+go run ./cmd/api/main.go
 ```
 
-Health probes:
-
-- Liveness: `GET http://localhost:8080/healthz/liveness`
-- Readiness: `GET http://localhost:8080/healthz/readiness`
-
-### Frontend
-
+### 4. Jalankan Frontend
 ```bash
 cd frontend
-cp .env.local.example .env.local
 npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+## 🧪 Testing
+Backend: 84.23% Coverage (Unit + Integration). Menggunakan testcontainers-go untuk database nyata.
 
-### Tests
+E2E: Playwright (9 Journeys: Auth, Customer, Admin, Gate, Resilience, dll).
 
-```bash
-cd frontend
-npx tsc --noEmit
-npm run lint
-npx playwright test --list
-```
+Load Test: K6 Script tersedia di backend/tests/performance/.
 
-Gate routes:
-
-- `/gate/scanner` — QR scan / PIN fallback entry
-- `/gate/sync` — offline batch synchronization
-
-## What I Learned
-
-- **Idempotency is a product feature.** Retries are inevitable; `X-Idempotency-Key` and stable `scan_id` values make them safe.
-- **Atomicity needs a clear owner.** Redis locking is only trustworthy when the Lua script owns the whole compare-and-set decision.
-- **Offline is a conflict-resolution problem.** A scan that arrives late still needs a deterministic winner: earliest `scanned_at`, then smallest `scan_id`.
-- **UI state must be honest.** Loading, empty, error, and duplicate states are part of the flow, not decoration.
-- **Docs drift fast.** The API contract and the code have to be verified together, especially around field names and enum values.
-
-## Contributing
-
-1. Read [docs/TEAM_CONTRACT.txt](docs/TEAM_CONTRACT.txt) and [docs/API%20CONTRACT.txt](docs/API%20CONTRACT.txt).
-2. Keep changes scoped and verify with raw command output.
-3. Run type-check, lint, and build before opening a pull request.
-4. Never commit secrets or local `.env` files.
-
-## License
-
-No license file has been added yet. Until one is published, treat this repository as **all rights reserved**. Contact the maintainer before reuse or redistribution.
+Dibuat dengan ❤️ dan ☕ oleh M. Arif Aulia.
