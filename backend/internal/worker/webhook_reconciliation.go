@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"strings"
 	"context"
 	"fmt"
 	"time"
@@ -102,6 +103,11 @@ func (w *WebhookReconciliationWorker) RunOnce(ctx context.Context) error {
 			continue
 		}
 		if err := w.reconcileOne(ctx, &o); err != nil {
+			if strings.Contains(err.Error(), "seat_position cannot be NULL") {
+				w.logger.Warn("reconciliation: skipping invalid split obligation",
+					zap.String("obligation_id", o.ID.String()))
+				continue
+			}
 			w.logger.Error("reconciliation: obligation failed",
 				zap.String("obligation_id", o.ID.String()),
 				zap.Error(err))
