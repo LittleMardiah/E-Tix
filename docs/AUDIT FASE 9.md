@@ -1,8 +1,9 @@
 # AUDIT FASE 9 — Testing, Portfolio Polish & Pre-Deploy
 
 **Audit date:** 2026-10-23
-**Repository HEAD at audit start:** `01b5162` (P9a-16)
-**Scope:** FASE 9 P9a-17 — PWA polish, TODO/FIXME cleanup, demo script, final audit, local gates.
+**Repository HEAD before P9a-19:** `b25f8d0` (P9a-18)
+**Scope:** FASE 9 P9a-17 → P9a-19 — pre-deploy polish, resale flow, attendance
+report, ticket detail, bulk assignment, final frontend screen audit, local gates.
 **User decision:** Cloud deploy (Epic E) is intentionally skipped. This is a
 pre-deploy audit, not a production go-live sign-off.
 
@@ -13,6 +14,7 @@ pre-deploy audit, not a production go-live sign-off.
 | Question | Answer |
 |---|---|
 | Is P9a-17 (pre-deploy polish) complete? | **YES** for the requested scope. |
+| Are all HALAMAN screens implemented? | **YES** — 24/24 screens implemented (23 Full, 1 Partial: 11.3 offline queue). |
 | Is FASE 9 complete as written in the roadmap? | **NO.** Epic A residual work, Epic B cloud drills, and Epic E deploy remain open. |
 | Is the repository ready for a local demo? | **YES**, with the limitations listed in §6. |
 | Is the repository ready for production launch? | **NO.** See §7. |
@@ -30,10 +32,10 @@ session, except where explicitly labelled "per roadmap" or "not re-run".
 | Tracked files | 356 | `git ls-files \| wc -l` |
 | Backend Go test files | 93 | `find backend -name '*_test.go' \| wc -l` |
 | Backend unit coverage | **83.40%** (3603/4320 statements) | `go test ./internal/... -coverprofile` run 2026-10-23 |
-| Frontend pages | **20 product pages + 1 offline fallback** (`page.tsx`) | `find frontend/app -name page.tsx` after S1 |
+| Frontend pages | **26 product pages + 1 offline fallback** (`page.tsx`) | `find frontend/app -name page.tsx` after P9a-19 |
 | HALAMAN target screens | 24 (25 headings including the CAPTCHA modal) | `docs/HALAMAN.txt` |
 | API collection items | 44 (20 GET, 19 POST, 3 PATCH, 2 DELETE) | parsed `backend/postman_collection.json` |
-| Playwright specs | 5 files | `frontend/tests/e2e/*.spec.ts` |
+| Playwright specs | **9 files** (2 added in P9a-19) | `frontend/tests/e2e/*.spec.ts` |
 | TODO/FIXME in Go/TS | **0** | `grep -rn "TODO\|FIXME" backend frontend --include=...` |
 | TypeScript | PASS | `npx tsc --noEmit` → RC 0 |
 | ESLint | PASS | `npm run lint` → RC 0 |
@@ -123,6 +125,27 @@ This file.
 
 Raw gate output is in §8.
 
+### S6 — P9a-18 / P9a-19 Completion (2026-10-23)
+
+| Stage | Delivered | Verification |
+|---|---|---|
+| P9a-18 | Resale list (7.1), resale market (7.2), cancel resale (7.3), attendance report (9.1) | Commit `b25f8d0`; 2 Playwright specs added |
+| P9a-19 S1 | Ticket Detail (6.2) at `/customer/tickets/[ticketId]` with dynamic QR token and fallback PIN | `npx tsc --noEmit` RC 0 |
+| P9a-19 S2 | Bulk Ticket Assignment (5.3) at `/customer/bulk-assign/[bookingId]` | Uses API CONTRACT §9.4 `POST /payments/bulk/assign` + `X-Idempotency-Key` |
+| P9a-19 S3 | My Tickets cards link to Ticket Detail (6.2) | `Lihat Tiket` link per card |
+| P9a-19 S4 | E2E specs `ticket-detail.spec.ts` and `bulk-assign.spec.ts` | `npx playwright test --list` lists both |
+| P9a-19 S5 | This audit updated to 24/24 implemented screens | Screen table §4 |
+
+API-contract deviations from the draft snippet (draft lost priority per task note):
+
+- Bulk assignment uses `POST /payments/bulk/assign` with
+  `{ booking_id, assignments[] }` (API CONTRACT §9.4), not the draft's single
+  `PATCH /tickets/{id}/assign` loop.
+- Ticket detail reads `GET /tickets/{ticket_id}` and
+  `GET /tickets/{ticket_id}/qr`; `qr_data` is a signed token string, so the UI
+  renders that token and only renders an `<img>` when the API returns a
+  `data:image/*` value.
+
 ---
 
 ## 4. Screen Audit (HALAMAN v1.1)
@@ -143,12 +166,12 @@ the waiting-room screen gives 24 screens.
 | 4.2 | Collision alert | inline 409 handling in seat map | Present (inline, not a separate screen) |
 | 5.1 | Payment mode selection | `/customer/payment/[bookingId]` | Full |
 | 5.2 | Split-pay links | same page, result state | Full |
-| 5.3 | Bulk ticket assignment | — | **Missing** |
+| 5.3 | Bulk ticket assignment | `/customer/bulk-assign/[bookingId]` | Full |
 | 6.1 | Ticket list | `/customer/my-tickets` | Full |
-| 6.2 | Ticket detail: dynamic QR + PIN | inline on My Tickets | **Partial**: fallback PIN shown; dynamic QR image/token is not displayed |
-| 7.1 | List ticket for resale | — | **Missing** |
-| 7.2 | Browse resale tickets | — | **Missing** |
-| 7.3 | Cancel resale listing | — | **Missing** |
+| 6.2 | Ticket detail: dynamic QR + PIN | `/customer/tickets/[ticketId]` | Full (dynamic QR token refreshes; fallback PIN; token rendered instead of an image because the API returns a signed token string) |
+| 7.1 | List ticket for resale | `/customer/resale/list/[ticketId]` | Full |
+| 7.2 | Browse resale tickets | `/customer/resale/market/[eventId]` | Full |
+| 7.3 | Cancel resale listing | `/customer/resale/cancel/[resaleId]` | Full |
 | 8.1 | EO dashboard | `/eo/dashboard/[eventId]` | Full |
 | 9.1 | Post-event report | `/eo/post-event/[eventId]` | Full |
 | 10.1 | Emergency bulk cancel | `/admin/emergency/[eventId]` | Full |
@@ -159,12 +182,13 @@ the waiting-room screen gives 24 screens.
 | 12.2 | User + blacklist management | `/admin/users`, `/admin/blacklist` | Full |
 | 12.3 | Force seat release | `/admin/force-release` | Full |
 
-**Score: 18 full, 2 partial, 4 missing (of 24).**
+**Score: 24/24 screens implemented — 23 full, 1 partial (11.3 offline queue).**
 
-Additional implemented page not in the HALAMAN list: `/eo/analytics/[eventId]`.
+Additional implemented pages not in the HALAMAN screen list: landing page `/`,
+`/customer/events/[id]`, and `/eo/analytics/[eventId]`.
 
-The task prompt's template claiming "24/24 screens" is **false** and was not
-copied into this audit.
+The 24/24 number means every HALAMAN screen now has a route. It does **not**
+mean the offline gate queue is production-complete; 11.3 remains partial.
 
 ---
 
@@ -172,9 +196,9 @@ copied into this audit.
 
 | Epic | Status | Evidence / gap |
 |---|---|---|
-| A — STP execution | **PARTIAL** | Backend unit suite passes at 83.40%; integration was reported passing on 2026-10-22. 5 Playwright specs exist but were not executed in this session. k6, OWASP ZAP, chaos, and axe-core are not executed. TD-F9-14 remains deferred. |
+| A — STP execution | **PARTIAL** | Backend unit suite passes at 83.40%; integration was reported passing on 2026-10-22. 9 Playwright specs exist; the 2 new P9a-19 specs passed against a production build, while the other 7 were not executed in this session. k6, OWASP ZAP, chaos, and axe-core are not executed. TD-F9-14 remains deferred. |
 | B — DR drills | **PARTIAL** | `docs/DR DRILL REPORT FASE 9.md` records playbooks #1–#3. Cloud failover and SaaS drills (#4–#9) remain TD-F9-17. |
-| C — Frontend full | **PARTIAL** | 20 product `page.tsx` files plus the offline fallback; 18/24 screens full, 2 partial, 4 missing (§4). |
+| C — Frontend full | **DONE** | 26 product `page.tsx` files plus the offline fallback; 24/24 screens implemented, 23 full and 1 partial (11.3 offline queue) (§4). |
 | D — Portfolio polish | **DONE for docs** | README, business model, competitive analysis, and demo script exist. A published video is still outstanding. |
 | E — Demo + deploy | **DEFERRED** | Explicit user instruction to skip cloud deploy. No live URL, SSL, monitoring, or production backup verification. |
 
@@ -182,30 +206,30 @@ copied into this audit.
 
 ## 6. Honest Gaps and Drift
 
-1. **Resale UI is missing.** Backend resale endpoints exist, and post-event
-   analytics reports resale counts, but there is no customer resale page.
-2. **Bulk ticket assignment is missing.** Bulk pay works; per-seat member
-   assignment before payment is not implemented.
-3. **Dynamic QR display is missing in the customer UI.** The backend exposes a
-   dynamic QR endpoint; My Tickets currently shows the fallback PIN only.
-4. **Gate offline queue is demo-only.** `/gate/sync` sends one sample scan.
+1. **Gate offline queue is demo-only.** `/gate/sync` sends one sample scan.
    README language about queued offline scans describes the intended product,
    not the current client. PWA page caching and an offline fallback do work.
-5. **TD-F9-14 is stale in one detail.** It says Playwright has 0 spec files;
-   5 specs now exist (P9a-16). It is still correct that the residual lanes have
-   not been fully executed, and unit coverage is below 85%.
-6. **Roadmap coverage number drifted.** 84.23% (2026-10-22) vs 83.40%
+2. **Ticket QR is rendered as a signed token, not a QR image.** The backend
+   `qr_data` is a base64 signed token string (see
+   `backend/internal/ticket/qr_generator.go`), and the customer screen displays
+   it directly. A QR-image renderer would require a new client dependency.
+3. **TD-F9-14 is stale in one detail.** It says Playwright has 0 spec files;
+   9 specs now exist (P9a-16 → P9a-19). It is still correct that the residual
+   lanes have not been fully executed, and unit coverage is below 85%.
+4. **Roadmap coverage number drifted.** 84.23% (2026-10-22) vs 83.40%
    (2026-10-23 re-run). Use the current number.
-7. **CI was not executed locally.** The workflow exists (`.github/workflows/test.yml`),
-   but no CI run is claimed in this audit. `actions/setup-go@v5` remains TD-F9-13.
-8. **TD-F2-01 remains deferred.** Dynamic FanScore behavioral signals are not
+5. **CI was not executed locally.** The workflow exists
+   (`.github/workflows/test.yml`), but no CI run is claimed in this audit.
+   `actions/setup-go@v5` remains TD-F9-13.
+6. **TD-F2-01 remains deferred.** Dynamic FanScore behavioral signals are not
    implemented; the worker comment now points to the TD instead of a TODO.
-9. **`next lint` is deprecated** in Next.js 15.5 and prints a migration warning.
+7. **`next lint` is deprecated** in Next.js 15.5 and prints a migration warning.
    It still exits 0.
-10. **No commit was created for P9a-17.** Changes are in the working tree unless
-    the user asks for a commit.
-
----
+8. **No commit was created for P9a-19.** Changes are in the working tree unless
+   the user asks for a commit.
+9. **Bulk assignment still requires manual Ticket IDs.** The backend list
+   endpoint (`GET /tickets`) does not support `booking_id`/`is_assigned`
+   filters, so the screen cannot preload unassigned tickets for a booking.
 
 ## 7. GO / NO-GO
 
@@ -219,11 +243,11 @@ Production blockers:
 - Epic E deploy, SSL, monitoring, and backup verification are not done.
 - TD-F9-14 residual lanes (E2E execution, k6, ZAP, chaos, axe-core, 85% unit
   coverage) are open.
-- Four HALAMAN screens are missing and two are partial.
-- Offline gate queue is not implemented in the client.
+- HALAMAN 11.3 (offline gate queue) is still partial in the client.
+- Ticket QR is a signed token, not a rendered QR image.
 
-These are documented, not hidden. The pre-deploy polish requested in P9a-17 is
-complete.
+These are documented, not hidden. The pre-deploy polish requested in P9a-17 and
+the final-screen work requested in P9a-18/P9a-19 are complete.
 
 ---
 
@@ -241,6 +265,9 @@ $ npm run lint
 LINT_RC=0
 
 $ npm run build
+ ✓ Compiled successfully in 28.5s
+   Linting and checking validity of types ...
+   Generating static pages (17/17)
  ✓ Generating static pages (17/17)
    Finalizing page optimization ...
    Collecting build traces ...
@@ -257,13 +284,19 @@ Route (app)                                 Size  First Load JS
 ├ ○ /auth/login                          3.19 kB         166 kB
 ├ ○ /auth/register                       3.42 kB         167 kB
 ├ ○ /auth/verify-otp                     3.34 kB         167 kB
+├ ƒ /customer/bulk-assign/[bookingId]    3.31 kB         130 kB
 ├ ○ /customer/dashboard                  4.31 kB         131 kB
 ├ ƒ /customer/events/[id]                3.09 kB         130 kB
-├ ○ /customer/my-tickets                  2.7 kB         130 kB
+├ ○ /customer/my-tickets                 2.73 kB         130 kB
 ├ ƒ /customer/payment/[bookingId]        5.21 kB         132 kB
+├ ƒ /customer/resale/cancel/[resaleId]   2.53 kB         129 kB
+├ ƒ /customer/resale/list/[ticketId]     3.04 kB         130 kB
+├ ƒ /customer/resale/market/[eventId]    3.32 kB         130 kB
 ├ ƒ /customer/seat-map/[sectionId]       4.25 kB         131 kB
+├ ƒ /customer/tickets/[ticketId]         8.64 kB         136 kB
 ├ ƒ /customer/waiting-room/[eventId]      3.6 kB         130 kB
 ├ ƒ /eo/analytics/[eventId]              3.15 kB         130 kB
+├ ƒ /eo/attendance/[eventId]             3.15 kB         130 kB
 ├ ƒ /eo/dashboard/[eventId]              3.56 kB         130 kB
 ├ ƒ /eo/post-event/[eventId]             3.77 kB         131 kB
 ├ ○ /gate/scanner                        3.05 kB         130 kB
@@ -272,7 +305,32 @@ Route (app)                                 Size  First Load JS
 BUILD_RC=0
 ```
 
-### Backend
+### Playwright
+
+```text
+$ npx playwright test --list
+Listing tests:
+  [chromium] › admin.spec.ts:3:5 › Admin can access ledger with 2FA
+  [chromium] › attendance.spec.ts:3:5 › EO can view attendance report
+  [chromium] › auth.spec.ts:3:5 › User can register and verify OTP
+  [chromium] › bulk-assign.spec.ts:3:5 › Customer can view bulk assign form
+  [chromium] › customer.spec.ts:3:5 › Customer can view events and seats
+  [chromium] › gate.spec.ts:3:5 › Gate staff can switch scan modes and open offline sync
+  [chromium] › resale.spec.ts:3:5 › Customer can browse resale market
+  [chromium] › resilience.spec.ts:3:5 › Health check endpoint is alive
+  [chromium] › ticket-detail.spec.ts:3:5 › Customer can open ticket detail page
+Total: 9 tests in 9 files
+PLAYWRIGHT_LIST_RC=0
+
+$ npx playwright test tests/e2e/ticket-detail.spec.ts tests/e2e/bulk-assign.spec.ts --reporter=line
+Running 2 tests using 2 workers
+[1/2] [chromium] › tests/e2e/bulk-assign.spec.ts:3:5 › Customer can view bulk assign form
+[2/2] [chromium] › tests/e2e/ticket-detail.spec.ts:3:5 › Customer can open ticket detail page
+  2 passed (3.7s)
+PLAYWRIGHT_RC=0
+```
+
+### Backend (from the P9a-17 audit; not re-run in P9a-19)
 
 ```text
 $ go build ./...
@@ -311,8 +369,7 @@ $ grep -rn "TODO\|FIXME" frontend --include=*.ts --include=*.tsx --exclude-dir=n
 
 ### Not run in this session
 
-- `npx playwright test` (5 specs exist; backend/frontend services would be
-  required).
+- The other 7 Playwright specs (only the 2 new P9a-19 specs were executed).
 - Newman/Postman 44-item collection.
 - k6 load tests, OWASP ZAP, chaos drills, axe-core.
 - GitHub Actions CI.
@@ -324,8 +381,8 @@ $ grep -rn "TODO\|FIXME" frontend --include=*.ts --include=*.tsx --exclude-dir=n
 
 | Role | Name | Date | Status |
 |---|---|---|---|
-| Executor | OpenCode (P9a-17) | 2026-10-23 | Pre-deploy scope completed |
+| Executor | OpenCode (P9a-17 → P9a-19) | 2026-10-23 | Pre-deploy scope, resale, attendance, ticket detail, and bulk assignment completed |
 | Reviewer | — | — | Pending independent review |
 | Product owner | User | 2026-10-23 | Epic E intentionally deferred |
 
-**Status: P9a-17 COMPLETE. FASE 9 REMAINS PARTIAL. PRODUCTION GO-LIVE: NO-GO.**
+**Status: P9a-19 COMPLETE. 24/24 HALAMAN screens implemented. FASE 9 REMAINS PARTIAL (Epic A/B/E). PRODUCTION GO-LIVE: NO-GO.**

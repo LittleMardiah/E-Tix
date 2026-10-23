@@ -131,6 +131,14 @@ export default function MyTicketsPage() {
                     </dd>
                   </div>
                 </dl>
+                <div className="mt-4">
+                  <Button
+                    href={`/customer/tickets/${ticket.id}`}
+                    className="w-full"
+                  >
+                    Lihat Tiket
+                  </Button>
+                </div>
               </Card>
             ))}
           </div>
