@@ -41,7 +41,10 @@ const NO_REFRESH_ENDPOINTS = [
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 
+    'Content-Type': 'application/json',
+    'ngrok-skip-browser-warning': 'true'
+  },
   timeout: 15000,
 });
 
@@ -114,7 +117,8 @@ function requestNewAccessToken(): Promise<string> {
       .post<{ data: { access_token: string; refresh_token: string } }>(
         `${API_BASE_URL}/auth/refresh-token`,
         { refresh_token: getRefreshToken() },
-        { headers: { 'Content-Type': 'application/json' }, timeout: 15000 }
+        { headers: { 'Content-Type': 'application/json',
+    'ngrok-skip-browser-warning': 'true' }, timeout: 15000 }
       )
       .then((response) => {
         const { access_token, refresh_token } = response.data.data;
