@@ -1,7 +1,5 @@
 # E-Tix Flash: Smart, Fair & Scalp-Proof Ticketing Platform
 
-> **"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal di Situasi yang sedang 'Tidak Normal'."** — *Vibe Coder Principle*
-
 E-Tix Flash adalah platform ticketing *high-concurrency* yang dibangun untuk menyelesaikan 3 masalah utama di industri tiket:
 1. **Server Crash** saat *flash sale* (dirancang untuk menahan 20,000 RPS).
 2. **Calo/Bot** yang memborong tiket dalam hitungan detik.
