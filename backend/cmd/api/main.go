@@ -174,6 +174,14 @@ func main() {
 	bookingSvc := booking.NewBookingServiceWithCircuitBreaker(bookingRepo, rdb, luaScripts, queueTokenSvc, mq, redisCB, seatLockQueue)
 	bookingHandler := booking.NewBookingHandler(bookingSvc, rdb, logger)
 
+	// FASE 10 Epic 2: Zoned mode checkout (Redis DECR + RabbitMQ).
+	zonedCh, err := mq.Channel()
+	if err != nil {
+		logger.Fatal("failed to open rabbitmq channel for zoned booking", zap.Error(err))
+	}
+	zonedSvc := booking.NewZonedService(rdb, zonedCh)
+	zonedHandler := booking.NewZonedHandler(zonedSvc, logger)
+
 	paymentRepo := payment.NewPostgresPaymentObligationRepository(pgPool)
 	paymentIdem := payment.NewIdempotencyService(rdb, paymentRepo)
 	paymentBookingReader := payment.NewBookingReaderFromRepo(bookingRepo)
@@ -301,6 +309,12 @@ func main() {
 		auth.AuthMiddleware(jwtSvc, blacklistSvc),
 		auth.RateLimitMiddlewareScoped(rdb, 10, time.Minute, auth.RateLimitScopeUser),
 		bookingHandler.LockSeats)
+
+	// FASE 10 Epic 2: Zoned mode checkout.
+	router.POST("/bookings/zoned",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RateLimitMiddlewareScoped(rdb, 10, time.Minute, auth.RateLimitScopeUser),
+		zonedHandler.CheckoutZoned)
 
 	router.POST("/bookings/:booking_id/payments",
 		auth.AuthMiddleware(jwtSvc, blacklistSvc),
