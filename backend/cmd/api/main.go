@@ -182,6 +182,8 @@ func main() {
 	zonedSvc := booking.NewZonedService(rdb, zonedCh)
 	zonedHandler := booking.NewZonedHandler(zonedSvc, logger)
 
+	zonedBatchWorker := worker.NewZonedBatchWorker(pgPool, mq.Connection, logger)
+
 	paymentRepo := payment.NewPostgresPaymentObligationRepository(pgPool)
 	paymentIdem := payment.NewIdempotencyService(rdb, paymentRepo)
 	paymentBookingReader := payment.NewBookingReaderFromRepo(bookingRepo)
@@ -504,6 +506,12 @@ func main() {
 	go func() {
 		if err := bulkCancelWorker.Run(ctx); err != nil {
 			logger.Error("bulk cancel worker stopped", zap.Error(err))
+		}
+	}()
+	// FASE 10 Epic 3: Zoned batch worker (pgx.CopyFrom).
+	go func() {
+		if err := zonedBatchWorker.Run(ctx); err != nil {
+			logger.Error("zoned batch worker stopped", zap.Error(err))
 		}
 	}()
 	// P9a-12 TD-F9-17: DB queue sync worker (drains the parked seat locks).
