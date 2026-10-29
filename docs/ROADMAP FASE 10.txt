@@ -1,0 +1,151 @@
+================================================================================
+ROADMAP FASE (10): CUSTOM MAP & DUAL-MODE TICKETING (F007) — E-Tix Flash
+================================================================================
+
+Version:         1.0-FINAL
+Last Updated:    2026-10-24
+Author:          M. Arif Aulia
+Status:          🚀 IN PROGRESS (Epic 1: Database Migration)
+Blueprint Ref:   Hasil Diskusi Developer + DeepSeek + Gemini AI
+Dependencies:    FASE 0 s/d FASE 9 (ALL LOCKED)
+
+================================================================================
+📌 BISMILLAH — FASE 10 (THE CASH COW FEATURE)
+================================================================================
+
+Latar Belakang:
+  Fitur ini lahir dari inspirasi website konser Blackpink. Tujuannya adalah
+  mentransformasi E-Tix Flash dari sekadar sistem CRUD tiket, menjadi SaaS
+  Ticketing kelas Enterprise yang bisa menangani:
+  1. Assigned Seating (Pilih kursi spesifik) - Cocok untuk Teater/Bioskop.
+  2. Zoned/General Admission (Pilih area/zona) - Cocok untuk Konser/Festival.
+  
+  Keunikan: EO (Event Organizer) bisa meng-upload desain denah custom mereka
+  sendiri (atau kita percantik via AI) dan menempelkannya di web. User bisa 
+  mengklik area di gambar untuk melihat POV, Jarak, dan memilih tiket.
+
+================================================================================
+SECTION 1 — SCOPE & OBJECTIVES
+================================================================================
+
+1.1 SCOPE — IN
+────────────────────────────────────────────────────────────────────────────────
+✅ Database & Model:
+   - Kolom `seating_mode` (ZONED | ASSIGNED) di tabel events.
+   - Kolom `layout_image_url` (URL gambar denah) di tabel events.
+   - Kolom `layout_zones` (JSONB) untuk menyimpan koordinat poligon SVG.
+
+✅ Backend Logic (Dual-Mode):
+   - Mode ZONED: Menggunakan **Redis DECR** (Atomic Counter) untuk memotong 
+     kuota zona. BUKAN Bitmask.
+   - Mode ASSIGNED: Tetap menggunakan **Redis Bitmask + Lua Script** (FASE 3).
+   - Worker Batch Insertion: Menggunakan `pgx.CopyFrom` untuk insert massal 
+     data tiket (menghindari bottleneck saat 20.000 RPS).
+   - Random Seat Assignment: Generate `seat_position` (NULL di awal) secara 
+     acak saat tiket dicetak/di-scan.
+
+✅ Frontend (Next.js 15):
+   - Menggunakan SVG Overlay + Image 2D. 
+   - Responsive: `hidden md:block` (Map di Desktop) & `block md:hidden` (List di Mobile).
+   - UI Beradaptasi: 
+     * ZONED -> Tampilkan Progress Bar (Sisa Kuota).
+     * ASSIGNED -> Tampilkan Grid Kursi.
+   - Efek Visual: Dark mode, Glassmorphism (backdrop-blur), transisi mulus.
+
+✅ Tooling (Zero Budget):
+   - Menggunakan **Figma** untuk menggambar koordinat poligon (export ke SVG/JSON).
+   - Tidak membuat In-App Editor (terlalu kompleks).
+
+1.2 SCOPE — OUT
+────────────────────────────────────────────────────────────────────────────────
+❌ In-App Zone Editor (Drag-and-drop poligon di dashboard EO).
+❌ WebGL / Three.js (3D Rendering).
+❌ Integrasi AI (Stitch) secara live di dalam aplikasi.
+❌ WebSocket (Cukup pakai polling di frontend).
+
+================================================================================
+SECTION 2 — TASK BREAKDOWN
+================================================================================
+
+9 EPICS, ~24 TASKS. Estimasi total ~35-40 jam.
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E1: DATABASE & MIGRATION
+────────────────────────────────────────────────────────────────────────────────
+- T1: Buat migration 006_dual_mode_ticketing.up.sql (seating_mode, layout_image_url, layout_zones).
+- T2: Update Model Event (tambahkan field layout_image_url, layout_zones, seating_mode).
+- T3: Update Repository Event (query SELECT & INSERT/UPDATE agar membaca/menyimpan layout).
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E2: ZONED MODE BACKEND (REDIS DECR)
+────────────────────────────────────────────────────────────────────────────────
+- T4: Buat Redis Key baru untuk kuota zona (contoh: `quota:{event_id}:{zone_name}`).
+- T5: Buat Lua Script / Command `DECR` untuk memotong kuota secara atomic.
+- T6: Handler POST /bookings/zoned (terima request beli tiket ZONED).
+- T7: Service ZonedCheckout (validasi kuota via Redis -> DECR -> kirim ke RabbitMQ).
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E3: BATCH WORKER (PGX.COPYFROM)
+────────────────────────────────────────────────────────────────────────────────
+- T8: Modifikasi TicketGenerationWorker agar bisa menampung pesan RabbitMQ (Memory Batching 100 data / 1 detik).
+- T9: Implementasi `pgx.CopyFrom` untuk Bulk Insert ke tabel `tickets`.
+- T10: Logic Random Seat Assignment: `seat_position` dibiarkan NULL di DB. Gate Scanner akan menampilkan 'Free Seating' atau generate nomor acak on-the-fly saat QR di-scan.
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E4: FRONTEND (INTERACTIVE MAP)
+────────────────────────────────────────────────────────────────────────────────
+- T11: Setup Halaman Seat Map dengan Image Overlay (SVG native). Wajib menggunakan atribut `viewBox` sesuai resolusi Figma agar tidak meleset saat responsive.
+- T12: Implementasi CSS Tailwind untuk Responsive (Desktop Map vs Mobile List).
+- T13: Buat komponen Panel Samping (Glassmorphism) untuk nampilin POV, Jarak, dan Info.
+- T14: Logic UI: Jika ZONED -> Progress Bar Kuota (dengan polling real-time tiap 3-5 detik), Jika ASSIGNED -> Grid Kursi.
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E5: EVENT ORGANIZER (EO) DASHBOARD
+────────────────────────────────────────────────────────────────────────────────
+- T15: Buat form di dashboard EO untuk ngisi `layout_image_url` dan `layout_zones` (dari Figma JSON).
+- T16: Dropdown/Radio untuk milih `seating_mode` (ZONED / ASSIGNED).
+
+────────────────────────────────────────────────────────────────────────────────
+EPIC E6: TESTING & QA
+────────────────────────────────────────────────────────────────────────────────
+- T17: Unit Test: Zoned Lua Script (DECR) - pastikan tidak overselling.
+- T18: Integration Test: Bulk Insert (pgx.CopyFrom) 1000 tiket serentak.
+- T19: E2E Playwright: Flow user klik zona -> bayar -> dapet tiket (ZONED).
+- T20: E2E Playwright: Flow user klik area -> pilih kursi A1 -> bayar (ASSIGNED).
+
+================================================================================
+SECTION 3 — ACCEPTANCE CRITERIA
+================================================================================
+
+✅ Migrasi database sukses dan sesuai dengan skema.
+✅ Mode ZONED: Bisa memotong kuota tanpa race condition (Redis DECR).
+✅ Mode ASSIGNED: Tetap pakai Bitmask (zero regression).
+✅ Worker Batch: Bisa insert 1000 tiket < 1 detik menggunakan pgx.CopyFrom.
+✅ Frontend: Map interaktif jalan di Desktop, List rapi di Mobile.
+✅ UI "Mahal": Dark mode, glassmorphism, transisi halus.
+✅ CI Hijau: Lint, Unit, Security, Integration, Frontend Build semuanya PASS.
+
+================================================================================
+SECTION 4 — RISKS & MITIGATIONS
+================================================================================
+
+| Risk | Mitigation |
+|---|---|
+| Editor Map Terlalu Rumit | Gunakan Figma. Backend cuma terima JSON string. |
+| Mobile UI Berantakan | Pakai Tailwind `hidden md:block`. List fallback di mobile. |
+| DB Bottleneck saat Insert | Wajib pakai `pgx.CopyFrom` dan Batching (Jangan looping insert). |
+| Responsive SVG Meleset | Gunakan `viewBox` pada SVG, jangan koordinat pixel hardcoded. |
+
+================================================================================
+SECTION 5 — NOTED PRINCIPLES (From Gemini & DeepSeek)
+================================================================================
+
+1. "Keep It Simple, Stupid (KISS)": Jangan bikin Strategy Pattern yang kompleks. 
+   Cukup satu tabel `bookings`, kasih flag `seating_mode`. Pakai if-else biasa.
+2. "Lazy Generation": Untuk ZONED, jangan generate nomor kursi saat checkout.
+   Generate saat tiket di-print/di-scan untuk mengurangi beban DB saat war tiket.
+3. "No WebGL": SVG + Tailwind udah cukup bikin UI terlihat seperti Blackpink.
+
+================================================================================
+END OF ROADMAP FASE (10)
+================================================================================

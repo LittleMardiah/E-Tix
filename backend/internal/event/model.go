@@ -8,22 +8,25 @@ import (
 
 // Event represents a row from the events table.
 type Event struct {
-	ID                uuid.UUID
-	OrganizerID       uuid.UUID
-	OrganizerName     string
-	Name              string
-	Description       string
-	VenueName         string
-	VenueAddress      string
-	EventDate         string // YYYY-MM-DD (DATE as text)
-	EventStartTime    string // HH:MM:SS (TIME as text)
-	EventEndTime      string // HH:MM:SS (TIME as text), empty when NULL
-	Status            string
-	BannerURL         string
-	SeatLayoutVersion int
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	PublishedAt       *time.Time
+	ID             uuid.UUID
+	OrganizerID    uuid.UUID
+	OrganizerName  string
+	Name           string
+	Description    string
+	VenueName      string
+	VenueAddress   string
+	EventDate      string // YYYY-MM-DD (DATE as text)
+	EventStartTime string // HH:MM:SS (TIME as text)
+	EventEndTime   string // HH:MM:SS (TIME as text), empty when NULL
+	Status         string
+	BannerURL      string
+	LayoutImageURL *string `json:"layout_image_url,omitempty" db:"layout_image_url"`
+	LayoutZones    []byte  `json:"layout_zones,omitempty" db:"layout_zones"`
+	SeatingMode    string  `json:"seating_mode" db:"seating_mode"`
+	UpdatedAt      time.Time
+	PublishedAt    *time.Time
+	SeatLayoutVersion int       `json:"seat_layout_version"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 // Section represents a row from the sections table.
