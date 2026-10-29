@@ -392,6 +392,13 @@ func main() {
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
 		catalogHandler.GetByID)
 
+	// FASE 10 Epic 5: EO custom map layout.
+	router.PUT("/eo/events/:event_id/layout",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RBACMiddleware("event_organizer", "admin"),
+		auth.RateLimitMiddlewareScoped(rdb, 30, time.Minute, auth.RateLimitScopeUser),
+		catalogHandler.UpdateLayout)
+
 	// FIX P9a-8 TD-F0-01: Prometheus scrape endpoint. Registered before the
 	// catch-all groups so it is never rate-limited or role-gated.
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))

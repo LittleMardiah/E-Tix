@@ -105,6 +105,21 @@ func (s *EventService) GetByID(ctx context.Context, id uuid.UUID) (*EventDetailR
 	return resp, nil
 }
 
+type UpdateLayoutRequest struct {
+	LayoutImageURL    string `json:"layout_image_url"`
+	LayoutImageWidth  int    `json:"layout_image_width"`
+	LayoutImageHeight int    `json:"layout_image_height"`
+	SeatingMode       string `json:"seating_mode"`
+	LayoutZones       string `json:"layout_zones"`
+}
+
+func (s *EventService) UpdateLayout(ctx context.Context, id uuid.UUID, req UpdateLayoutRequest) error {
+	zones := []byte(req.LayoutZones)
+	if req.LayoutZones == "" {
+		zones = nil
+	}
+	return s.repo.UpdateEventLayout(ctx, id, req.LayoutImageURL, req.LayoutImageWidth, req.LayoutImageHeight, req.SeatingMode, zones)
+}
 func buildEventSummary(ev Event, sections []Section) EventSummary {
 	briefs := make([]SectionBrief, 0, len(sections))
 	totalTickets := 0

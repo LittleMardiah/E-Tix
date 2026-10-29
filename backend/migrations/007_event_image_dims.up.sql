@@ -1,0 +1,2 @@
+ALTER TABLE events ADD COLUMN IF NOT EXISTS layout_image_width INTEGER;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS layout_image_height INTEGER;

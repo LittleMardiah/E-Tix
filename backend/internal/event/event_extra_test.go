@@ -34,6 +34,7 @@ type fakeEventRepo struct {
 	sectErr  error
 	byIDs    map[uuid.UUID][]Section
 	byIDsErr error
+	updateErr error
 }
 
 func (f *fakeEventRepo) ListEvents(_ context.Context, _ ListFilter) ([]Event, int, error) {
@@ -595,4 +596,8 @@ func TestHandlerGetByID_InternalErrorReturns500(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Contains(t, w.Body.String(), `"code":"INTERNAL_ERROR"`)
+}
+
+func (f *fakeEventRepo) UpdateEventLayout(_ context.Context, _ uuid.UUID, _ string, _ int, _ int, _ string, _ []byte) error {
+	return f.updateErr
 }

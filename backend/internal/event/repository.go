@@ -20,6 +20,7 @@ type EventRepository interface {
 	// GetSectionsByEventIDs batches the per-event section lookup into a single
 	// query. Used by EventService.List to avoid N+1 on catalog pages.
 	GetSectionsByEventIDs(ctx context.Context, eventIDs []uuid.UUID) (map[uuid.UUID][]Section, error)
+	UpdateEventLayout(ctx context.Context, id uuid.UUID, layoutImageURL string, width, height int, seatingMode string, layoutZones []byte) error
 }
 
 // ListFilter carries validated catalog list filters.
@@ -286,4 +287,18 @@ func (r *PostgresEventRepository) GetSectionsByEventIDs(ctx context.Context, eve
 		return nil, fmt.Errorf("iterate sections: %w", err)
 	}
 	return out, nil
+}
+
+func (r *PostgresEventRepository) UpdateEventLayout(ctx context.Context, id uuid.UUID, layoutImageURL string, width, height int, seatingMode string, layoutZones []byte) error {
+    _, err := r.db.Exec(ctx, `
+        UPDATE events
+        SET layout_image_url = $2,
+            layout_image_width = $3,
+            layout_image_height = $4,
+            seating_mode = $5,
+            layout_zones = $6,
+            updated_at = NOW()
+        WHERE id = $1`,
+        id, layoutImageURL, width, height, seatingMode, layoutZones)
+    return err
 }

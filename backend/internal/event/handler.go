@@ -87,6 +87,28 @@ func (h *EventHandler) List(c *gin.Context) {
 	})
 }
 
+func (h *EventHandler) UpdateLayout(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("event_id"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid event id")
+		return
+	}
+	var req UpdateLayoutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+	if err := h.svc.UpdateLayout(c.Request.Context(), id, req); err != nil {
+		writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    nil,
+		"error":   nil,
+	})
+}
+
 func (h *EventHandler) GetByID(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("event_id"))
 	if err != nil {
