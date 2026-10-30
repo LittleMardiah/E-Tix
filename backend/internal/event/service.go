@@ -2,6 +2,7 @@ package event
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -85,6 +86,15 @@ func (s *EventService) GetByID(ctx context.Context, id uuid.UUID) (*EventDetailR
 		})
 	}
 
+	var layoutImageURL string
+	if ev.LayoutImageURL != nil {
+		layoutImageURL = *ev.LayoutImageURL
+	}
+	var layoutZones json.RawMessage
+	if len(ev.LayoutZones) > 0 {
+		layoutZones = json.RawMessage(ev.LayoutZones)
+	}
+
 	resp := &EventDetailResponse{
 		EventID:           ev.ID.String(),
 		Name:              ev.Name,
@@ -96,6 +106,11 @@ func (s *EventService) GetByID(ctx context.Context, id uuid.UUID) (*EventDetailR
 		EventEndTime:      formatHHMM(ev.EventEndTime),
 		Status:            ev.Status,
 		BannerURL:         ev.BannerURL,
+		LayoutImageURL:    layoutImageURL,
+		LayoutZones:       layoutZones,
+		SeatingMode:       ev.SeatingMode,
+		LayoutImageWidth:  ev.LayoutImageWidth,
+		LayoutImageHeight: ev.LayoutImageHeight,
 		Sections:          details,
 		SeatLayoutVersion: ev.SeatLayoutVersion,
 		CreatedAt:         ev.CreatedAt.UTC().Format(time.RFC3339),

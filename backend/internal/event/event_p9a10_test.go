@@ -171,6 +171,11 @@ func p9a10EventRow(eventID, organizerID uuid.UUID, publishedAt *time.Time) []any
 		"Velodrome", "Jl. Merdeka 1", "2026-12-01", "10:00:00",
 		sql.NullString{String: "14:00:00", Valid: true}, "PUBLISHED",
 		sql.NullString{String: "https://cdn/banner.png", Valid: true},
+		sql.NullString{String: "https://cdn/layout.png", Valid: true},
+		[]byte(`[{"id":"zone_vip"}]`),
+		"ZONED",
+		sql.NullInt32{Int32: 800, Valid: true},
+		sql.NullInt32{Int32: 600, Valid: true},
 		3, time.Now(), time.Now(), publishedAt,
 	}
 }
@@ -273,6 +278,9 @@ func TestP9a10Repo_GetEventByID_Success(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, eventID, got.ID)
 	assert.Equal(t, "Organizer Name", got.OrganizerName)
+	assert.Equal(t, "ZONED", got.SeatingMode)
+	assert.Equal(t, 800, got.LayoutImageWidth)
+	assert.Equal(t, 600, got.LayoutImageHeight)
 	assert.Nil(t, got.PublishedAt)
 }
 

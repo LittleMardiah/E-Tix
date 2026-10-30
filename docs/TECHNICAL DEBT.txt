@@ -1351,3 +1351,12 @@ Trigger: sebelum GO-TO-LAUNCH (Epic B DoD).
 Referensi: docs/DRP.txt §5.2-§5.4 + §7.2-§7.3, docs/DR DRILL REPORT FASE 9.md,
   backend/scripts/dr_drill.sh, backend/tests/chaos/dr_drill_test.go,
   LOGBOOK.txt [2026-10-22 P9a-11].
+
+---
+ID: TD-F10-01
+Tanggal: 2026-10-30
+Status: OPEN
+Prioritas: RENDAH
+Deskripsi: API_BASE_URL di frontend/lib/api/client.ts di-hardcode ke 'http://localhost:8080' untuk testing lokal. Ini akan gagal saat deploy ke production (Ngrok/Vercel).
+Rencana Fix: Ganti kembali ke process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080' sebelum fase deployment.
+Referensi: Sesi FASE 10 Epic 5.

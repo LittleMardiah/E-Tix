@@ -25,15 +25,15 @@ import (
 
 // fakeEventRepo implements EventRepository with programmable results.
 type fakeEventRepo struct {
-	events   []Event
-	total    int
-	listErr  error
-	byID     *Event
-	byIDErr  error
-	sections []Section
-	sectErr  error
-	byIDs    map[uuid.UUID][]Section
-	byIDsErr error
+	events    []Event
+	total     int
+	listErr   error
+	byID      *Event
+	byIDErr   error
+	sections  []Section
+	sectErr   error
+	byIDs     map[uuid.UUID][]Section
+	byIDsErr  error
 	updateErr error
 }
 
@@ -73,6 +73,7 @@ func (f *fakeEventRepo) GetSectionsByEventIDs(_ context.Context, _ []uuid.UUID) 
 
 // testEvent builds an Event row.
 func testEvent(id uuid.UUID) Event {
+	layoutURL := "https://cdn.test/layout.png"
 	return Event{
 		ID:                id,
 		OrganizerID:       uuid.New(),
@@ -86,6 +87,11 @@ func testEvent(id uuid.UUID) Event {
 		EventEndTime:      "23:30:00",
 		Status:            "ON_SALE",
 		BannerURL:         "https://cdn.test/banner.jpg",
+		LayoutImageURL:    &layoutURL,
+		LayoutZones:       []byte(`[{"id":"zone_vip","name":"VIP"}]`),
+		SeatingMode:       "ZONED",
+		LayoutImageWidth:  800,
+		LayoutImageHeight: 600,
 		SeatLayoutVersion: 2,
 		CreatedAt:         time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
@@ -403,6 +409,11 @@ func TestGetByID_Success(t *testing.T) {
 	assert.Equal(t, "19:00", resp.EventStartTime)
 	assert.Equal(t, "23:30", resp.EventEndTime)
 	assert.Equal(t, "ON_SALE", resp.Status)
+	assert.Equal(t, "https://cdn.test/layout.png", resp.LayoutImageURL)
+	assert.JSONEq(t, `[{"id":"zone_vip","name":"VIP"}]`, string(resp.LayoutZones))
+	assert.Equal(t, "ZONED", resp.SeatingMode)
+	assert.Equal(t, 800, resp.LayoutImageWidth)
+	assert.Equal(t, 600, resp.LayoutImageHeight)
 	assert.Equal(t, 2, resp.SeatLayoutVersion)
 	assert.Equal(t, ev.OrganizerID.String(), resp.Organizer.OrganizerID)
 	assert.Equal(t, "Organizer Satu", resp.Organizer.Name)

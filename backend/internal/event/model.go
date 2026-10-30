@@ -1,6 +1,7 @@
 package event
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -88,6 +89,11 @@ type EventDetailResponse struct {
 	EventEndTime      string          `json:"event_end_time"`
 	Status            string          `json:"status"`
 	BannerURL         string          `json:"banner_url"`
+	LayoutImageURL    string          `json:"layout_image_url,omitempty"`
+	LayoutZones       json.RawMessage `json:"layout_zones,omitempty"`
+	SeatingMode       string          `json:"seating_mode"`
+	LayoutImageWidth  int             `json:"layout_image_width,omitempty"`
+	LayoutImageHeight int             `json:"layout_image_height,omitempty"`
 	Organizer         OrganizerBrief  `json:"organizer"`
 	Sections          []SectionDetail `json:"sections"`
 	SeatLayoutVersion int             `json:"seat_layout_version"`

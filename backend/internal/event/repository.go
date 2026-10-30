@@ -84,11 +84,15 @@ func ValidateSortBy(sortBy string) bool {
 
 const eventColumns = `id, organizer_id, name, COALESCE(description, ''), venue_name, venue_address,
 	event_date::text, event_start_time::text, COALESCE(event_end_time::text, ''),
-	status::text, COALESCE(banner_url, ''), seat_layout_version, created_at, updated_at, published_at`
+	status::text, COALESCE(banner_url, ''), layout_image_url, layout_zones, seating_mode,
+	COALESCE(layout_image_width, 0), COALESCE(layout_image_height, 0),
+	seat_layout_version, created_at, updated_at, published_at`
 
 const eventColumnsQualified = `e.id, e.organizer_id, e.name, COALESCE(e.description, ''), e.venue_name, e.venue_address,
 	e.event_date::text, e.event_start_time::text, COALESCE(e.event_end_time::text, ''),
-	e.status::text, COALESCE(e.banner_url, ''), e.seat_layout_version, e.created_at, e.updated_at, e.published_at`
+	e.status::text, COALESCE(e.banner_url, ''), e.layout_image_url, e.layout_zones, e.seating_mode,
+	COALESCE(e.layout_image_width, 0), COALESCE(e.layout_image_height, 0),
+	e.seat_layout_version, e.created_at, e.updated_at, e.published_at`
 
 func buildListWhere(filter ListFilter) (string, []any) {
 	conds := make([]string, 0, 2)
@@ -226,10 +230,12 @@ type rowScanner interface {
 
 func scanEvent(s rowScanner) (Event, error) {
 	var ev Event
-	var desc, banner, endDate sql.NullString
+	var desc, banner, endDate, layoutImage sql.NullString
+	var layoutWidth, layoutHeight sql.NullInt32
 	err := s.Scan(
 		&ev.ID, &ev.OrganizerID, &ev.Name, &desc, &ev.VenueName, &ev.VenueAddress,
 		&ev.EventDate, &ev.EventStartTime, &endDate, &ev.Status, &banner,
+		&layoutImage, &ev.LayoutZones, &ev.SeatingMode, &layoutWidth, &layoutHeight,
 		&ev.SeatLayoutVersion, &ev.CreatedAt, &ev.UpdatedAt, &ev.PublishedAt,
 	)
 	if err != nil {
@@ -238,15 +244,26 @@ func scanEvent(s rowScanner) (Event, error) {
 	ev.Description = desc.String
 	ev.BannerURL = banner.String
 	ev.EventEndTime = endDate.String
+	if layoutImage.Valid {
+		ev.LayoutImageURL = &layoutImage.String
+	}
+	if layoutWidth.Valid {
+		ev.LayoutImageWidth = int(layoutWidth.Int32)
+	}
+	if layoutHeight.Valid {
+		ev.LayoutImageHeight = int(layoutHeight.Int32)
+	}
 	return ev, nil
 }
 
 func scanEventWithOrganizer(s rowScanner) (Event, error) {
 	var ev Event
-	var desc, banner, endDate sql.NullString
+	var desc, banner, endDate, layoutImage sql.NullString
+	var layoutWidth, layoutHeight sql.NullInt32
 	err := s.Scan(
 		&ev.ID, &ev.OrganizerID, &ev.Name, &desc, &ev.VenueName, &ev.VenueAddress,
 		&ev.EventDate, &ev.EventStartTime, &endDate, &ev.Status, &banner,
+		&layoutImage, &ev.LayoutZones, &ev.SeatingMode, &layoutWidth, &layoutHeight,
 		&ev.SeatLayoutVersion, &ev.CreatedAt, &ev.UpdatedAt, &ev.PublishedAt,
 		&ev.OrganizerName,
 	)
@@ -256,6 +273,15 @@ func scanEventWithOrganizer(s rowScanner) (Event, error) {
 	ev.Description = desc.String
 	ev.BannerURL = banner.String
 	ev.EventEndTime = endDate.String
+	if layoutImage.Valid {
+		ev.LayoutImageURL = &layoutImage.String
+	}
+	if layoutWidth.Valid {
+		ev.LayoutImageWidth = int(layoutWidth.Int32)
+	}
+	if layoutHeight.Valid {
+		ev.LayoutImageHeight = int(layoutHeight.Int32)
+	}
 	return ev, nil
 }
 
