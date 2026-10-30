@@ -175,11 +175,7 @@ func main() {
 	bookingHandler := booking.NewBookingHandler(bookingSvc, rdb, logger)
 
 	// FASE 10 Epic 2: Zoned mode checkout (Redis DECR + RabbitMQ).
-	zonedCh, err := mq.Channel()
-	if err != nil {
-		logger.Fatal("failed to open rabbitmq channel for zoned booking", zap.Error(err))
-	}
-	zonedSvc := booking.NewZonedService(rdb, zonedCh)
+	zonedSvc := booking.NewZonedService(rdb, mq.Connection, pgPool)
 	zonedHandler := booking.NewZonedHandler(zonedSvc, logger)
 
 	zonedBatchWorker := worker.NewZonedBatchWorker(pgPool, mq.Connection, logger)

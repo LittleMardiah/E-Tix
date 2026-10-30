@@ -54,16 +54,19 @@ func (h *ZonedHandler) CheckoutZoned(c *gin.Context) {
 
 	resp, err := h.svc.CheckoutZoned(c.Request.Context(), req)
 	if err != nil {
-		if errors.Is(err, ErrInsufficientQuota) {
+		switch {
+		case errors.Is(err, ErrInsufficientQuota):
 			writeError(c, http.StatusConflict, "CONFLICT", "insufficient zone quota")
-			return
+		case errors.Is(err, ErrQuotaNotInitialized):
+			writeError(c, http.StatusConflict, "CONFLICT", "zone quota not initialized")
+		default:
+			h.logger.Error("zoned checkout failed", zap.Error(err))
+			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		}
-		h.logger.Error("zoned checkout failed", zap.Error(err))
-		writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusCreated, gin.H{
 		"success": true,
 		"data":    resp,
 		"error":   nil,

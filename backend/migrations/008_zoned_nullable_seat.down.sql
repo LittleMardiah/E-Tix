@@ -1,0 +1,2 @@
+-- Optional: Revert back to NOT NULL if needed (not recommended if data has NULLs)
+-- ALTER TABLE tickets ALTER COLUMN seat_position SET NOT NULL;

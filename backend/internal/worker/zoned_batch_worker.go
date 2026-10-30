@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -15,6 +16,8 @@ import (
 )
 
 type ZonedTicketPayload struct {
+	BookingID string    `json:"booking_id"`
+	SectionID string    `json:"section_id"`
 	EventID   string    `json:"event_id"`
 	ZoneName  string    `json:"zone_name"`
 	Quantity  int       `json:"quantity"`
@@ -97,14 +100,25 @@ func (w *ZonedBatchWorker) flushBatch(ctx context.Context, batch []ZonedTicketPa
 		if qty <= 0 {
 			qty = 1
 		}
-		uid, _ := uuid.Parse(p.UserID)
+		uid, err := uuid.Parse(p.UserID)
+		if err != nil {
+			return fmt.Errorf("zoned batch: parse user_id %q: %w", p.UserID, err)
+		}
+		bid, err := uuid.Parse(p.BookingID)
+		if err != nil {
+			return fmt.Errorf("zoned batch: parse booking_id %q: %w", p.BookingID, err)
+		}
+		sid, err := uuid.Parse(p.SectionID)
+		if err != nil {
+			return fmt.Errorf("zoned batch: parse section_id %q: %w", p.SectionID, err)
+		}
 		for i := 0; i < qty; i++ {
 			rows = append(rows, []any{
 				uuid.New(),
-				uuid.New(),
+				bid,
 				uid,
-				uuid.New(),
-				nil, // seat_position NULL (ZONED)
+				sid,
+				sql.NullInt64{Valid: false}, // seat_position NULL (ZONED)
 				"CONFIRMED",
 				false,
 				fmt.Sprintf("qr-%s", uuid.NewString()),
