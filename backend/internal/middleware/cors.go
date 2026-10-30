@@ -39,7 +39,7 @@ func CORSMiddleware(origins []string, logger *zap.Logger) gin.HandlerFunc {
 
 	cfg := cors.Config{
 		AllowOrigins: origins,
-		AllowMethods: []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{
 			"Authorization",
 			"Content-Type",

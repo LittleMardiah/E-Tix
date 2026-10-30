@@ -290,7 +290,7 @@ func (r *PostgresEventRepository) GetSectionsByEventIDs(ctx context.Context, eve
 }
 
 func (r *PostgresEventRepository) UpdateEventLayout(ctx context.Context, id uuid.UUID, layoutImageURL string, width, height int, seatingMode string, layoutZones []byte) error {
-    _, err := r.db.Exec(ctx, `
+	tag, err := r.db.Exec(ctx, `
         UPDATE events
         SET layout_image_url = $2,
             layout_image_width = $3,
@@ -299,6 +299,12 @@ func (r *PostgresEventRepository) UpdateEventLayout(ctx context.Context, id uuid
             layout_zones = $6,
             updated_at = NOW()
         WHERE id = $1`,
-        id, layoutImageURL, width, height, seatingMode, layoutZones)
-    return err
+		id, layoutImageURL, width, height, seatingMode, layoutZones)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("event with id %s not found", id)
+	}
+	return nil
 }

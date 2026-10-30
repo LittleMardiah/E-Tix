@@ -7,7 +7,7 @@ import axios, { AxiosError, AxiosHeaders, InternalAxiosRequestConfig } from 'axi
  * see backend/cmd/api/main.go and docs/API CONTRACT.txt section 4.
  */
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+  'http://localhost:8080';
 
 export const ACCESS_TOKEN_KEY = 'access_token';
 export const REFRESH_TOKEN_KEY = 'refresh_token';

@@ -1,3 +1,5 @@
+'use client';
+
 type ZoneData = {
   id: string;
   name: string;
@@ -7,9 +9,9 @@ type ZoneData = {
   pov_image_url: string;
   distance: string;
 };
-'use client';
 
 import { useState } from 'react';
+import { apiClient, getApiErrorMessage } from '@/lib/api/client';
 import { useParams } from 'next/navigation';
 
 export default function EOLayoutPage() {
@@ -31,17 +33,18 @@ export default function EOLayoutPage() {
   async function handleSave() {
     setSaving(true);
     try {
-      await fetch(`/eo/events/${eventId}/layout`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          layout_image_url: imageUrl,
-          layout_image_width: width,
-          layout_image_height: height,
-          seating_mode: mode,
-          layout_zones: zonesJson,
-        }),
+      await apiClient.put(`/eo/events/${eventId}/layout`, {
+        layout_image_url: imageUrl,
+        layout_image_width: width,
+        layout_image_height: height,
+        seating_mode: mode,
+        layout_zones: zonesJson,
       });
+      alert('Layout berhasil disimpan!');
+    } catch (error) {
+      const message = getApiErrorMessage(error, 'Gagal menyimpan layout.');
+      console.error('Gagal menyimpan layout:', error);
+      alert(message);
     } finally {
       setSaving(false);
     }
