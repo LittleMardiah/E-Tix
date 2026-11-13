@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { apiClient, getApiErrorMessage } from '@/lib/api/client';
 
 type ZoneData = {
@@ -38,12 +38,15 @@ function parseZones(value: EventDetailData['layout_zones']): ZoneData[] {
 
 export default function InteractiveMap() {
   const params = useParams();
+  const router = useRouter();
   const eventId = Array.isArray(params?.eventId) ? params.eventId[0] : params?.eventId;
   const [selectedZone, setSelectedZone] = useState<ZoneData | null>(null);
   const [zones, setZones] = useState<ZoneData[]>([]);
   const [eventData, setEventData] = useState<EventDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isBuying, setIsBuying] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!eventId) return;
@@ -76,6 +79,43 @@ export default function InteractiveMap() {
       cancelled = true;
     };
   }, [eventId]);
+
+  const handleBuyTicket = async () => {
+    if (!selectedZone || !eventId || isBuying) return;
+    setIsBuying(true);
+    setErrorMsg(null);
+    try {
+      const res = await apiClient.post<{
+        data: {
+          event_id: string;
+          zone_name: string;
+          quantity: number;
+          status: string;
+          booking_id?: string;
+        };
+      }>('/bookings/zoned', {
+        event_id: eventId,
+        zone_name: selectedZone.name,
+        quantity: 1,
+      });
+      // Zoned checkout is created as BULK + PAID and its tickets are
+      // generated asynchronously by the zoned batch worker, so there is no
+      // payment step to go through: land on the ticket list instead.
+      const bookingId = res.data?.data?.booking_id;
+      if (!bookingId) {
+        setErrorMsg(
+          'Tiket zona berhasil dibuat, tetapi server tidak mengembalikan booking_id.'
+        );
+        return;
+      }
+      alert('Tiket berhasil diproses! Mengalihkan ke halaman tiket...');
+      router.push('/customer/my-tickets');
+    } catch (err) {
+      setErrorMsg(getApiErrorMessage(err, 'Gagal memproses tiket zona.'));
+    } finally {
+      setIsBuying(false);
+    }
+  };
 
   const viewBoxWidth = eventData?.layout_image_width || 800;
   const viewBoxHeight = eventData?.layout_image_height || 600;
@@ -152,9 +192,19 @@ export default function InteractiveMap() {
                     <span className="font-bold text-green-400">{selectedZone.quota ?? 0} Tiket</span>
                   </div>
                 </div>
-                <button className="w-full bg-pink-600 hover:bg-pink-500 text-white font-bold py-3 px-4 rounded-xl transition-colors shadow-lg shadow-pink-900/50">
-                  Beli Tiket Zona Ini
+                <button
+                  type="button"
+                  onClick={handleBuyTicket}
+                  disabled={isBuying}
+                  className="w-full bg-pink-600 hover:bg-pink-500 text-white font-bold py-3 px-4 rounded-xl transition-colors shadow-lg shadow-pink-900/50 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isBuying ? 'Memproses...' : 'Beli Tiket Zona Ini'}
                 </button>
+                {errorMsg && (
+                  <p className="mt-3 text-sm text-red-400" role="alert">
+                    {errorMsg}
+                  </p>
+                )}
               </div>
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-zinc-500 py-20 text-center">

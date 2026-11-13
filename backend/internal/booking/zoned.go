@@ -29,11 +29,12 @@ type ZonedBookingRequest struct {
 }
 
 type ZonedBookingResponse struct {
-	EventID  string `json:"event_id"`
-	ZoneName string `json:"zone_name"`
-	Quantity int    `json:"quantity"`
-	UserID   string `json:"user_id"`
-	Status   string `json:"status"`
+	BookingID uuid.UUID `json:"booking_id"`
+	EventID   string    `json:"event_id"`
+	ZoneName  string    `json:"zone_name"`
+	Quantity  int       `json:"quantity"`
+	UserID    string    `json:"user_id"`
+	Status    string    `json:"status"`
 }
 
 type zonedBookingMessage struct {
@@ -148,10 +149,11 @@ func (s *ZonedService) CheckoutZoned(ctx context.Context, req ZonedBookingReques
 	}
 
 	return &ZonedBookingResponse{
-		EventID:  req.EventID.String(),
-		ZoneName: req.ZoneName,
-		Quantity: req.Quantity,
-		UserID:   req.UserID.String(),
-		Status:   "success",
+		BookingID: bookingID,
+		EventID:   req.EventID.String(),
+		ZoneName:  req.ZoneName,
+		Quantity:  req.Quantity,
+		UserID:    req.UserID.String(),
+		Status:    "success",
 	}, nil
 }
