@@ -69,7 +69,7 @@ func p9a6PinBody(t *testing.T, ticketID uuid.UUID, pin string) string {
 func p9a6ConfirmedTicket() *TicketLookup {
 	return &TicketLookup{
 		ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-		QRSecretKey: "secret", OwnerName: "Budi", SectionName: "VIP", SeatPos: 42,
+		QRSecretKey: "secret", OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42),
 	}
 }
 
@@ -124,7 +124,7 @@ func TestP9a6_Handler_ScanQR_InvalidQR_Returns401(t *testing.T) {
 func TestP9a6_Handler_ScanQR_AlreadyUsed_Returns409(t *testing.T) {
 	repo := &fakeRepo{
 		ticket:   p9a6ConfirmedTicket(),
-		ticketFU: &TicketLookup{ID: uTicket, OwnerUserID: uOwner, Status: "USED", OwnerName: "Budi", SectionName: "VIP", SeatPos: 42},
+		ticketFU: &TicketLookup{ID: uTicket, OwnerUserID: uOwner, Status: "USED", OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42)},
 	}
 	svc, _ := buildService(repo)
 	h := NewGateHandler(svc)
@@ -140,7 +140,7 @@ func TestP9a6_Handler_ScanQR_AlreadyUsed_Returns409(t *testing.T) {
 func TestP9a6_Handler_ScanQR_NotActive_Returns422(t *testing.T) {
 	repo := &fakeRepo{
 		ticket:   p9a6ConfirmedTicket(),
-		ticketFU: &TicketLookup{ID: uTicket, OwnerUserID: uOwner, Status: "CANCELLED", OwnerName: "Budi", SectionName: "VIP", SeatPos: 42},
+		ticketFU: &TicketLookup{ID: uTicket, OwnerUserID: uOwner, Status: "CANCELLED", OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42)},
 	}
 	svc, _ := buildService(repo)
 	h := NewGateHandler(svc)
@@ -232,7 +232,7 @@ func TestP9a6_Handler_VerifyPIN_UnknownPIN_Returns401(t *testing.T) {
 func TestP9a6_Handler_VerifyPIN_TicketMismatch_Returns422(t *testing.T) {
 	repo := &fakeRepo{pinTicket: &TicketLookup{
 		ID: uuid.New(), OwnerUserID: uOwner, Status: "CONFIRMED",
-		OwnerName: "Budi", SectionName: "VIP", SeatPos: 42, FallbackPIN: "PIN123",
+		OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42), FallbackPIN: "PIN123",
 	}}
 	svc, _ := buildService(repo)
 	h := NewGateHandler(svc)
@@ -248,7 +248,7 @@ func TestP9a6_Handler_VerifyPIN_TicketMismatch_Returns422(t *testing.T) {
 func TestP9a6_Handler_VerifyPIN_AlreadyUsed_Returns409(t *testing.T) {
 	repo := &fakeRepo{pinTicket: &TicketLookup{
 		ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-		OwnerName: "Budi", SectionName: "VIP", SeatPos: 42,
+		OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42),
 		FallbackPIN: "PIN123", FallbackPINUsed: true,
 	}}
 	svc, _ := buildService(repo)
@@ -263,7 +263,7 @@ func TestP9a6_Handler_VerifyPIN_AlreadyUsed_Returns409(t *testing.T) {
 func TestP9a6_Handler_VerifyPIN_NotActive_Returns422(t *testing.T) {
 	repo := &fakeRepo{pinTicket: &TicketLookup{
 		ID: uTicket, OwnerUserID: uOwner, Status: "CANCELLED",
-		OwnerName: "Budi", SectionName: "VIP", SeatPos: 42, FallbackPIN: "PIN123",
+		OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42), FallbackPIN: "PIN123",
 	}}
 	svc, _ := buildService(repo)
 	h := NewGateHandler(svc)
@@ -288,7 +288,7 @@ func TestP9a6_Handler_VerifyPIN_UnexpectedError_Returns500(t *testing.T) {
 func TestP9a6_Handler_VerifyPIN_Success_Returns200(t *testing.T) {
 	repo := &fakeRepo{pinTicket: &TicketLookup{
 		ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-		OwnerName: "Budi", SectionName: "VIP", SeatPos: 42, FallbackPIN: "PIN123",
+		OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42), FallbackPIN: "PIN123",
 	}, markPINRows: 1}
 	svc, _ := buildService(repo)
 	h := NewGateHandler(svc)
@@ -396,7 +396,7 @@ func TestP9a6_Service_VerifyPIN_UpdateStatusError(t *testing.T) {
 	repo := &fakeRepo{
 		pinTicket: &TicketLookup{
 			ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-			OwnerName: "Budi", SectionName: "VIP", SeatPos: 42, FallbackPIN: "PIN123",
+			OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42), FallbackPIN: "PIN123",
 		},
 		updateStatusErr: errors.New("update failed"),
 	}
@@ -413,7 +413,7 @@ func TestP9a6_Service_VerifyPIN_MarkPINUsedError(t *testing.T) {
 	repo := &fakeRepo{
 		pinTicket: &TicketLookup{
 			ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-			OwnerName: "Budi", SectionName: "VIP", SeatPos: 42, FallbackPIN: "PIN123",
+			OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42), FallbackPIN: "PIN123",
 		},
 		markPINErr: errors.New("mark failed"),
 	}

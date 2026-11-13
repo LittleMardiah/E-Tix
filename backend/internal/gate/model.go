@@ -42,13 +42,16 @@ type SyncRequest struct {
 
 // ScanResult is the response of scan-qr / verify-pin.
 type ScanResult struct {
-	Valid      bool      `json:"valid"`
-	TicketID   uuid.UUID `json:"ticket_id"`
-	OwnerName  string    `json:"owner_name,omitempty"`
-	Seat       string    `json:"seat,omitempty"`
-	Status     string    `json:"status,omitempty"`
-	ScanMethod string    `json:"scan_method,omitempty"`
-	ScannedAt  time.Time `json:"scanned_at,omitempty"`
+	Valid     bool      `json:"valid"`
+	TicketID  uuid.UUID `json:"ticket_id"`
+	OwnerName string    `json:"owner_name,omitempty"`
+	Seat      string    `json:"seat,omitempty"`
+	// SeatPosition is NULL for ZONED (general admission) tickets, so the gate
+	// response renders null instead of a misleading 0.
+	SeatPosition *int      `json:"seat_position"`
+	Status       string    `json:"status,omitempty"`
+	ScanMethod   string    `json:"scan_method,omitempty"`
+	ScannedAt    time.Time `json:"scanned_at,omitempty"`
 }
 
 // ConflictEntry is one row of the conflicts[] array in sync response.

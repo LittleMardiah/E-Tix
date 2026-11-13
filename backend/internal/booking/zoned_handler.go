@@ -59,6 +59,10 @@ func (h *ZonedHandler) CheckoutZoned(c *gin.Context) {
 			writeError(c, http.StatusConflict, "CONFLICT", "insufficient zone quota")
 		case errors.Is(err, ErrQuotaNotInitialized):
 			writeError(c, http.StatusConflict, "CONFLICT", "zone quota not initialized")
+		case errors.Is(err, ErrZoneNotFound):
+			writeError(c, http.StatusNotFound, "NOT_FOUND", "zone not found for this event")
+		case errors.Is(err, ErrInvalidQuantity):
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "quantity must be positive")
 		default:
 			h.logger.Error("zoned checkout failed", zap.Error(err))
 			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")

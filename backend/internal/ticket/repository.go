@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -47,16 +48,29 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+// nullableSeatPosition converts a scan target that can be NULL into *int.
+// tickets.seat_position is nullable since migration 008 (ZONED tickets are
+// general admission and carry no seat number).
+func nullableSeatPosition(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	seat := int(v.Int64)
+	return &seat
+}
+
 func scanTicket(s rowScanner) (*Ticket, error) {
 	var t Ticket
+	var seatPosition sql.NullInt64
 	if err := s.Scan(
 		&t.ID, &t.BookingID, &t.PaymentObligationID, &t.OwnerUserID, &t.SectionID,
-		&t.SeatPosition, &t.Status, &t.IsAssigned, &t.QRSecretKey, &t.LastQRGeneratedAt,
+		&seatPosition, &t.Status, &t.IsAssigned, &t.QRSecretKey, &t.LastQRGeneratedAt,
 		&t.FallbackPIN, &t.FallbackPINUsed, &t.FallbackPINUsedAt, &t.OriginalOwnerUserID,
 		&t.ResaleTransactionID, &t.CreatedAt, &t.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
+	t.SeatPosition = nullableSeatPosition(seatPosition)
 	return &t, nil
 }
 
@@ -91,12 +105,14 @@ func (r *PostgresTicketRepository) ListByOwner(ctx context.Context, ownerID uuid
 	items := make([]TicketListItem, 0)
 	for rows.Next() {
 		var it TicketListItem
+		var seatPosition sql.NullInt64
 		if err := rows.Scan(
 			&it.ID, &it.EventID, &it.EventName, &it.SectionName,
-			&it.SeatPosition, &it.Status, &it.FallbackPIN, &it.CreatedAt,
+			&seatPosition, &it.Status, &it.FallbackPIN, &it.CreatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan ticket list item: %w", err)
 		}
+		it.SeatPosition = nullableSeatPosition(seatPosition)
 		items = append(items, it)
 	}
 	if err := rows.Err(); err != nil {
@@ -121,9 +137,10 @@ func (r *PostgresTicketRepository) GetByID(ctx context.Context, ticketID uuid.UU
 		WHERE t.id = $1`, ticketColumnsQualified)
 
 	var td TicketDetail
+	var seatPosition sql.NullInt64
 	err := r.pool.QueryRow(ctx, q, ticketID).Scan(
 		&td.ID, &td.BookingID, &td.PaymentObligationID,
-		&td.OwnerUserID, &td.SectionID, &td.SeatPosition,
+		&td.OwnerUserID, &td.SectionID, &seatPosition,
 		&td.Status, &td.IsAssigned, &td.QRSecretKey,
 		&td.LastQRGeneratedAt, &td.FallbackPIN, &td.FallbackPINUsed,
 		&td.FallbackPINUsedAt, &td.OriginalOwnerUserID,
@@ -136,6 +153,7 @@ func (r *PostgresTicketRepository) GetByID(ctx context.Context, ticketID uuid.UU
 		}
 		return nil, fmt.Errorf("get ticket by id: %w", err)
 	}
+	td.SeatPosition = nullableSeatPosition(seatPosition)
 	return &td, nil
 }
 

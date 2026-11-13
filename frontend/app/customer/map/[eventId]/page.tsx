@@ -119,7 +119,9 @@ export default function InteractiveMap() {
 
   const viewBoxWidth = eventData?.layout_image_width || 800;
   const viewBoxHeight = eventData?.layout_image_height || 600;
-  const mapImage = eventData?.layout_image_url || 'https://placehold.co/800x600/202020/FFFFFF?text=Venue+Map+(Placeholder)';
+  const mapImage = eventData?.layout_image_url?.trim() ? eventData.layout_image_url : null;
+  const selectedQuota = selectedZone?.quota ?? 0;
+  const isSoldOut = selectedQuota <= 0;
 
   if (loading) {
     return (
@@ -143,11 +145,17 @@ export default function InteractiveMap() {
       <div className="flex flex-col md:flex-row gap-8 max-w-7xl mx-auto">
         {/* MAP SECTION */}
         <div className="hidden md:block flex-1 relative bg-zinc-900 rounded-2xl overflow-hidden border border-zinc-800 shadow-2xl">
-          <img
-            src={mapImage}
-            alt="Venue Map"
-            className="w-full h-auto opacity-70"
-          />
+          {mapImage ? (
+            <img
+              src={mapImage}
+              alt="Venue Map"
+              className="w-full h-auto opacity-70"
+            />
+          ) : (
+            <div className="flex min-h-[320px] w-full items-center justify-center rounded-xl bg-gray-200 px-6 text-center text-gray-500">
+              Peta tidak tersedia untuk event ini
+            </div>
+          )}
           <svg viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`} className="absolute inset-0 w-full h-full" preserveAspectRatio="xMidYMid meet">
             {zones.map((zone) => (
               <polygon
@@ -195,10 +203,19 @@ export default function InteractiveMap() {
                 <button
                   type="button"
                   onClick={handleBuyTicket}
-                  disabled={isBuying}
-                  className="w-full bg-pink-600 hover:bg-pink-500 text-white font-bold py-3 px-4 rounded-xl transition-colors shadow-lg shadow-pink-900/50 disabled:opacity-60 disabled:cursor-not-allowed"
+                  disabled={isBuying || isSoldOut}
+                  aria-disabled={isBuying || isSoldOut}
+                  className={`w-full font-bold py-3 px-4 rounded-xl transition-colors shadow-lg ${
+                    isBuying || isSoldOut
+                      ? 'bg-gray-300 text-gray-600 cursor-not-allowed shadow-none'
+                      : 'bg-pink-600 hover:bg-pink-500 text-white shadow-pink-900/50'
+                  }`}
                 >
-                  {isBuying ? 'Memproses...' : 'Beli Tiket Zona Ini'}
+                  {isBuying
+                    ? 'Memproses...'
+                    : isSoldOut
+                      ? 'Kuota Habis'
+                      : 'Beli Tiket Zona Ini'}
                 </button>
                 {errorMsg && (
                   <p className="mt-3 text-sm text-red-400" role="alert">

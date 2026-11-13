@@ -44,6 +44,12 @@ export default function EventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // GET /events/:id returns seating_mode ("ZONED" | "ASSIGNED"). Normalise it
+  // so a lowercase/whitespace value can never fall through to the ASSIGNED
+  // branch and send a general-admission event to the seat map.
+  const isZonedEvent =
+    String(event?.seating_mode ?? '').trim().toUpperCase() === 'ZONED';
+
   useEffect(() => {
     if (!eventId) return;
     let active = true;
@@ -133,9 +139,9 @@ export default function EventDetailPage() {
                         </div>
                         <Button
                           href={
-                            event.seating_mode === 'ZONED'
-                              ? `/customer/map/${event.event_id}`
-                              : `/customer/waiting-room/${event.event_id}?sectionId=${section.section_id}`
+                            isZonedEvent
+                              ? `/customer/map/${eventId ?? event.event_id}`
+                              : `/customer/waiting-room/${eventId ?? event.event_id}?sectionId=${section.section_id}`
                           }
                           variant={soldOut ? 'outline' : 'primary'}
                           disabled={soldOut}

@@ -250,7 +250,7 @@ func TestP9a9ScanQR_ConfirmedTicketIsValid(t *testing.T) {
 		ticket: &TicketLookup{ID: ticketID, OwnerUserID: ownerID, QRSecretKey: "secret"},
 		ticketFU: &TicketLookup{
 			ID: ticketID, OwnerUserID: ownerID, QRSecretKey: "secret",
-			Status: "CONFIRMED", OwnerName: "Rina", SectionName: "A", SeatPos: 7,
+			Status: "CONFIRMED", OwnerName: "Rina", SectionName: "A", SeatPos: seatPosPtr(7),
 		},
 	}
 	svc := p9a9Service(repo, &p9a9GateTxBeginner{})
@@ -571,7 +571,7 @@ func TestP9a9VerifyPIN_CommitError(t *testing.T) {
 func TestP9a9VerifyPIN_ConfirmedTicketIsValid(t *testing.T) {
 	ticketID := uuid.New()
 	repo := &p9a9GateRepo{pinTicket: &TicketLookup{
-		ID: ticketID, Status: "CONFIRMED", OwnerName: "Budi", SectionName: "B", SeatPos: 3,
+		ID: ticketID, Status: "CONFIRMED", OwnerName: "Budi", SectionName: "B", SeatPos: seatPosPtr(3),
 	}}
 	svc := p9a9Service(repo, &p9a9GateTxBeginner{})
 

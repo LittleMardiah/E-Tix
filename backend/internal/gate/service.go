@@ -130,7 +130,7 @@ func (s *GateService) ScanQR(ctx context.Context, scannerUserID uuid.UUID, req *
 		}
 		return &ScanResult{
 			Valid: true, TicketID: req.TicketID, OwnerName: t2.OwnerName,
-			Seat:   fmt.Sprintf("%s - %d", t2.SectionName, t2.SeatPos),
+			Seat: seatLabel(t2.SectionName, t2.SeatPos), SeatPosition: t2.SeatPos,
 			Status: "USED", ScannedAt: now,
 		}, nil
 	default:
@@ -227,7 +227,7 @@ func (s *GateService) VerifyPIN(ctx context.Context, scannerUserID uuid.UUID, re
 
 	return &ScanResult{
 		Valid: true, TicketID: t.ID, OwnerName: t.OwnerName,
-		Seat:   fmt.Sprintf("%s - %d", t.SectionName, t.SeatPos),
+		Seat: seatLabel(t.SectionName, t.SeatPos), SeatPosition: t.SeatPos,
 		Status: "USED", ScanMethod: "PIN", ScannedAt: now,
 	}, nil
 }

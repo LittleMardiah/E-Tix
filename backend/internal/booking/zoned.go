@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.uber.org/zap"
 
 	"github.com/LittleMardiah/E-Tix/backend/internal/redis"
 )
@@ -20,6 +21,8 @@ var decrQuotaLua string
 
 var ErrInsufficientQuota = errors.New("booking: insufficient zone quota")
 var ErrQuotaNotInitialized = errors.New("booking: zone quota not initialized")
+var ErrZoneNotFound = errors.New("booking: zone not found")
+var ErrInvalidQuantity = errors.New("booking: quantity must be positive")
 
 type ZonedBookingRequest struct {
 	EventID  uuid.UUID `json:"event_id"`
@@ -59,13 +62,28 @@ func NewZonedService(rdb *redis.Client, conn *amqp.Connection, db *pgxpool.Pool)
 
 func (s *ZonedService) CheckoutZoned(ctx context.Context, req ZonedBookingRequest) (*ZonedBookingResponse, error) {
 	if req.Quantity <= 0 {
-		return nil, errors.New("booking: quantity must be positive")
+		return nil, ErrInvalidQuantity
 	}
 	if req.ZoneName == "" {
 		return nil, errors.New("booking: zone_name is required")
 	}
 	if req.EventID == uuid.Nil {
 		return nil, errors.New("booking: event_id is required")
+	}
+
+	// Verify the zone exists BEFORE touching Redis: the Lua DECRBY is blind,
+	// so an unknown zone_name would burn quota for a section that does not
+	// exist (the INSERT below would then fail and only compensate after the
+	// fact). Matches the INSERT's (event_id, name) predicate exactly.
+	var zoneExists bool
+	if err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM sections WHERE event_id = $1 AND name = $2
+		)`, req.EventID, req.ZoneName).Scan(&zoneExists); err != nil {
+		return nil, fmt.Errorf("booking: check zone existence: %w", err)
+	}
+	if !zoneExists {
+		return nil, ErrZoneNotFound
 	}
 
 	key := fmt.Sprintf("quota:%s:%s", req.EventID.String(), req.ZoneName)
@@ -143,6 +161,12 @@ func (s *ZonedService) CheckoutZoned(ctx context.Context, req ZonedBookingReques
 			ContentType: "application/json",
 			Body:        body,
 		}); pErr != nil {
+			zap.L().Error("booking: publish zoned booking failed",
+				zap.String("booking_id", bookingID.String()),
+				zap.String("event_id", req.EventID.String()),
+				zap.String("zone_name", req.ZoneName),
+				zap.Int("quantity", req.Quantity),
+				zap.Error(pErr))
 			rollback()
 			return nil, fmt.Errorf("booking: publish zoned booking: %w", pErr)
 		}

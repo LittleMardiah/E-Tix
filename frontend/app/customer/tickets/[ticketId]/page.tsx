@@ -13,7 +13,7 @@ interface TicketDetail {
   event_name: string;
   section_id: string;
   section_name: string;
-  seat_position: number;
+  seat_position: number | null;
   status: string;
   owner_user_id: string;
   fallback_pin: string;
@@ -169,8 +169,10 @@ export default function TicketDetailPage() {
         <h1 className="font-bold text-xl text-[#171717] mt-3">
           {ticket.event_name}
         </h1>
-        <p className="text-sm text-[#4D4D4D] mt-1">
-          {ticket.section_name} &mdash; Seat {ticket.seat_position}
+        <p className="text-sm text-[#4D4D4D] mt-1 font-[Inter]">
+          {ticket.seat_position === null || ticket.seat_position === undefined
+            ? `${ticket.section_name} — General Admission (ZONED)`
+            : `${ticket.section_name} — Seat ${ticket.seat_position}`}
         </p>
 
         <div className="border-2 border-dashed border-[#E2E8F0] rounded-xl p-6 my-6 flex justify-center">

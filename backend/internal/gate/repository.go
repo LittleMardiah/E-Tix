@@ -2,6 +2,7 @@ package gate
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -29,11 +30,12 @@ type ScanRecord struct {
 
 // TicketLookup is the minimal ticket info needed by gate handlers.
 type TicketLookup struct {
-	ID              uuid.UUID
-	OwnerUserID     uuid.UUID
-	OwnerName       string
-	SectionName     string
-	SeatPos         int
+	ID          uuid.UUID
+	OwnerUserID uuid.UUID
+	OwnerName   string
+	SectionName string
+	// SeatPos is NULL for ZONED (general admission) tickets.
+	SeatPos         *int
 	Status          string // CONFIRMED | USED | etc.
 	QRSecretKey     string
 	FallbackPIN     string
@@ -113,13 +115,27 @@ const ticketLookupSQL = `
 	JOIN users u ON u.id = t.owner_user_id
 	JOIN sections s ON s.id = t.section_id`
 
+// seatLabel renders a human readable seat for gate feedback. ZONED tickets
+// carry no seat number (seat_position NULL) and are general admission.
+func seatLabel(sectionName string, seatPos *int) string {
+	if seatPos == nil {
+		return sectionName + " - General Admission"
+	}
+	return fmt.Sprintf("%s - %d", sectionName, *seatPos)
+}
+
 func scanTicketLookup(s interface{ Scan(...any) error }) (*TicketLookup, error) {
 	var tl TicketLookup
+	var seatPos sql.NullInt64
 	if err := s.Scan(
-		&tl.ID, &tl.OwnerUserID, &tl.OwnerName, &tl.SectionName, &tl.SeatPos,
+		&tl.ID, &tl.OwnerUserID, &tl.OwnerName, &tl.SectionName, &seatPos,
 		&tl.Status, &tl.QRSecretKey, &tl.FallbackPIN, &tl.FallbackPINUsed,
 	); err != nil {
 		return nil, err
+	}
+	if seatPos.Valid {
+		v := int(seatPos.Int64)
+		tl.SeatPos = &v
 	}
 	return &tl, nil
 }

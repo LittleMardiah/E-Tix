@@ -137,7 +137,7 @@ var (
 func TestScanQR_InvalidHMAC(t *testing.T) {
 	repo := &fakeRepo{ticket: &TicketLookup{
 		ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-		QRSecretKey: "secret", OwnerName: "Budi", SectionName: "VIP", SeatPos: 1,
+		QRSecretKey: "secret", OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(1),
 	}}
 	svc, _ := buildService(repo)
 
@@ -152,10 +152,10 @@ func TestScanQR_AlreadyUsed(t *testing.T) {
 	repo := &fakeRepo{
 		ticket: &TicketLookup{
 			ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-			QRSecretKey: "secret", OwnerName: "Budi", SectionName: "VIP", SeatPos: 1,
+			QRSecretKey: "secret", OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(1),
 		},
 		ticketFU: &TicketLookup{ID: uTicket, OwnerUserID: uOwner, Status: "USED",
-			OwnerName: "Budi", SectionName: "VIP", SeatPos: 1},
+			OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(1)},
 	}
 	svc, tx := buildService(repo)
 	qr := makeValidQR(t, uTicket, uOwner, "secret")
@@ -171,10 +171,10 @@ func TestScanQR_Valid(t *testing.T) {
 	repo := &fakeRepo{
 		ticket: &TicketLookup{
 			ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-			QRSecretKey: "secret", OwnerName: "Budi", SectionName: "VIP", SeatPos: 42,
+			QRSecretKey: "secret", OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42),
 		},
 		ticketFU: &TicketLookup{ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-			OwnerName: "Budi", SectionName: "VIP", SeatPos: 42},
+			OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42)},
 	}
 	svc, tx := buildService(repo)
 	qr := makeValidQR(t, uTicket, uOwner, "secret")
@@ -229,7 +229,7 @@ func TestVerifyPIN_AlreadyUsed(t *testing.T) {
 func TestVerifyPIN_HappyPath(t *testing.T) {
 	pinTicket := &TicketLookup{
 		ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-		OwnerName: "Budi", SectionName: "VIP", SeatPos: 42,
+		OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42),
 		FallbackPIN: "PIN123", FallbackPINUsed: false,
 	}
 	repo := &fakeRepo{pinTicket: pinTicket, markPINRows: 1}
@@ -249,7 +249,7 @@ func TestVerifyPIN_HappyPath(t *testing.T) {
 func TestVerifyPIN_AlreadyUsedPIN(t *testing.T) {
 	pinTicket := &TicketLookup{
 		ID: uTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-		OwnerName: "Budi", SectionName: "VIP", SeatPos: 42,
+		OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42),
 		FallbackPIN: "PIN123", FallbackPINUsed: true,
 	}
 	repo := &fakeRepo{pinTicket: pinTicket}
@@ -267,7 +267,7 @@ func TestVerifyPIN_TicketMismatch(t *testing.T) {
 	otherTicket := uuid.New()
 	pinTicket := &TicketLookup{
 		ID: otherTicket, OwnerUserID: uOwner, Status: "CONFIRMED",
-		OwnerName: "Budi", SectionName: "VIP", SeatPos: 42,
+		OwnerName: "Budi", SectionName: "VIP", SeatPos: seatPosPtr(42),
 		FallbackPIN: "PIN123", FallbackPINUsed: false,
 	}
 	repo := &fakeRepo{pinTicket: pinTicket}
@@ -334,3 +334,7 @@ func TestSyncOfflineScans_InvalidScanSyncedOK(t *testing.T) {
 	assert.Equal(t, 1, res.Synced)
 	assert.Equal(t, 0, res.Duplicates)
 }
+
+// seatPosPtr builds the *int required by TicketLookup.SeatPos (nullable for
+// ZONED tickets). Test helper only.
+func seatPosPtr(v int) *int { return &v }

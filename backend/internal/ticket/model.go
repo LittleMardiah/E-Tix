@@ -14,7 +14,9 @@ type Ticket struct {
 	PaymentObligationID *uuid.UUID `json:"payment_obligation_id,omitempty"`
 	OwnerUserID         uuid.UUID  `json:"owner_user_id"`
 	SectionID           uuid.UUID  `json:"section_id"`
-	SeatPosition        int        `json:"seat_position"`
+	// SeatPosition is NULL for ZONED (general-admission) tickets, so it must
+	// stay a pointer: JSON renders null instead of a misleading 0.
+	SeatPosition        *int       `json:"seat_position"`
 	Status              string     `json:"status"`
 	IsAssigned          bool       `json:"is_assigned"`
 	QRSecretKey         string     `json:"-"`
@@ -34,7 +36,7 @@ type TicketListItem struct {
 	EventID      uuid.UUID `json:"event_id"`
 	EventName    string    `json:"event_name"`
 	SectionName  string    `json:"section_name"`
-	SeatPosition int       `json:"seat_position"`
+	SeatPosition *int      `json:"seat_position"`
 	Status       string    `json:"status"`
 	FallbackPIN  string    `json:"fallback_pin"`
 	CreatedAt    time.Time `json:"created_at"`

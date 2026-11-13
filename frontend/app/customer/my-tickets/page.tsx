@@ -10,7 +10,7 @@ interface TicketListItem {
   event_id: string;
   event_name: string;
   section_name: string;
-  seat_position: number;
+  seat_position: number | null;
   status: string;
   fallback_pin: string;
   created_at: string;
@@ -119,8 +119,8 @@ export default function MyTicketsPage() {
                 </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-[#4D4D4D]">Kursi</dt>
-                  <dd className="font-medium text-[#171717]">
-                    {ticket.seat_position}
+                  <dd className="font-medium text-[#171717] font-[Inter]">
+                    {ticket.seat_position ?? 'General Admission (ZONED)'}
                   </dd>
                 </div>
                 {ticket.fallback_pin && (
