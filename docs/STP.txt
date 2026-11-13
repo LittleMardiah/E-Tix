@@ -964,7 +964,7 @@ LOCAL DEVELOPMENT ENVIRONMENT:
 CI ENVIRONMENT (GitHub Actions):
 
   Platform:         GitHub Actions (ubuntu-latest runner)
-  Runtime:          Docker container (from golang:1.22-alpine)
+  Runtime:          Docker container (from golang:1.26.11-alpine)
   Database:         testcontainers-go (PostgreSQL 15 container)
   Cache:            testcontainers-go (Redis 7 container)
   Message Broker:   testcontainers-go (RabbitMQ 3.12 container)

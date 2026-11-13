@@ -2272,7 +2272,7 @@ go run ./cmd/api
 
 ```dockerfile
 # Dockerfile
-FROM golang:1.22-alpine AS builder
+FROM golang:1.26.11-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./

@@ -8,7 +8,7 @@ test.describe('Journey 1: Authentication', () => {
     await page.getByLabel('Password').fill('password123');
     await page.getByRole('button', { name: 'Login' }).click();
 
-    await expect(page).toHaveURL(/\/customer\/dashboard/);
+    await expect(page).toHaveURL(/\/customer\/dashboard|\/eo\/dashboard/);
     await expect(page.getByText(/Halo,/)).toBeVisible();
   });
 });

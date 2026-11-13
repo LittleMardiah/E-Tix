@@ -289,7 +289,7 @@ SYSTEM_USER_UUID (constant di internal/model/constants.go):
 
 DOCKERFILE (Multi-stage, non-root — sesuai SECURITY_SPEC v1.4 §10.3 + TDD v1.10):
 
-  FROM golang:1.22-alpine AS builder
+  FROM golang:1.26.11-alpine AS builder
   WORKDIR /app
   COPY go.mod go.sum ./
   RUN go mod download
@@ -821,7 +821,7 @@ E7-S1-T32 [2 jam] — Setup Render.com Web Service (Docker deploy)
    Deliverable: Dockerfile + Render config
    Sub-tasks:
      a. Tulis Dockerfile multi-stage:
-        - Stage 1 (builder): golang:1.22-alpine + CGO_ENABLED=0 build
+        - Stage 1 (builder): golang:1.26.11-alpine + CGO_ENABLED=0 build
         - Stage 2 (runtime): alpine:latest
         - RUN adduser -D -u 1000 appuser   ← WAJIB non-root user UID 1000
         - USER appuser                      ← WAJIB switch ke non-root
