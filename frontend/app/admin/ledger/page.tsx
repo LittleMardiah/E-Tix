@@ -3,9 +3,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient, getApiErrorMessage } from '@/lib/api/client';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
 import { formatRupiah } from '@/lib/format';
 
 const ADMIN_2FA_STORAGE_KEY = 'e-tix-flash:admin-2fa-token';
@@ -61,6 +58,23 @@ function formatDateTime(value: string): string {
       });
 }
 
+function statusBadgeClass(status: string): string {
+  const key = status.toUpperCase();
+  if (key === 'PAID' || key === 'SUCCESS' || key === 'SETTLED' || key === 'CAPTURED') {
+    return 'bg-green-50 text-green-700 border-green-100';
+  }
+  if (key === 'PENDING' || key === 'UNRECONCILED') {
+    return 'bg-amber-50 text-amber-700 border-amber-100';
+  }
+  if (key === 'REFUNDED' || key === 'PARTIALLY_REFUNDED') {
+    return 'bg-sky-50 text-sky-700 border-sky-100';
+  }
+  if (key === 'FAILED' || key === 'EXPIRED' || key === 'CANCELLED') {
+    return 'bg-rose-50 text-rose-700 border-rose-100';
+  }
+  return 'bg-[#FAFAFA] text-[#4D4D4D] border-[#E2E8F0]';
+}
+
 export default function AdminLedger() {
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [summary, setSummary] = useState<LedgerSummary | null>(null);
@@ -99,21 +113,35 @@ export default function AdminLedger() {
   };
 
   return (
-    <div className="p-6 md:p-10 max-w-6xl mx-auto">
-      <h1 className="text-3xl font-bold mb-6">Ledger Audit</h1>
+    <div className="max-w-6xl mx-auto px-6 py-12">
+      <h1 className="text-3xl font-bold tracking-tight text-[#171717] mb-6">
+        Ledger Audit
+      </h1>
 
       <div className="flex flex-col sm:flex-row gap-4 mb-6 sm:items-end">
         <div className="sm:w-64">
-          <Input
-            label="2FA Token"
+          <label
+            htmlFor="admin-2fa"
+            className="block text-sm font-medium text-[#171717] mb-1.5"
+          >
+            2FA Token
+          </label>
+          <input
+            id="admin-2fa"
             value={twoFA}
             placeholder="Kode TOTP admin"
             onChange={(event) => handleTokenChange(event.target.value)}
+            className="w-full border border-[#E2E8F0] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#D08080] focus:border-transparent transition-all"
           />
         </div>
-        <Button onClick={() => void fetchLedger(twoFA)} isLoading={loading}>
-          Muat Ulang
-        </Button>
+        <button
+          type="button"
+          onClick={() => void fetchLedger(twoFA)}
+          disabled={loading}
+          className="bg-[#D08080] text-[#171717] font-medium rounded-lg px-5 py-2.5 hover:bg-[#c06b6b] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading ? 'Memuat...' : 'Muat Ulang'}
+        </button>
       </div>
 
       {error && (
@@ -124,68 +152,84 @@ export default function AdminLedger() {
 
       {summary && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <Card>
-            <h3 className="text-gray-500 text-sm">Total Paid</h3>
-            <p className="text-2xl font-bold">{formatRupiah(summary.total_paid)}</p>
-          </Card>
-          <Card>
-            <h3 className="text-gray-500 text-sm">Total Pending</h3>
-            <p className="text-2xl font-bold">{formatRupiah(summary.total_pending)}</p>
-          </Card>
-          <Card>
-            <h3 className="text-gray-500 text-sm">Total Refunded</h3>
-            <p className="text-2xl font-bold">{formatRupiah(summary.total_refunded)}</p>
-          </Card>
-          <Card>
-            <h3 className="text-gray-500 text-sm">Unreconciled</h3>
-            <p className="text-2xl font-bold">{summary.unreconciled_count}</p>
-          </Card>
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-6">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-[#4D4D4D]">Total Paid</h3>
+            <p className="text-2xl font-mono text-[#D08080] mt-2">{formatRupiah(summary.total_paid)}</p>
+          </div>
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-6">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-[#4D4D4D]">Total Pending</h3>
+            <p className="text-2xl font-mono text-[#D08080] mt-2">{formatRupiah(summary.total_pending)}</p>
+          </div>
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-6">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-[#4D4D4D]">Total Refunded</h3>
+            <p className="text-2xl font-mono text-[#D08080] mt-2">{formatRupiah(summary.total_refunded)}</p>
+          </div>
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-6">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-[#4D4D4D]">Unreconciled</h3>
+            <p className="text-2xl font-mono text-[#D08080] mt-2">{summary.unreconciled_count}</p>
+          </div>
         </div>
       )}
 
-      <Card>
+      <div className="bg-white border border-[#E2E8F0] rounded-xl overflow-hidden">
         {loading ? (
-          <p className="text-center text-gray-500 py-6">Memuat ledger...</p>
+          <p className="text-center text-[#4D4D4D] py-10 text-sm">Memuat ledger...</p>
         ) : entries.length === 0 ? (
-          <p className="text-center text-gray-500 py-6">Belum ada entri ledger.</p>
+          <p className="text-center text-[#4D4D4D] py-10 text-sm">Belum ada entri ledger.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm border-collapse">
               <thead>
-                <tr className="border-b text-left text-gray-500">
-                  <th className="py-2 pr-4">Event Type</th>
-                  <th className="py-2 pr-4">Reference</th>
-                  <th className="py-2 pr-4">Amount</th>
-                  <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Reconciled</th>
-                  <th className="py-2">Date</th>
+                <tr className="bg-[#FAFAFA] text-left text-xs uppercase tracking-wide text-[#4D4D4D]">
+                  <th className="px-4 py-3 border-b border-[#E2E8F0] font-medium">Event Type</th>
+                  <th className="px-4 py-3 border-b border-[#E2E8F0] font-medium">Reference</th>
+                  <th className="px-4 py-3 border-b border-[#E2E8F0] font-medium">Amount</th>
+                  <th className="px-4 py-3 border-b border-[#E2E8F0] font-medium">Status</th>
+                  <th className="px-4 py-3 border-b border-[#E2E8F0] font-medium">Reconciled</th>
+                  <th className="px-4 py-3 border-b border-[#E2E8F0] font-medium">Date</th>
                 </tr>
               </thead>
               <tbody>
                 {entries.map((entry, index) => (
                   <tr
                     key={`${entry.reference_type}-${entry.reference_id}-${index}`}
-                    className="border-b"
+                    className="border-b border-[#E2E8F0] last:border-0 hover:bg-[#FAFAFA] transition-colors"
                   >
-                    <td className="py-2 pr-4 font-medium">{entry.event_type}</td>
-                    <td className="py-2 pr-4 text-gray-500">
+                    <td className="px-4 py-3 font-medium text-[#171717]">{entry.event_type}</td>
+                    <td className="px-4 py-3 text-[#4D4D4D]">
                       {entry.reference_type}
                     </td>
-                    <td className="py-2 pr-4">{formatRupiah(entry.amount)}</td>
-                    <td className="py-2 pr-4">
-                      <span className="px-2 py-1 bg-gray-100 rounded text-xs">
+                    <td className="px-4 py-3 font-mono text-[#171717]">
+                      {formatRupiah(entry.amount)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block px-2.5 py-1 rounded-full border text-xs font-medium ${statusBadgeClass(entry.status)}`}
+                      >
                         {entry.status}
                       </span>
                     </td>
-                    <td className="py-2 pr-4">{entry.reconciled ? 'Yes' : 'No'}</td>
-                    <td className="py-2">{formatDateTime(entry.created_at)}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block px-2.5 py-1 rounded-full border text-xs font-medium ${
+                          entry.reconciled
+                            ? 'bg-green-50 text-green-700 border-green-100'
+                            : 'bg-amber-50 text-amber-700 border-amber-100'
+                        }`}
+                      >
+                        {entry.reconciled ? 'Yes' : 'No'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-[#4D4D4D]">
+                      {formatDateTime(entry.created_at)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </Card>
+      </div>
     </div>
   );
 }

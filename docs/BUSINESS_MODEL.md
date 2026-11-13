@@ -1,63 +1,63 @@
 # Business Model
 
+E-Tix Flash earns only when an organizer sells. There is no listing fee, no subscription required to publish an event, and no charge for traffic that never converts.
+
 ## Revenue Streams
 
-| Stream | Rate | Who pays | Notes |
+| Stream | Rate | Charged on | Who pays |
 |---|---|---|---|
-| Platform fee | **2.5%** per ticket sold | Event organizer | Charged on successful sales only. |
-| Resale fee | **1%** of resale transaction | Seller / buyer flow | Applied when a controlled resale completes. |
-| Enterprise plan | Custom | Large organizers | Dedicated infrastructure, white-label, and integration support. |
+| **Primary platform fee** | **2.5%** of the ticket price | Successful ticket sale only | Event organizer |
+| **Resale platform fee** | **2.5%** of the resale price | Completed controlled-resale transaction | Deducted from the seller's payout |
 
-## Target Market
+Both rates are configuration, not hard-coded constants: the resale rate comes from `RESALE_PLATFORM_FEE_RATE` (default `0.025`), and the resale price cap comes from `system_config.resale_price_cap_percent` (default `10`, i.e. +10% over the original price).
 
-- Mid-to-large event organizers with **5,000–50,000 attendees**.
-- Concerts, festivals, and sports events with high flash-sale intensity.
-- Organizers who care about group seating integrity, gate throughput, and resale control.
-
-## Pricing Logic
-
-The free tier covers small events. The Pro tier uses a **2.5% success fee** because it aligns platform revenue with actual ticket sales and avoids charging organizers for traffic that never converts. Enterprise pricing is custom because infrastructure, support, and compliance requirements vary significantly.
-
-## Illustrative Break-Even Analysis
-
-Assumptions:
-
-- 10,000 tickets sold at **Rp 1,000,000** each.
-- Platform fee: 2.5% of gross ticket revenue.
-- Event-scoped infrastructure and operations budget: **~Rp 1,000,000** for this illustrative case.
-
-Calculation:
+## Money Flow
 
 ```text
-Gross ticket revenue = 10,000 × Rp 1,000,000
-                     = Rp 10,000,000,000
-
-Platform revenue     = 2.5% × Rp 10,000,000,000
-                     = Rp 250,000,000
-
-Illustrative infra   = Rp 1,000,000
-Contribution margin  = Rp 249,000,000
+Buyer
+  |  (1) pays via payment gateway
+  v
+Payment Gateway
+  |  (2) settles gross amount to platform account
+  v
+Platform ledger
+  |  (3) deducts platform fee  (2.5% primary / 2.5% resale)
+  |  (4) records seller payout (resale_price - platform_fee)
+  v
+Organizer (primary payout)  /  Seller (resale payout)
 ```
 
-At these assumptions the contribution margin is above 99%. This is a **portfolio-level illustration**, not a financial forecast: real infrastructure, payment-gateway, support, and marketing costs will vary by event and deployment model.
+1. **Checkout.** The buyer pays a single obligation, or their own share when the booking uses Split-Pay. No ticket is issued for a Split-Pay booking until every member's obligation is confirmed.
+2. **Gateway settlement.** The payment gateway settles the gross amount to the platform account and fires a webhook; the booking is reconciled against that webhook, not against the browser.
+3. **Fee deduction.** The platform fee is taken from the settled amount and written to the ledger.
+4. **Payout.** The remainder is paid out to the organizer, or to the reseller as `resale_price - platform_fee` on a completed resale.
 
-## Unit Economics Sensitivity
+Example, a Rp 1,000,000 ticket:
 
-| Scenario | Tickets | Avg. price | Platform revenue (2.5%) |
-|---|---:|---:|---:|
-| Small event | 2,000 | Rp 500,000 | Rp 25,000,000 |
-| Mid-size event | 10,000 | Rp 1,000,000 | Rp 250,000,000 |
-| Large event | 30,000 | Rp 1,500,000 | Rp 1,125,000,000 |
+```text
+Buyer pays                 Rp 1,000,000.00
+Platform fee (2.5%)        Rp    25,000.00
+Organizer payout           Rp   975,000.00
+```
 
-## Cost Drivers
+Example, a Rp 1,100,000 resale against a Rp 1,000,000 original (+10% cap):
 
-- Payment-gateway fees and refunds.
-- Redis, PostgreSQL, RabbitMQ, and observability infrastructure.
-- On-site gate support and incident response.
-- Customer support during flash sales.
+```text
+Buyer pays                 Rp 1,100,000.00
+Platform fee (2.5%)        Rp    27,500.00
+Seller payout              Rp 1,072,500.00
+```
 
-## Go-to-Market
+## Cost Structure
 
-1. Start with organizers who already run high-demand events and feel the pain of overselling.
-2. Offer a paid pilot for a single event with a clear success metric: zero oversell and gate throughput under load.
-3. Expand to multi-event contracts with analytics, controlled resale, and enterprise support.
+Managed services only — no self-hosted cluster to operate.
+
+| Component | Service | Role | Cost behaviour |
+|---|---|---|---|
+| Backend (Go monolith) | **Render** | API, worker, webhook receiver | Fixed instance size; scales with replica count |
+| PostgreSQL | **Supabase** | Source of truth, daily backups, PITR | Scales with storage and compute tier |
+| Redis | **Upstash** | Seat locks, zone quota, rate limits, idempotency, token blacklist | Per-command pricing; near-zero when idle |
+| RabbitMQ | **CloudAMQP** | Async jobs: split-pay expiry, resale expiry, reconciliation, reports | Plan-based message and connection limits |
+| Frontend | **Cloudflare Workers** (OpenNext) | Next.js PWA, edge-cached assets | Free/low tier for portfolio traffic |
+
+Fee revenue is transaction-linked while most infrastructure is plan-linked, so margin improves with ticket volume on the same event footprint. The dominant variable costs are payment-gateway fees, refund handling, and on-site gate support during a flash sale.

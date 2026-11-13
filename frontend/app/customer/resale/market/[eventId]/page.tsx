@@ -100,19 +100,17 @@ export default function ResaleMarketPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Button href={`/customer/events/${eventId}`} variant="outline">
-            &larr; Detail Event
-          </Button>
-          <Button variant="outline" onClick={() => void loadListings()}>
-            Muat Ulang
-          </Button>
-        </div>
-      </header>
+    <div className="max-w-4xl mx-auto px-4 py-8">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <Button href={`/customer/events/${eventId}`} variant="outline">
+          &larr; Detail Event
+        </Button>
+        <Button variant="outline" onClick={() => void loadListings()}>
+          Muat Ulang
+        </Button>
+      </div>
 
-      <main className="max-w-4xl mx-auto px-4 py-8">
+      <div>
         <h1 className="text-3xl font-bold mb-2">Resale Market</h1>
         <p className="text-sm text-gray-500 mb-6">
           Tiket resale resmi dari sesama pembeli. Harga sudah dibatasi oleh
@@ -195,7 +193,7 @@ export default function ResaleMarketPage() {
             ))}
           </div>
         )}
-      </main>
+      </div>
     </div>
   );
 }

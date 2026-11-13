@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
   apiClient,
@@ -87,6 +87,11 @@ function SeatMapContent() {
   const [locking, setLocking] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // The queue token is read from sessionStorage, which only exists on the
+  // client. Reading it while rendering makes SSR output differ from the first
+  // client render (React hydration error), so it is resolved in an effect.
+  const [isClient, setIsClient] = useState(false);
+  const [queueToken, setQueueToken] = useState<string | null>(null);
 
   const loadSeats = useCallback(async () => {
     if (!eventId || !sectionId) return;
@@ -129,10 +134,14 @@ function SeatMapContent() {
     };
   }, [eventId, sectionId]);
 
-  const queueToken = useMemo(() => {
-    const stored = readStoredQueueToken(eventId);
-    return stored || queueTokenParam;
-  }, [eventId, queueTokenParam]);
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isClient) return;
+    setQueueToken(readStoredQueueToken(eventId) || queueTokenParam);
+  }, [isClient, eventId, queueTokenParam]);
 
   const toggleSeat = (seat: SeatStatus) => {
     if (seat.status !== 'AVAILABLE') return;
@@ -179,16 +188,30 @@ function SeatMapContent() {
         }
       );
       const booking = response.data.data;
-      const perSeat = perSeatPrice(booking.total_amount, booking.total_seats);
+      const bookingId = booking?.booking_id;
+      if (!bookingId) {
+        setError('Kursi terkunci tetapi booking_id tidak diterima dari server.');
+        return;
+      }
+      // The redirect depends on booking_id only. Every query value falls back
+      // to local state so a partial payload cannot throw and swallow the
+      // navigation after the seats were already locked.
+      const bookedSeats = booking.seat_positions?.length
+        ? booking.seat_positions
+        : selected;
+      const perSeat = perSeatPrice(
+        booking.total_amount ?? '0.00',
+        booking.total_seats ?? bookedSeats.length
+      );
       const query = new URLSearchParams({
-        amount: booking.total_amount,
+        amount: booking.total_amount ?? '',
         price: perSeat,
-        seats: booking.seat_positions.join(','),
-        mode: booking.payment_mode,
+        seats: bookedSeats.join(','),
+        mode: booking.payment_mode ?? mode,
         section: sectionName,
-        expires: booking.expires_at,
+        expires: booking.expires_at ?? '',
       });
-      router.push(`/customer/payment/${booking.booking_id}?${query.toString()}`);
+      router.push('/customer/payment/' + bookingId + '?' + query.toString());
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response
         ?.status;
@@ -215,20 +238,18 @@ function SeatMapContent() {
     : null;
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Button href={`/customer/events/${eventId}`} variant="outline">
-            &larr; Kembali
-          </Button>
-          <p className="text-sm font-medium text-gray-700">
-            {eventName}
-            {sectionName ? ` - ${sectionName}` : ''}
-          </p>
-        </div>
-      </header>
+    <div className="max-w-4xl mx-auto px-4 py-8">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <Button href={`/customer/events/${eventId}`} variant="outline">
+          &larr; Kembali
+        </Button>
+        <p className="text-sm font-medium text-[#4D4D4D]">
+          {eventName}
+          {sectionName ? ` - ${sectionName}` : ''}
+        </p>
+      </div>
 
-      <main className="max-w-4xl mx-auto px-4 py-8">
+      <div>
         <h1 className="text-2xl font-bold mb-1">Pilih Kursi</h1>
         <p className="text-sm text-gray-500 mb-6">
           Maksimal {MAX_GROUP_SEATS} kursi per transaksi. Kursi dikunci 3 menit
@@ -245,7 +266,7 @@ function SeatMapContent() {
             {notice}
           </Alert>
         )}
-        {!queueToken && (
+        {isClient && !queueToken && (
           <Alert variant="warning" className="mb-4">
             Token antrean tidak ditemukan. Kembali ke waiting room untuk
             mengambil token baru.
@@ -355,7 +376,7 @@ function SeatMapContent() {
             Kunci {selected.length || ''} Kursi &amp; Lanjut
           </Button>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

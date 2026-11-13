@@ -83,15 +83,16 @@ export default function InteractiveMap() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0B0F19] text-white flex items-center justify-center p-8">
-        <p className="text-zinc-400">Memuat peta...</p>
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        <p className="text-[#4D4D4D]">Memuat peta...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#0B0F19] text-white p-4 md:p-8 font-sans">
-      <h1 className="text-2xl font-bold mb-6 text-center md:text-left">Pilih Area Konser - {eventId}</h1>
+    <div className="max-w-7xl mx-auto px-4 py-8">
+      <div className="bg-[#0B0F19] text-white rounded-2xl p-4 md:p-8 font-sans">
+        <h1 className="text-2xl font-bold mb-6 text-center md:text-left">Pilih Area Konser - {eventId}</h1>
 
       {error && (
         <div className="max-w-7xl mx-auto mb-4 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">
@@ -178,6 +179,7 @@ export default function InteractiveMap() {
               </div>
             ))
           )}
+        </div>
         </div>
       </div>
     </div>

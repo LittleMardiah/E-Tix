@@ -5,7 +5,6 @@ import { useParams } from 'next/navigation';
 import { apiClient, getApiErrorMessage } from '@/lib/api/client';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { formatRupiah } from '@/lib/format';
 
 interface SalesBlock {
@@ -96,19 +95,19 @@ export default function EODashboard() {
 
   if (!eventId) {
     return (
-      <div className="p-10 max-w-6xl mx-auto">
+      <div className="max-w-6xl mx-auto px-6 py-12">
         <Alert variant="error">Event ID tidak valid.</Alert>
       </div>
     );
   }
 
   if (loading) {
-    return <div className="p-10 text-center text-gray-500">Memuat dashboard...</div>;
+    return <div className="min-h-screen bg-[#FAFAFA] flex items-center justify-center text-sm text-[#4D4D4D]">Memuat dashboard...</div>;
   }
 
   if (error || !data) {
     return (
-      <div className="p-10 max-w-6xl mx-auto">
+      <div className="max-w-6xl mx-auto px-6 py-12">
         <Alert variant="error" title="Gagal memuat dashboard">
           {error || 'Data dashboard tidak tersedia.'}
         </Alert>
@@ -117,11 +116,11 @@ export default function EODashboard() {
   }
 
   return (
-    <div className="p-6 md:p-10 max-w-6xl mx-auto">
+    <div className="max-w-6xl mx-auto px-6 py-12 bg-[#FAFAFA] min-h-screen">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between mb-6">
         <div>
-          <h1 className="text-3xl font-bold">EO Dashboard: {data.event_name}</h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <h1 className="text-3xl font-bold tracking-tight text-[#171717]">EO Dashboard: {data.event_name}</h1>
+          <p className="text-sm text-[#4D4D4D] mt-1">
             Status: {data.event_status} &bull; Diperbarui {formatDateTime(data.updated_at)}
           </p>
         </div>
@@ -149,36 +148,36 @@ export default function EODashboard() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <Card>
-          <h3 className="text-gray-500 text-sm">Tiket Terjual</h3>
-          <p className="text-3xl font-bold">{data.sales.tickets_sold}</p>
-          <p className="text-sm text-gray-500 mt-1">
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-6">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-[#4D4D4D]">Tiket Terjual</h3>
+          <p className="text-3xl font-mono text-[#D08080] mt-2">{data.sales.tickets_sold}</p>
+          <p className="text-sm text-[#4D4D4D] mt-1">
             dari {data.sales.total_tickets} tiket ({data.sales.sales_percentage}%)
           </p>
-        </Card>
-        <Card>
-          <h3 className="text-gray-500 text-sm">Total Revenue</h3>
-          <p className="text-3xl font-bold">{formatRupiah(data.sales.total_revenue)}</p>
-          <p className="text-sm text-gray-500 mt-1">
+        </div>
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-6">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-[#4D4D4D]">Total Revenue</h3>
+          <p className="text-3xl font-mono text-[#D08080] mt-2">{formatRupiah(data.sales.total_revenue)}</p>
+          <p className="text-sm text-[#4D4D4D] mt-1">
             Hari ini: {formatRupiah(data.sales.revenue_today)}
           </p>
-        </Card>
-        <Card>
-          <h3 className="text-gray-500 text-sm">Gate Scans Today</h3>
-          <p className="text-3xl font-bold">{data.gate_status.total_scans_today}</p>
-          <p className="text-sm text-gray-500 mt-1">
+        </div>
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-6">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-[#4D4D4D]">Gate Scans Today</h3>
+          <p className="text-3xl font-mono text-[#D08080] mt-2">{data.gate_status.total_scans_today}</p>
+          <p className="text-sm text-[#4D4D4D] mt-1">
             {data.gate_status.total_gates_active} gate aktif
           </p>
-        </Card>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        <Card>
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-6">
           <h2 className="text-xl font-bold mb-3">Gate Status</h2>
           {data.gate_status.gates && Object.keys(data.gate_status.gates).length > 0 ? (
             <ul className="space-y-2 text-sm">
               {Object.entries(data.gate_status.gates).map(([gate, status]) => (
-                <li key={gate} className="flex items-center justify-between border-b pb-2">
+                <li key={gate} className="flex items-center justify-between border-b border-[#E2E8F0] pb-2">
                   <span>{gate}</span>
                   <span
                     className={`px-2 py-1 rounded text-xs font-medium ${
@@ -193,49 +192,49 @@ export default function EODashboard() {
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-gray-500">Belum ada data gate.</p>
+            <p className="text-sm text-[#4D4D4D]">Belum ada data gate.</p>
           )}
-        </Card>
+        </div>
 
-        <Card>
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-6">
           <h2 className="text-xl font-bold mb-3">Anti-Bot Hari Ini</h2>
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <dt className="text-gray-500">Request diblokir</dt>
+              <dt className="text-[#4D4D4D]">Request diblokir</dt>
               <dd className="font-semibold">{data.anti_bot.requests_blocked_today}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-gray-500">IP mencurigakan</dt>
+              <dt className="text-[#4D4D4D]">IP mencurigakan</dt>
               <dd className="font-semibold">{data.anti_bot.suspicious_ips_flagged}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-gray-500">Trigger CAPTCHA</dt>
+              <dt className="text-[#4D4D4D]">Trigger CAPTCHA</dt>
               <dd className="font-semibold">{data.anti_bot.captcha_triggers_today}</dd>
             </div>
           </dl>
-        </Card>
+        </div>
       </div>
 
-      <Card>
+      <div className="bg-white border border-[#E2E8F0] rounded-xl p-6">
         <h2 className="text-xl font-bold mb-3">Recent Activity</h2>
         {data.recent_activity?.length > 0 ? (
           <ul className="space-y-2">
             {data.recent_activity.map((activity, index) => (
               <li
                 key={`${activity.timestamp}-${index}`}
-                className="text-sm border-b pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1"
+                className="text-sm border-b border-[#E2E8F0] pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1"
               >
                 <span>{activity.description}</span>
-                <span className="text-gray-500">
+                <span className="text-[#4D4D4D]">
                   {activity.type} &bull; {formatDateTime(activity.timestamp)}
                 </span>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-gray-500">Belum ada aktivitas.</p>
+          <p className="text-sm text-[#4D4D4D]">Belum ada aktivitas.</p>
         )}
-      </Card>
+      </div>
     </div>
   );
 }

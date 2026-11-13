@@ -6,9 +6,6 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
 import { getApiErrorMessage } from '@/lib/api/client';
 import { useAuthStore } from '@/lib/stores/authStore';
 
@@ -58,56 +55,149 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-10">
-      <Card className="w-full max-w-md">
-        <h2 className="text-2xl font-bold text-gray-900 text-center mb-6">
-          Create Account
-        </h2>
+    <div className="min-h-screen flex items-center justify-center bg-[#FAFAFA] px-4 py-10">
+      <div className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm p-8 w-full max-w-md">
+        <h1 className="text-2xl font-bold tracking-tight text-[#171717]">
+          Create account
+        </h1>
+        <p className="text-sm text-[#4D4D4D] mb-6 mt-1">
+          Register to buy, transfer, and resell tickets
+        </p>
+
         {error && (
           <Alert variant="error" className="mb-4">
             {error}
           </Alert>
         )}
+
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
-          <Input
-            label="Full Name"
-            autoComplete="name"
-            {...register('name')}
-            error={errors.name?.message}
-          />
-          <Input
-            label="Email"
-            type="email"
-            autoComplete="email"
-            {...register('email')}
-            error={errors.email?.message}
-          />
-          <Input
-            label="Phone"
-            type="tel"
-            autoComplete="tel"
-            placeholder="+62812345678"
-            {...register('phone')}
-            error={errors.phone?.message}
-          />
-          <Input
-            label="Password"
-            type="password"
-            autoComplete="new-password"
-            {...register('password')}
-            error={errors.password?.message}
-          />
-          <Button type="submit" className="w-full" isLoading={isSubmitting}>
-            Sign Up
-          </Button>
+          <div>
+            <label
+              htmlFor="name"
+              className="block text-sm font-medium text-[#171717] mb-1.5"
+            >
+              Full Name
+            </label>
+            <input
+              id="name"
+              autoComplete="name"
+              aria-invalid={errors.name ? true : undefined}
+              aria-describedby={errors.name ? 'name-error' : undefined}
+              className="w-full border border-[#E2E8F0] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#D08080] focus:border-transparent transition-all"
+              {...register('name')}
+            />
+            {errors.name && (
+              <span
+                id="name-error"
+                role="alert"
+                className="mt-1 block text-xs text-red-600"
+              >
+                {errors.name.message}
+              </span>
+            )}
+          </div>
+
+          <div>
+            <label
+              htmlFor="email"
+              className="block text-sm font-medium text-[#171717] mb-1.5"
+            >
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              autoComplete="email"
+              aria-invalid={errors.email ? true : undefined}
+              aria-describedby={errors.email ? 'email-error' : undefined}
+              className="w-full border border-[#E2E8F0] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#D08080] focus:border-transparent transition-all"
+              {...register('email')}
+            />
+            {errors.email && (
+              <span
+                id="email-error"
+                role="alert"
+                className="mt-1 block text-xs text-red-600"
+              >
+                {errors.email.message}
+              </span>
+            )}
+          </div>
+
+          <div>
+            <label
+              htmlFor="phone"
+              className="block text-sm font-medium text-[#171717] mb-1.5"
+            >
+              Phone
+            </label>
+            <input
+              id="phone"
+              type="tel"
+              autoComplete="tel"
+              placeholder="+62812345678"
+              aria-invalid={errors.phone ? true : undefined}
+              aria-describedby={errors.phone ? 'phone-error' : undefined}
+              className="w-full border border-[#E2E8F0] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#D08080] focus:border-transparent transition-all"
+              {...register('phone')}
+            />
+            {errors.phone && (
+              <span
+                id="phone-error"
+                role="alert"
+                className="mt-1 block text-xs text-red-600"
+              >
+                {errors.phone.message}
+              </span>
+            )}
+          </div>
+
+          <div>
+            <label
+              htmlFor="password"
+              className="block text-sm font-medium text-[#171717] mb-1.5"
+            >
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="new-password"
+              aria-invalid={errors.password ? true : undefined}
+              aria-describedby={errors.password ? 'password-error' : undefined}
+              className="w-full border border-[#E2E8F0] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#D08080] focus:border-transparent transition-all"
+              {...register('password')}
+            />
+            {errors.password && (
+              <span
+                id="password-error"
+                role="alert"
+                className="mt-1 block text-xs text-red-600"
+              >
+                {errors.password.message}
+              </span>
+            )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full bg-[#D08080] text-[#171717] font-medium rounded-lg py-2.5 hover:bg-[#c06b6b] transition-colors mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSubmitting ? 'Loading...' : 'Sign Up'}
+          </button>
         </form>
-        <p className="text-center mt-4 text-sm text-gray-600">
+
+        <p className="text-center mt-6 text-sm text-[#4D4D4D]">
           Already have an account?{' '}
-          <Link href="/auth/login" className="text-blue-600 hover:underline">
+          <Link
+            href="/auth/login"
+            className="font-medium text-[#D08080] hover:underline"
+          >
             Login
           </Link>
         </p>
-      </Card>
+      </div>
     </div>
   );
 }

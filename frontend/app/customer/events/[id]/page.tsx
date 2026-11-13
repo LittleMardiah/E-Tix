@@ -28,6 +28,7 @@ interface EventDetail {
   status: string;
   organizer: { organizer_id: string; name: string };
   sections: SectionDetail[];
+  seating_mode?: 'ASSIGNED' | 'ZONED';
   seat_layout_version: number;
 }
 
@@ -65,19 +66,17 @@ export default function EventDetailPage() {
   }, [eventId]);
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Button href="/customer/dashboard" variant="outline">
-            &larr; Katalog
-          </Button>
-          <Button href="/customer/my-tickets" variant="outline">
-            Tiket Saya
-          </Button>
-        </div>
-      </header>
+    <div className="max-w-4xl mx-auto px-4 py-8">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <Button href="/customer/dashboard" variant="outline">
+          &larr; Katalog
+        </Button>
+        <Button href="/customer/my-tickets" variant="outline">
+          Tiket Saya
+        </Button>
+      </div>
 
-      <main className="max-w-4xl mx-auto px-4 py-8">
+      <div>
         {loading && (
           <p className="text-gray-500 py-10 text-center">Memuat event...</p>
         )}
@@ -133,7 +132,11 @@ export default function EventDetailPage() {
                           </p>
                         </div>
                         <Button
-                          href={`/customer/waiting-room/${event.event_id}?sectionId=${section.section_id}`}
+                          href={
+                            event.seating_mode === 'ZONED'
+                              ? `/customer/map/${event.event_id}`
+                              : `/customer/waiting-room/${event.event_id}?sectionId=${section.section_id}`
+                          }
                           variant={soldOut ? 'outline' : 'primary'}
                           disabled={soldOut}
                         >
@@ -151,7 +154,7 @@ export default function EventDetailPage() {
             )}
           </>
         )}
-      </main>
+      </div>
     </div>
   );
 }
