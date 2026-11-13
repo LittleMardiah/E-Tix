@@ -139,6 +139,37 @@ VALUES (
 ON CONFLICT (id) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
+-- 4b. PAYMENT OBLIGATION (dipakai journey 5 — admin ledger view)
+--     GET /admin/ledger membaca UNION payment_obligations + resale_transactions
+--     + admin_actions; tanpa baris di sini tabel ledger tidak pernah render.
+-- ----------------------------------------------------------------------------
+INSERT INTO payment_obligations (
+    id,
+    booking_id,
+    user_id,
+    seat_position,
+    amount,
+    status,
+    payment_method,
+    external_transaction_id,
+    idempotency_key,
+    webhook_received_at
+)
+VALUES (
+    '77777777-7777-7777-7777-777777777777',
+    '66666666-6666-6666-6666-666666666666',
+    '11111111-1111-1111-1111-111111111111',
+    1,
+    1000000.00,
+    'PAID',
+    'E_WALLET',
+    'e2e-gateway-tx-7777',
+    'e2e-idem-7777',
+    NOW()
+)
+ON CONFLICT (id) DO NOTHING;
+
+-- ----------------------------------------------------------------------------
 -- 5. TICKET (dipakai journey 3 — resale listing)
 -- ----------------------------------------------------------------------------
 INSERT INTO tickets (

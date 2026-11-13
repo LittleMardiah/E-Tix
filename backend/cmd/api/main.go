@@ -82,6 +82,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to init logger: %v\n", err)
 		os.Exit(1)
 	}
+	// SECURITY FIX (TD-F10-02 RISK): Prevent TEST_MODE in production
+	if os.Getenv("ENV") == "production" && os.Getenv("TEST_MODE") == "true" {
+		logger.Fatal("CRITICAL SECURITY ERROR: TEST_MODE cannot be true in production!")
+	}
 	defer func() { _ = logger.Sync() }()
 
 	// Activate global zap logger so zap.L() works across the codebase.

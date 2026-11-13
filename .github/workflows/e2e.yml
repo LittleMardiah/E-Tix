@@ -66,7 +66,7 @@ jobs:
       # NOTE: task spec says Go 1.22, but backend/go.mod requires 1.26.10.
       # Code is the source of truth (R2), so the toolchain follows go.mod.
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -94,7 +94,9 @@ jobs:
         run: PGPASSWORD=postgres psql -h localhost -p 15433 -U postgres -d etix_flash_e2e -v ON_ERROR_STOP=1 -f backend/tests/fixtures/seed_ci.sql
 
       - name: Inject Redis Quota
-        run: docker exec $(docker ps -q -f "ancestor=redis:7-alpine" | head -1) redis-cli SET "quota:33333333-3333-3333-3333-333333333333:VIP" 10
+        run: |
+          sudo apt-get update && sudo apt-get install -y redis-tools
+          redis-cli -h localhost -p 16379 SET "quota:33333333-3333-3333-3333-333333333333:VIP" 10
 
       - name: Start backend
         working-directory: backend

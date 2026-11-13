@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 const ADMIN_2FA_TOKEN = process.env.ADMIN_2FA_TOKEN ?? 'dummy-2fa-token';
 
-test.describe.skip('Journey 5: Admin Tools', () => {
+test.describe('Journey 5: Admin Tools', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript((token: string) => {
       window.sessionStorage.setItem('e-tix-flash:admin-2fa-token', token);

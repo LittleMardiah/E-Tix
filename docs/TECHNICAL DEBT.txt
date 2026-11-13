@@ -1219,7 +1219,8 @@ Referensi: P9a-7 OpenCode log 2026-10-22; V2.6 §11.2 worktree comparison.
 
 ID: TD-F9-13
 Tanggal: 2026-10-22
-Status: ⏸️ DEFERRED
+Status: ✅ FIXED
+Fixed in: 2026-11-13
 Prioritas: LOW
 Deskripsi: .github/workflows/test.yml uses actions/setup-go@v5 (current
 v5.6.0). v6/v7 adds support for reading toolchain directive from go.mod
@@ -1355,8 +1356,39 @@ Referensi: docs/DRP.txt §5.2-§5.4 + §7.2-§7.3, docs/DR DRILL REPORT FASE 9.m
 ---
 ID: TD-F10-01
 Tanggal: 2026-10-30
-Status: OPEN
+Status: ✅ FIXED
+Fixed in: 2026-11-13
 Prioritas: RENDAH
 Deskripsi: API_BASE_URL di frontend/lib/api/client.ts di-hardcode ke 'http://localhost:8080' untuk testing lokal. Ini akan gagal saat deploy ke production (Ngrok/Vercel).
 Rencana Fix: Ganti kembali ke process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080' sebelum fase deployment.
 Referensi: Sesi FASE 10 Epic 5.
+
+---
+ID: TD-F10-02
+Tanggal: 2026-11-13
+Status: ✅ FIXED
+Fixed in: 2026-11-13
+Prioritas: RENDAH
+Deskripsi: Journey-5 Admin E2E di-skip karena backend memvalidasi TOTP 2FA secara ketat dan tidak ada bypass untuk TEST_MODE.
+Rencana Fix: Implementasi mock/enroll TOTP secret di Redis pada setup CI, atau tambahkan bypass khusus jika ENV=test di middleware 2FA backend.
+Referensi: frontend/e2e/journey-5-admin.spec.ts, backend/internal/admin/middleware.go
+
+---
+ID: TD-F10-03
+Tanggal: 2026-11-13
+Status: ✅ FIXED
+Fixed in: 2026-11-13
+Prioritas: RENDAH
+Deskripsi: Legacy E2E tests di `frontend/tests/e2e/` (9 file) masih ada di repo. Saat ini hanya diisolasi lewat `testDir` di playwright.config.ts agar tidak ikut jalan.
+Rencana Fix: Hapus folder `frontend/tests/e2e/` atau pindahkan ke `_archive` karena sudah digantikan oleh test suite baru di `frontend/e2e/`.
+Referensi: frontend/playwright.config.ts
+
+---
+ID: TD-F10-04
+Tanggal: 2026-11-13
+Status: ✅ FIXED
+Fixed in: 2026-11-13
+Prioritas: RENDAH
+Deskripsi: CI Workflow menggunakan `docker exec $(docker ps -q -f "ancestor=redis:7-alpine" | head -1)` untuk inject kuota Redis. Rentan gagal jika GitHub Runner mengubah arsitektur Docker.
+Rencana Fix: Gunakan `redis-cli` native yang di-install via `apt-get` di step sebelum inject, atau gunakan custom GitHub Action untuk interaksi Redis.
+Referensi: .github/workflows/e2e.yml
