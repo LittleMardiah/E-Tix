@@ -8,10 +8,8 @@ import {
   getApiErrorMessage,
 } from '@/lib/api/client';
 import { useAuthStore } from '@/lib/stores/authStore';
+import Link from 'next/link';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
 import { formatRupiah } from '@/lib/format';
 
 interface Obligation {
@@ -165,170 +163,180 @@ function PaymentContent() {
 
   if (result) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-        <Card className="w-full max-w-lg">
-          <h2 className="text-2xl font-bold text-gray-900 text-center mb-2">
-            Link pembayaran dibuat
-          </h2>
-          <p className="text-center text-sm text-gray-500 mb-6">
-            Status booking: {result.payment_status}. Tiket terbit otomatis
-            setelah semua pembayaran terkonfirmasi.
-          </p>
+      <div className="min-h-screen bg-[#FAFAFA]">
+        <div className="max-w-md mx-auto px-6 py-12">
+          <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-sm">
+            <h1 className="text-2xl font-bold text-[#171717] mb-2">
+              Link pembayaran dibuat
+            </h1>
+            <p className="text-sm text-[#4D4D4D] mb-6">
+              Status booking: {result.payment_status}. Tiket terbit otomatis
+              setelah semua pembayaran terkonfirmasi.
+            </p>
 
-          <div className="space-y-3">
-            {result.obligations.map((obligation, index) => (
-              <div
-                key={`${obligation.user_id}-${index}`}
-                className="border border-gray-200 rounded-lg p-3"
+            <ul className="divide-y divide-[#E2E8F0]">
+              {result.obligations.map((obligation, index) => (
+                <li
+                  key={`${obligation.user_id}-${index}`}
+                  className="py-4 first:pt-0 last:pb-0"
+                >
+                  <div className="flex items-baseline justify-between gap-4">
+                    <span className="text-sm font-medium text-[#171717]">
+                      {obligation.seat_position
+                        ? `Kursi ${obligation.seat_position}`
+                        : 'Leader (bulk)'}
+                    </span>
+                    <span className="text-sm font-mono font-bold text-[#171717]">
+                      {formatRupiah(obligation.amount)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#8F8F8F] mt-1">
+                    User: {obligation.user_id} &bull; {obligation.status}
+                  </p>
+                  {obligation.payment_link && (
+                    <a
+                      href={obligation.payment_link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-block text-sm text-[#D08080] hover:underline break-all"
+                    >
+                      {obligation.payment_link}
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+
+            <div className="flex flex-col gap-3 mt-6">
+              <Link
+                href="/customer/my-tickets"
+                className="w-full text-center bg-[#D08080] text-[#171717] font-medium py-3 rounded-lg hover:bg-[#c06b6b] transition-colors"
               >
-                <div className="flex justify-between text-sm">
-                  <span className="font-medium text-gray-900">
-                    {obligation.seat_position
-                      ? `Kursi ${obligation.seat_position}`
-                      : 'Leader (bulk)'}
-                  </span>
-                  <span className="font-semibold">
-                    {formatRupiah(obligation.amount)}
-                  </span>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  User: {obligation.user_id} &bull; {obligation.status}
-                </p>
-                {obligation.payment_link && (
-                  <a
-                    href={obligation.payment_link}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sm text-blue-600 hover:underline break-all"
-                  >
-                    {obligation.payment_link}
-                  </a>
-                )}
-              </div>
-            ))}
+                Lihat Tiket Saya
+              </Link>
+              <button
+                type="button"
+                onClick={() => router.push('/customer/dashboard')}
+                className="w-full border border-[#E2E8F0] text-[#171717] font-medium py-3 rounded-lg hover:bg-[#FAFAFA] transition-colors"
+              >
+                Kembali ke Katalog
+              </button>
+            </div>
           </div>
-
-          <div className="flex gap-3 mt-6">
-            <Button
-              href="/customer/my-tickets"
-              className="flex-1"
-            >
-              Lihat Tiket Saya
-            </Button>
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={() => router.push('/customer/dashboard')}
-            >
-              Kembali ke Katalog
-            </Button>
-          </div>
-        </Card>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <Card className="w-full max-w-lg">
-        <h2 className="text-2xl font-bold text-gray-900 text-center mb-4">
-          Pilih Metode Pembayaran
-        </h2>
+    <div className="min-h-screen bg-[#FAFAFA]">
+      <div className="max-w-md mx-auto px-6 py-12">
+        <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-sm">
+          <h1 className="text-2xl font-bold text-[#171717] text-center mb-6">
+            Selesaikan Pembayaran
+          </h1>
 
-        <div className="bg-gray-50 rounded-lg p-4 mb-5 text-sm text-gray-700">
-          <p className="font-semibold text-gray-900">
-            {seats.length} tiket{sectionName ? ` - ${sectionName}` : ''}
-          </p>
-          <p className="mt-1">
-            Total:{' '}
-            <span className="font-semibold text-gray-900">
+          <div className="text-center mb-6">
+            <p className="text-sm text-[#4D4D4D]">
+              {seats.length} tiket{sectionName ? ` - ${sectionName}` : ''}
+            </p>
+            <p className="text-3xl font-mono text-[#171717] font-bold mt-1">
               {formatRupiah(amount)}
-            </span>
-          </p>
-          {remaining !== null && (
-            <p className="mt-1 text-amber-700 font-medium">
-              Kursi dilepas dalam {Math.floor(remaining / 60)}:
-              {String(remaining % 60).padStart(2, '0')}
             </p>
-          )}
-        </div>
-
-        {error && (
-          <Alert variant="error" className="mb-4">
-            {error}
-          </Alert>
-        )}
-
-        <div className="space-y-3 mb-6">
-          <button
-            type="button"
-            onClick={() => setMode('SPLIT')}
-            aria-pressed={mode === 'SPLIT'}
-            className={`w-full text-left p-4 border rounded-lg transition-colors ${
-              mode === 'SPLIT'
-                ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-600'
-                : 'border-gray-200 bg-white hover:border-gray-300'
-            }`}
-          >
-            <p className="font-semibold text-gray-900">Split Pay</p>
-            <p className="text-sm text-gray-500">
-              Setiap anggota-group membayar sendiri lewat link terpisah.
-            </p>
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('BULK')}
-            aria-pressed={mode === 'BULK'}
-            className={`w-full text-left p-4 border rounded-lg transition-colors ${
-              mode === 'BULK'
-                ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-600'
-                : 'border-gray-200 bg-white hover:border-gray-300'
-            }`}
-          >
-            <p className="font-semibold text-gray-900">Bulk Pay (Leader)</p>
-            <p className="text-sm text-gray-500">
-              Leader membayar seluruh {formatRupiah(amount)} sekaligus.
-            </p>
-          </button>
-        </div>
-
-        {mode === 'SPLIT' && (
-          <div className="space-y-3 mb-6">
-            <p className="text-sm text-gray-600">
-              Masukkan user ID (UUID) pemilik tiap kursi. Kursi pertama sudah
-              diisi dengan ID Anda sebagai leader.
-            </p>
-            {seats.map((seatPosition, index) => (
-              <div key={seatPosition} className="flex items-end gap-3">
-                <div className="w-28 shrink-0 text-sm text-gray-600 pb-2">
-                  Kursi {seatPosition} &bull;{' '}
-                  {formatRupiah(price || amount)}
-                </div>
-                <div className="flex-1">
-                  <Input
-                    label={`User ID anggota kursi ${seatPosition}`}
-                    placeholder="00000000-0000-0000-0000-000000000000"
-                    value={memberIds[index] ?? ''}
-                    onChange={(e) => setMemberId(index, e.target.value)}
-                  />
-                </div>
-              </div>
-            ))}
+            {remaining !== null && (
+              <p className="mt-2 text-sm font-medium text-[#B45309]">
+                Kursi dilepas dalam {Math.floor(remaining / 60)}:
+                {String(remaining % 60).padStart(2, '0')}
+              </p>
+            )}
           </div>
-        )}
 
-        <Button
-          className="w-full"
-          onClick={handlePay}
-          isLoading={submitting}
-          disabled={
-            remaining === 0 ||
-            (mode === 'SPLIT' && (invalidMembers || seats.length === 0))
-          }
-        >
-          Konfirmasi Pembayaran
-        </Button>
-      </Card>
+          {error && (
+            <Alert variant="error" className="mb-4">
+              {error}
+            </Alert>
+          )}
+
+          <div className="space-y-3 mb-6">
+            <button
+              type="button"
+              onClick={() => setMode('SPLIT')}
+              aria-pressed={mode === 'SPLIT'}
+              className={`w-full text-left p-4 border rounded-xl transition-colors ${
+                mode === 'SPLIT'
+                  ? 'border-[#D08080] bg-[#FAF2F2] ring-1 ring-[#D08080]'
+                  : 'border-[#E2E8F0] bg-white hover:border-[#D08080]'
+              }`}
+            >
+              <p className="font-semibold text-[#171717]">Split Pay</p>
+              <p className="text-sm text-[#4D4D4D]">
+                Setiap anggota-group membayar sendiri lewat link terpisah.
+              </p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('BULK')}
+              aria-pressed={mode === 'BULK'}
+              className={`w-full text-left p-4 border rounded-xl transition-colors ${
+                mode === 'BULK'
+                  ? 'border-[#D08080] bg-[#FAF2F2] ring-1 ring-[#D08080]'
+                  : 'border-[#E2E8F0] bg-white hover:border-[#D08080]'
+              }`}
+            >
+              <p className="font-semibold text-[#171717]">Bulk Pay (Leader)</p>
+              <p className="text-sm text-[#4D4D4D]">
+                Leader membayar seluruh {formatRupiah(amount)} sekaligus.
+              </p>
+            </button>
+          </div>
+
+          {mode === 'SPLIT' && (
+            <div className="mb-6">
+              <p className="text-sm text-[#4D4D4D] mb-3">
+                Masukkan user ID (UUID) pemilik tiap kursi. Kursi pertama sudah
+                diisi dengan ID Anda sebagai leader.
+              </p>
+              <ul className="divide-y divide-[#E2E8F0]">
+                {seats.map((seatPosition, index) => (
+                  <li key={seatPosition} className="py-4 first:pt-0">
+                    <div className="flex items-baseline justify-between gap-3 mb-2">
+                      <label
+                        htmlFor={`member-${seatPosition}`}
+                        className="text-sm font-medium text-[#171717]"
+                      >
+                        User ID anggota kursi {seatPosition}
+                      </label>
+                      <span className="text-xs text-[#4D4D4D] shrink-0">
+                        Kursi {seatPosition} &bull; {formatRupiah(price || amount)}
+                      </span>
+                    </div>
+                    <input
+                      id={`member-${seatPosition}`}
+                      type="text"
+                      placeholder="00000000-0000-0000-0000-000000000000"
+                      value={memberIds[index] ?? ''}
+                      onChange={(e) => setMemberId(index, e.target.value)}
+                      className="w-full border border-[#E2E8F0] rounded-lg px-4 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#D08080] focus:border-transparent transition-all"
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handlePay}
+            disabled={
+              remaining === 0 ||
+              (mode === 'SPLIT' && (invalidMembers || seats.length === 0))
+            }
+            className="w-full bg-[#D08080] text-[#171717] font-medium py-3 rounded-lg mt-6 hover:bg-[#c06b6b] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {submitting ? 'Memproses...' : 'Konfirmasi Pembayaran'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -337,8 +345,8 @@ export default function PaymentPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-gray-50">
-          <p className="text-gray-500">Memuat pembayaran...</p>
+        <div className="min-h-screen flex items-center justify-center bg-[#FAFAFA]">
+          <p className="text-[#4D4D4D]">Memuat pembayaran...</p>
         </div>
       }
     >

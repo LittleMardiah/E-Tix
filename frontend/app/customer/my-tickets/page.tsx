@@ -2,9 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient, getApiErrorMessage } from '@/lib/api/client';
+import Link from 'next/link';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 
 interface TicketListItem {
   id: string;
@@ -22,10 +21,12 @@ interface TicketsPayload {
 }
 
 const STATUS_STYLE: Record<string, string> = {
-  CONFIRMED: 'bg-green-100 text-green-800',
-  PENDING: 'bg-amber-100 text-amber-800',
-  CANCELLED: 'bg-gray-200 text-gray-600',
-  REFUNDED: 'bg-blue-100 text-blue-700',
+  CONFIRMED: 'bg-green-100 text-green-700',
+  USED: 'bg-gray-100 text-gray-700',
+  RESALE_PENDING: 'bg-yellow-100 text-yellow-700',
+  RESOLD: 'bg-yellow-100 text-yellow-700',
+  PENDING_SPLIT_PAY: 'bg-amber-100 text-amber-800',
+  CANCELLED: 'bg-gray-100 text-gray-700',
 };
 
 /**
@@ -55,95 +56,103 @@ export default function MyTicketsPage() {
   }, [loadTickets]);
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Button href="/customer/dashboard" variant="outline">
-            &larr; Katalog
-          </Button>
-          <Button variant="outline" onClick={() => void loadTickets()}>
-            Muat Ulang
-          </Button>
+    <div className="max-w-6xl mx-auto px-6 py-12">
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+        <h1 className="text-3xl font-bold tracking-tight text-[#171717]">
+          My Tickets
+        </h1>
+        <button
+          type="button"
+          onClick={() => void loadTickets()}
+          className="inline-flex h-10 items-center justify-center rounded-lg border border-[#E2E8F0] bg-white px-4 text-sm font-medium text-[#171717] transition-colors hover:bg-[#FAFAFA]"
+        >
+          Muat Ulang
+        </button>
+      </div>
+
+      {error && (
+        <Alert variant="error" className="mb-6">
+          {error}
+        </Alert>
+      )}
+
+      {loading ? (
+        <p className="text-[#4D4D4D] py-10 text-center">Memuat tiket...</p>
+      ) : tickets.length === 0 ? (
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 text-center">
+          <p className="text-[#4D4D4D] mb-4">
+            Belum ada tiket. Pesan tiket dari katalog event.
+          </p>
+          <Link
+            href="/customer/dashboard"
+            className="inline-flex items-center justify-center rounded-lg border border-[#D08080] px-4 py-2.5 text-sm font-medium text-[#D08080] transition-colors hover:bg-[#D08080] hover:text-[#171717]"
+          >
+            Lihat Event
+          </Link>
         </div>
-      </header>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {tickets.map((ticket) => (
+            <div
+              key={ticket.id}
+              className="bg-white border border-[#E2E8F0] rounded-xl p-6 hover:border-[#D08080] transition-colors flex flex-col"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <h2 className="font-bold text-lg text-[#171717]">
+                  {ticket.event_name}
+                </h2>
+                <span
+                  className={`shrink-0 text-xs px-2.5 py-1 rounded-full font-medium ${
+                    STATUS_STYLE[ticket.status] ?? 'bg-gray-100 text-gray-700'
+                  }`}
+                >
+                  {ticket.status}
+                </span>
+              </div>
 
-      <main className="max-w-4xl mx-auto px-4 py-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">Tiket Saya</h1>
-
-        {error && (
-          <Alert variant="error" className="mb-6">
-            {error}
-          </Alert>
-        )}
-
-        {loading ? (
-          <p className="text-gray-500 py-10 text-center">Memuat tiket...</p>
-        ) : tickets.length === 0 ? (
-          <Card className="text-center">
-            <p className="text-gray-600 mb-4">
-              Belum ada tiket. Pesan tiket dari katalog event.
-            </p>
-            <Button href="/customer/dashboard">Lihat Event</Button>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {tickets.map((ticket) => (
-              <Card key={ticket.id}>
-                <div className="flex items-start justify-between gap-3">
-                  <h3 className="font-bold text-gray-900">
-                    {ticket.event_name}
-                  </h3>
-                  <span
-                    className={`text-xs font-semibold px-2 py-1 rounded ${
-                      STATUS_STYLE[ticket.status] ?? 'bg-gray-100 text-gray-700'
-                    }`}
-                  >
-                    {ticket.status}
-                  </span>
+              <dl className="mt-4 space-y-2 text-sm flex-1">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-[#4D4D4D]">Section</dt>
+                  <dd className="font-medium text-[#171717]">
+                    {ticket.section_name}
+                  </dd>
                 </div>
-                <dl className="mt-3 space-y-1 text-sm text-gray-600">
-                  <div className="flex justify-between">
-                    <dt>Section</dt>
-                    <dd className="font-medium text-gray-900">
-                      {ticket.section_name}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Kursi</dt>
-                    <dd className="font-medium text-gray-900">
-                      {ticket.seat_position}
-                    </dd>
-                  </div>
-                  {ticket.fallback_pin && (
-                    <div className="flex justify-between">
-                      <dt>Fallback PIN</dt>
-                      <dd className="font-mono font-medium text-gray-900">
-                        {ticket.fallback_pin}
-                      </dd>
-                    </div>
-                  )}
-                  <div className="flex justify-between">
-                    <dt>Diterbitkan</dt>
-                    <dd className="font-medium text-gray-900">
-                      {ticket.created_at
-                        ? new Date(ticket.created_at).toLocaleDateString('id-ID')
-                        : '-'}
-                    </dd>
-                  </div>
-                </dl>
-                <div className="mt-4">
-                  <Button
-                    href={`/customer/tickets/${ticket.id}`}
-                    className="w-full"
-                  >
-                    Lihat Tiket
-                  </Button>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-[#4D4D4D]">Kursi</dt>
+                  <dd className="font-medium text-[#171717]">
+                    {ticket.seat_position}
+                  </dd>
                 </div>
-              </Card>
-            ))}
-          </div>
-        )}
-      </main>
+                {ticket.fallback_pin && (
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-[#4D4D4D]">Fallback PIN</dt>
+                    <dd className="font-mono font-medium text-[#171717]">
+                      {ticket.fallback_pin}
+                    </dd>
+                  </div>
+                )}
+                <div className="flex justify-between gap-3">
+                  <dt className="text-[#4D4D4D]">Diterbitkan</dt>
+                  <dd className="font-medium text-[#171717]">
+                    {ticket.created_at
+                      ? new Date(ticket.created_at).toLocaleDateString('id-ID')
+                      : '-'}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="mt-6">
+                <Link
+                  href={`/customer/tickets/${ticket.id}`}
+                  className="text-[#D08080] font-medium hover:underline"
+                >
+                  View Ticket
+                </Link>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
