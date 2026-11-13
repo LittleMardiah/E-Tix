@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "preview": "npx @opennextjs/cloudflare build && npx @opennextjs/cloudflare preview",
-    "deploy": "npx @opennextjs/cloudflare build && npx @opennextjs/cloudflare deploy"
+    "deploy": "npx @opennextjs/cloudflare build && npx @opennextjs/cloudflare deploy",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.2",
