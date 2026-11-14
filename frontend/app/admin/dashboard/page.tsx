@@ -21,6 +21,7 @@ interface LedgerEntry {
 interface Kpi {
   totalEvents: number | null;
   totalUsers: number | null;
+  totalTransactions: number | null;
 }
 
 function formatDateTime(value: string): string {
@@ -38,7 +39,11 @@ function shortId(value?: string): string {
 }
 
 export default function AdminDashboardPage() {
-  const [kpi, setKpi] = useState<Kpi>({ totalEvents: null, totalUsers: null });
+  const [kpi, setKpi] = useState<Kpi>({
+    totalEvents: null,
+    totalUsers: null,
+    totalTransactions: null,
+  });
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [page, setPage] = useState(1);
   const [hasNextPage, setHasNextPage] = useState(false);
@@ -48,25 +53,31 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     let active = true;
     const loadKpi = async () => {
-      const [eventsResult, usersResult] = await Promise.allSettled([
-        apiClient.get<{ meta?: { total?: number } }>('/events', {
-          params: { limit: 1 },
-        }),
-        apiClient.get<{
-          data: { users: unknown[] };
-        }>('/admin/users', { params: { limit: 100 } }),
-      ]);
-      if (!active) return;
-      setKpi({
-        totalEvents:
-          eventsResult.status === 'fulfilled'
-            ? eventsResult.value.data.meta?.total ?? 0
-            : null,
-        totalUsers:
-          usersResult.status === 'fulfilled'
-            ? usersResult.value.data.data.users.length
-            : null,
-      });
+      // Exact counters from SQL: /admin/users is paginated (max 100) and has no
+      // total, so it must never be used to count users.
+      try {
+        const response = await apiClient.get<{
+          data: {
+            total_users: number;
+            total_events: number;
+            total_transactions: number;
+          };
+        }>('/admin/stats');
+        if (!active) return;
+        setKpi({
+          totalUsers: response.data.data.total_users,
+          totalEvents: response.data.data.total_events,
+          totalTransactions: response.data.data.total_transactions,
+        });
+      } catch {
+        if (active) {
+          setKpi({
+            totalUsers: null,
+            totalEvents: null,
+            totalTransactions: null,
+          });
+        }
+      }
     };
     void loadKpi();
     return () => {
@@ -108,6 +119,11 @@ export default function AdminDashboardPage() {
       label: 'Total User',
       value: kpi.totalUsers === null ? '—' : String(kpi.totalUsers),
     },
+    {
+      label: 'Total Transaksi',
+      value:
+        kpi.totalTransactions === null ? '—' : String(kpi.totalTransactions),
+    },
   ];
 
   return (
@@ -117,7 +133,7 @@ export default function AdminDashboardPage() {
         Ringkasan platform dan jejak aksi admin.
       </p>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
+      <div className="mt-6 grid gap-4 sm:grid-cols-3">
         {cards.map((card) => (
           <div
             key={card.label}

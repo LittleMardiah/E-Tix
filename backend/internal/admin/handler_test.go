@@ -62,6 +62,10 @@ type fakeSvc struct {
 	blLimit int
 }
 
+func (f *fakeSvc) GetStats(_ context.Context, _ uuid.UUID) (*admin.PlatformStats, error) {
+	return &admin.PlatformStats{}, nil
+}
+
 func (f *fakeSvc) BulkCancel(_ context.Context, _, _ uuid.UUID, _ *admin.BulkCancelRequest) (*admin.BulkCancelResponse, error) {
 	return f.bulkResp, f.bulkErr
 }

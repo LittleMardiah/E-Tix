@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/stores/authStore';
+import { useRoleGuard } from '@/lib/hooks/useRoleGuard';
 
 const NAV_ITEMS = [
   {
@@ -33,11 +34,22 @@ export default function AdminLayout({
   const pathname = usePathname() ?? '';
   const router = useRouter();
   const logout = useAuthStore((state) => state.logout);
+  // Admin-only: organizers used to be able to reach /admin/* (see backend
+  // RBAC fix); they are now redirected to their own dashboard.
+  const checking = useRoleGuard('admin');
 
   const handleLogout = () => {
     logout();
     router.push('/auth/login');
   };
+
+  if (checking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#FAFAFA]">
+        <p className="text-sm text-[#4D4D4D]">Memuat...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#FAFAFA] text-[#171717] md:flex">

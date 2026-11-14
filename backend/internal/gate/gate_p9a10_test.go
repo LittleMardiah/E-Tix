@@ -7,6 +7,7 @@ package gate
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"reflect"
@@ -168,7 +169,7 @@ func TestP9a10Repo_GetTicketByID_Success(t *testing.T) {
 	ticketID := uuid.New()
 	ownerID := uuid.New()
 	pool := &p9a10FakePool{rowResults: []p9a10RowResult{{values: []any{
-		ticketID, ownerID, "Buyer", "VIP", 7, "CONFIRMED", "qr-secret", "123456", false,
+		ticketID, ownerID, "Buyer", "VIP", sql.NullInt64{Int64: 7, Valid: true}, "CONFIRMED", "qr-secret", "123456", false,
 	}}}}
 	repo := NewPostgresGateRepository(pool)
 
@@ -179,11 +180,25 @@ func TestP9a10Repo_GetTicketByID_Success(t *testing.T) {
 	assert.Equal(t, ownerID, got.OwnerUserID)
 	assert.Equal(t, "Buyer", got.OwnerName)
 	assert.Equal(t, "VIP", got.SectionName)
-	assert.Equal(t, 7, got.SeatPos)
+	require.NotNil(t, got.SeatPos)
+	assert.Equal(t, 7, *got.SeatPos)
 	assert.Equal(t, "CONFIRMED", got.Status)
 	assert.Equal(t, "qr-secret", got.QRSecretKey)
 	assert.Equal(t, "123456", got.FallbackPIN)
 	assert.False(t, got.FallbackPINUsed)
+}
+
+func TestP9a10Repo_GetTicketByID_ZonedNullSeat(t *testing.T) {
+	ticketID := uuid.New()
+	pool := &p9a10FakePool{rowResults: []p9a10RowResult{{values: []any{
+		ticketID, uuid.New(), "Buyer", "CAT 1", sql.NullInt64{}, "CONFIRMED", "qr", "123456", false,
+	}}}}
+	repo := NewPostgresGateRepository(pool)
+
+	got, err := repo.GetTicketByID(context.Background(), ticketID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Nil(t, got.SeatPos)
 }
 
 func TestP9a10Repo_GetTicketByID_NotFound(t *testing.T) {

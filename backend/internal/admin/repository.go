@@ -18,6 +18,9 @@ import (
 
 // AdminRepository = data access for admin endpoints.
 type AdminRepository interface {
+	// --- Dashboard KPI ---
+	GetPlatformStats(ctx context.Context) (*PlatformStats, error)
+
 	// --- User management (E7: suspend/unsuspend, list) ---
 	GetUserByID(ctx context.Context, id uuid.UUID) (*AdminUser, error)
 	ListUsers(ctx context.Context, roleFilter, statusFilter, search string, page, limit int) ([]AdminUser, int, error)
@@ -68,6 +71,24 @@ type PostgresAdminRepository struct {
 
 func NewPostgresAdminRepository(pool DBPool) *PostgresAdminRepository {
 	return &PostgresAdminRepository{pool: pool}
+}
+
+// --- Dashboard KPI ---
+
+// GetPlatformStats returns exact counters in one round-trip. Soft-deleted
+// users are excluded so the KPI matches the user list endpoint.
+func (r *PostgresAdminRepository) GetPlatformStats(ctx context.Context) (*PlatformStats, error) {
+	var stats PlatformStats
+	err := r.pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM users WHERE deleted_at IS NULL),
+			(SELECT COUNT(*) FROM events),
+			(SELECT COUNT(*) FROM payment_obligations)`).Scan(
+		&stats.TotalUsers, &stats.TotalEvents, &stats.TotalTransactions)
+	if err != nil {
+		return nil, fmt.Errorf("admin: get platform stats: %w", err)
+	}
+	return &stats, nil
 }
 
 // --- All stub bodies return not-implemented. Fill per E<N>. ---

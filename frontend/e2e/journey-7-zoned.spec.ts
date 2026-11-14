@@ -30,5 +30,19 @@ test.describe('Journey 7: Zoned Checkout (General Admission)', () => {
     });
     await expect(buyButton).toBeEnabled();
     await buyButton.click();
+
+    // Zoned checkout (/bookings/zoned) is BULK + PAID and has NO invoice or
+    // "Simulate Payment Success" step: the UI redirects to My Tickets and the
+    // ticket itself is generated asynchronously by the zoned batch worker.
+    await expect(page).toHaveURL(/\/customer\/my-tickets/);
+    await expect(
+      page.getByRole('heading', { name: 'My Tickets', level: 1 })
+    ).toBeVisible();
+    await expect(page.getByText('VIP', { exact: true }).first()).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(
+      page.getByRole('heading', { name: 'Test Concert' }).first()
+    ).toBeVisible();
   });
 });

@@ -48,6 +48,9 @@ type p9a9AdminRepo struct {
 	sumRefErr error
 }
 
+func (f *p9a9AdminRepo) GetPlatformStats(context.Context) (*PlatformStats, error) {
+	return &PlatformStats{}, nil
+}
 func (f *p9a9AdminRepo) GetUserByID(context.Context, uuid.UUID) (*AdminUser, error) { return nil, nil }
 func (f *p9a9AdminRepo) ListUsers(context.Context, string, string, string, int, int) ([]AdminUser, int, error) {
 	return f.users, f.usersCnt, f.usersErr

@@ -2,6 +2,10 @@ import { test, expect } from '@playwright/test';
 
 const ADMIN_2FA_TOKEN = process.env.ADMIN_2FA_TOKEN ?? 'dummy-2fa-token';
 
+// /admin/* is admin-only (backend RBAC + admin layout guard), so this spec
+// must not inherit the organizer session used by the other journeys.
+test.use({ storageState: 'e2e/.auth/admin.json' });
+
 test.describe('Journey 5: Admin Tools', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript((token: string) => {
@@ -31,6 +35,10 @@ test.describe('Journey 5: Admin Tools', () => {
       page.getByRole('heading', { name: 'User Management' })
     ).toBeVisible();
 
+    // The suspend action is guarded by admin 2FA; the TEST_MODE bypass in
+    // backend/internal/admin/middleware.go accepts the dummy token installed
+    // by beforeEach, so the click must actually change the badge.
+    await expect(page.getByLabel('Suspend Reason')).toBeVisible();
     await page
       .getByRole('button', { name: 'Suspend', exact: true })
       .first()

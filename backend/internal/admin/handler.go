@@ -14,6 +14,7 @@ import (
 
 // AdminService = business logic contract (stubs in P8g).
 type AdminService interface {
+	GetStats(ctx context.Context, adminID uuid.UUID) (*PlatformStats, error)
 	BulkCancel(ctx context.Context, adminID, eventID uuid.UUID, req *BulkCancelRequest) (*BulkCancelResponse, error)
 	GetLedger(ctx context.Context, adminID uuid.UUID, dateFrom, dateTo, status string, page, limit int) (*LedgerResponse, error)
 	ManualReverse(ctx context.Context, adminID uuid.UUID, req *LedgerReverseRequest) (*LedgerReverseResponse, error)
@@ -79,6 +80,21 @@ func adminParsePagination(c *gin.Context) (page, limit int, ok bool) {
 	}
 
 	return page, limit, true
+}
+
+// ---- Dashboard KPI ----
+
+func (h *AdminHandler) GetStats(c *gin.Context) {
+	adminID, ok := adminFromCtx(c)
+	if !ok {
+		return
+	}
+	resp, err := h.svc.GetStats(c.Request.Context(), adminID)
+	if err != nil {
+		adminError(c, 500, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	adminSuccess(c, 200, resp)
 }
 
 // ---- E3: Bulk Cancel (§14.1) ----

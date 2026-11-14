@@ -140,6 +140,14 @@ type UserListResponse struct {
 	Users []AdminUser `json:"users"`
 }
 
+// PlatformStats = exact platform counters for the admin dashboard KPI row.
+// Counting in SQL avoids the old `GET /admin/users?limit=100` cap.
+type PlatformStats struct {
+	TotalUsers        int64 `json:"total_users"`
+	TotalEvents       int64 `json:"total_events"`
+	TotalTransactions int64 `json:"total_transactions"`
+}
+
 // AdminUser = one row from user list (§14.6)
 type AdminUser struct {
 	UserID          uuid.UUID  `json:"user_id"`

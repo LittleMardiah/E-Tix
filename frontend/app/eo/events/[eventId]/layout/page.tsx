@@ -105,6 +105,9 @@ export default function EOLayoutPage() {
 
   const [toast, setToast] = useState<ToastState>(null);
   const [draftFound, setDraftFound] = useState<LayoutDraft | null>(null);
+  const [eventStatus, setEventStatus] = useState<string | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -138,6 +141,26 @@ export default function EOLayoutPage() {
     } catch {
       // Corrupt draft is ignored; it must never block the editor.
     }
+  }, [eventId]);
+
+  // Current event status drives the Publish button (DRAFT only).
+  useEffect(() => {
+    if (!eventId) return;
+    let active = true;
+    const loadStatus = async () => {
+      try {
+        const response = await apiClient.get<{ data: { status?: string } }>(
+          `/events/${eventId}`
+        );
+        if (active) setEventStatus(response.data.data.status ?? null);
+      } catch {
+        // Status is best-effort: without it the button stays hidden.
+      }
+    };
+    void loadStatus();
+    return () => {
+      active = false;
+    };
   }, [eventId]);
 
   // Auto-save the draft every 5s. The ref holds the newest values so the
@@ -183,6 +206,10 @@ export default function EOLayoutPage() {
         return;
       }
       if (event.key === "Escape") {
+        if (publishOpen) {
+          setPublishOpen(false);
+          return;
+        }
         if (modalOpen) {
           setModalOpen(false);
           setEditingIndex(null);
@@ -195,7 +222,7 @@ export default function EOLayoutPage() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen]);
+  }, [modalOpen, publishOpen]);
 
   const applyZones = useCallback((next: ZoneData[]) => {
     setZonesList(next);
@@ -223,6 +250,26 @@ export default function EOLayoutPage() {
       });
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    if (!eventId) return;
+    setPublishing(true);
+    try {
+      const response = await apiClient.patch<{ data: { status?: string } }>(
+        `/eo/events/${eventId}/publish`
+      );
+      setEventStatus(response.data.data.status ?? "ON_SALE");
+      setPublishOpen(false);
+      setToast({ kind: "success", text: "Event dipublish, status ON_SALE." });
+    } catch (error) {
+      setToast({
+        kind: "error",
+        text: getApiErrorMessage(error, "Gagal mempublish event."),
+      });
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -472,6 +519,15 @@ export default function EOLayoutPage() {
             <p className="text-sm text-zinc-400">{eventId}</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            {eventStatus === "DRAFT" && (
+              <button
+                type="button"
+                onClick={() => setPublishOpen(true)}
+                className="rounded-md bg-[#D08080] px-4 py-2 text-sm font-semibold text-[#171717] transition-colors duration-150 hover:bg-[#C47070] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D08080] focus-visible:ring-offset-2"
+              >
+                Publish Event
+              </button>
+            )}
             <button
               type="button"
               onClick={() =>
@@ -808,6 +864,43 @@ export default function EOLayoutPage() {
           </div>
         </div>
       </div>
+
+      {publishOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="publish-modal-title"
+            className="w-full max-w-sm rounded-xl border border-[#E2E8F0] bg-white p-6 text-[#171717]"
+          >
+            <h2 id="publish-modal-title" className="text-base font-semibold tracking-tight">
+              Publish event ini?
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-[#4D4D4D]">
+              Status berubah dari DRAFT menjadi ON_SALE dan event langsung tampil
+              untuk pembeli. Pastikan layout, zona, dan harga sudah benar.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPublishOpen(false)}
+                disabled={publishing}
+                className="inline-flex h-9 items-center justify-center rounded-md px-4 text-sm font-medium text-[#4D4D4D] transition-colors duration-150 hover:bg-[#F1F2F4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D08080] focus-visible:ring-offset-2 disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => void handlePublish()}
+                disabled={publishing}
+                className="inline-flex h-9 items-center justify-center rounded-md bg-[#D08080] px-4 text-sm font-semibold text-[#171717] transition-colors duration-150 hover:bg-[#C47070] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D08080] focus-visible:ring-offset-2 disabled:opacity-50"
+              >
+                {publishing ? "Mempublish..." : "Ya, Publish"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">

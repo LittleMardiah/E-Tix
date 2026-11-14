@@ -19,6 +19,9 @@ var ErrEventNotFound = errors.New("event not found")
 // ErrInvalidEventInput wraps validation failures for event creation.
 var ErrInvalidEventInput = errors.New("invalid event input")
 
+// ErrEventNotDraft is returned when publishing an event that is not DRAFT.
+var ErrEventNotDraft = errors.New("event is not in DRAFT status")
+
 func invalidInput(msg string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidEventInput, msg)
 }
@@ -223,6 +226,17 @@ func (s *EventService) GetOrganizerID(ctx context.Context, id uuid.UUID) (uuid.U
 		return uuid.Nil, fmt.Errorf("get organizer id: %w", err)
 	}
 	return organizerID, nil
+}
+
+// Publish flips a DRAFT event to ON_SALE and returns the refreshed detail.
+func (s *EventService) Publish(ctx context.Context, id uuid.UUID) (*EventDetailResponse, error) {
+	if err := s.repo.PublishDraft(ctx, id); err != nil {
+		if errors.Is(err, ErrEventNotDraft) {
+			return nil, ErrEventNotDraft
+		}
+		return nil, fmt.Errorf("publish event: %w", err)
+	}
+	return s.GetByID(ctx, id)
 }
 
 // UpdateLayoutImageURL persists an uploaded map URL only (width/height and

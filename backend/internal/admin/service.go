@@ -43,6 +43,12 @@ func NewAdminService(
 
 var _ AdminService = (*AdminServiceImpl)(nil)
 
+// ---- Dashboard KPI ----
+
+func (s *AdminServiceImpl) GetStats(ctx context.Context, _ uuid.UUID) (*PlatformStats, error) {
+	return s.repo.GetPlatformStats(ctx)
+}
+
 // ---- E4: GetLedger ----
 func (s *AdminServiceImpl) GetLedger(ctx context.Context, _ uuid.UUID, dateFrom, dateTo, status string, page, limit int) (*LedgerResponse, error) {
 	entries, total, err := s.repo.ListLedgerEntries(ctx, dateFrom, dateTo, status, page, limit)

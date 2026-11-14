@@ -25,19 +25,23 @@ test.describe('Journey 6: EO Custom Map Layout', () => {
 
     // V10: the URL field was replaced by a real upload to
     // POST /eo/events/:id/upload-map.
-    await page.locator('input[type="file"]').setInputFiles({
+    // setInputFiles with an in-memory PNG instead of a fixture path: same
+    // multipart upload, no binary file to keep in the repo.
+    await page.locator('#layout-image-file').setInputFiles({
       name: 'map.png',
       mimeType: 'image/png',
       buffer: PNG_BUFFER,
     });
     await expect(page.getByText('/uploads/maps/', { exact: false })).toBeVisible();
 
-    await page.locator('input[type="number"]').nth(0).fill('1920');
-    await page.locator('input[type="number"]').nth(1).fill('1080');
-    await page.locator('select').selectOption('ZONED');
-    await page.locator('textarea').fill(ZONES_JSON);
+    // ID selectors: the editor renders several <select>/<input type=number>
+    // (zone editor), so bare tag selectors violate Playwright strict mode.
+    await page.locator('#layout-width').fill('1920');
+    await page.locator('#layout-height').fill('1080');
+    await page.locator('#seating-mode').selectOption('ZONED');
+    await page.locator('#zones-json').fill(ZONES_JSON);
 
-    await expect(page.locator('polygon')).toBeVisible();
+    await expect(page.locator('polygon').first()).toBeVisible();
 
     // Bagian 2: saving reports through an in-page toast, never window.alert.
     await page.getByRole('button', { name: 'Simpan Layout' }).click();

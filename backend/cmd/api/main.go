@@ -409,6 +409,11 @@ func main() {
 		auth.RBACMiddleware("event_organizer", "admin"),
 		auth.RateLimitMiddlewareScoped(rdb, 20, time.Minute, auth.RateLimitScopeUser),
 		catalogHandler.UploadMap)
+	router.PATCH("/eo/events/:event_id/publish",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RBACMiddleware("event_organizer", "admin"),
+		auth.RateLimitMiddlewareScoped(rdb, 20, time.Minute, auth.RateLimitScopeUser),
+		catalogHandler.Publish)
 
 	// FASE 10 Epic 5: EO custom map layout.
 	router.PUT("/eo/events/:event_id/layout",
@@ -479,10 +484,12 @@ func main() {
 	// FASE 8 P8h: admin routes (11 endpoints, API_CONTRACT §14)
 	adminGroup := router.Group("/admin")
 	adminGroup.Use(auth.AuthMiddleware(jwtSvc, blacklistSvc))
-	adminGroup.Use(auth.RBACMiddleware("admin", "event_organizer"))
+	// Admin tools are admin-only: event_organizer must not reach /admin/*.
+	adminGroup.Use(auth.RBACMiddleware("admin"))
 	adminGroup.Use(auth.RateLimitMiddlewareScoped(rdb, 30, time.Minute, auth.RateLimitScopeUser))
 	{
 		adminGroup.POST("/events/:event_id/bulk-cancel", admin.IdempotencyMiddleware(rdb, 24*time.Hour), admin2faMiddleware, adminH.BulkCancel)
+		adminGroup.GET("/stats", adminH.GetStats)
 		adminGroup.GET("/ledger", adminH.GetLedger)
 		adminGroup.POST("/ledger/reverse", admin.IdempotencyMiddleware(rdb, 24*time.Hour), admin2faMiddleware, adminH.ManualReverse)
 		adminGroup.GET("/stuck-locks", adminH.GetStuckLocks)

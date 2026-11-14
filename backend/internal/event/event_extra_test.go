@@ -85,6 +85,10 @@ func (f *fakeEventRepo) GetOrganizerID(_ context.Context, _ uuid.UUID) (uuid.UUI
 	return f.byID.OrganizerID, nil
 }
 
+func (f *fakeEventRepo) PublishDraft(_ context.Context, _ uuid.UUID) error {
+	return f.updateErr
+}
+
 func (f *fakeEventRepo) InsertEvent(_ context.Context, ev *Event) error {
 	if f.updateErr != nil {
 		return f.updateErr

@@ -27,6 +27,9 @@ type EventRepository interface {
 	GetOrganizerID(ctx context.Context, eventID uuid.UUID) (uuid.UUID, error)
 	// InsertEvent creates a draft event owned by organizer_id.
 	InsertEvent(ctx context.Context, ev *Event) error
+	// PublishDraft moves an event from DRAFT to ON_SALE. Returns
+	// ErrEventNotDraft when the row exists but is in another status.
+	PublishDraft(ctx context.Context, id uuid.UUID) error
 }
 
 // ListFilter carries validated catalog list filters.
@@ -354,6 +357,22 @@ func (r *PostgresEventRepository) InsertEvent(ctx context.Context, ev *Event) er
 		ev.OrganizerID, ev.Name, ev.Description, ev.VenueName, ev.VenueAddress,
 		ev.EventDate, ev.EventStartTime, endTime, ev.Status, ev.SeatingMode,
 	).Scan(&ev.ID, &ev.CreatedAt, &ev.UpdatedAt)
+}
+
+func (r *PostgresEventRepository) PublishDraft(ctx context.Context, id uuid.UUID) error {
+	tag, err := r.db.Exec(ctx, `
+        UPDATE events
+        SET status = 'ON_SALE',
+            published_at = COALESCE(published_at, NOW()),
+            updated_at = NOW()
+        WHERE id = $1 AND status::text = 'DRAFT'`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrEventNotDraft
+	}
+	return nil
 }
 
 func (r *PostgresEventRepository) UpdateEventLayout(ctx context.Context, id uuid.UUID, layoutImageURL string, width, height int, seatingMode string, layoutZones []byte) error {

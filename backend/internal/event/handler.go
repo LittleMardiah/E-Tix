@@ -26,14 +26,27 @@ var mapImageExtensions = map[string]string{
 	"image/webp": ".webp",
 }
 
-// mapUploadDir resolves the destination folder. The default points at the
-// Next.js public directory so the returned /uploads/maps URL is served
-// statically without an extra file server.
-func mapUploadDir() string {
-	if dir := os.Getenv("MAP_UPLOAD_DIR"); dir != "" {
-		return dir
+// mapUploadDir resolves the destination folder to an ABSOLUTE path and makes
+// sure it exists. MAP_UPLOAD_DIR wins when set; otherwise the local-dev default
+// points at the Next.js public directory so the returned /uploads/maps URL is
+// served statically without an extra file server.
+//
+// It must be absolute because the backend and the frontend can be started from
+// different working directories (repo root, /app in Docker, ...); a relative
+// path made os.Create land in a directory Next.js never serves.
+func mapUploadDir() (string, error) {
+	dir := os.Getenv("MAP_UPLOAD_DIR")
+	if dir == "" {
+		dir = filepath.Join("..", "frontend", "public", "uploads", "maps")
 	}
-	return filepath.Join("..", "frontend", "public", "uploads", "maps")
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve map upload dir: %w", err)
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return "", fmt.Errorf("create map upload dir: %w", err)
+	}
+	return abs, nil
 }
 
 // EventHandler exposes the public event catalog endpoints.
@@ -203,6 +216,55 @@ func (h *EventHandler) Create(c *gin.Context) {
 	})
 }
 
+// Publish handles PATCH /eo/events/:event_id/publish.
+//
+// Only DRAFT events can be published; the transition flips status to ON_SALE
+// and stamps published_at. Ownership is enforced from the JWT (admin bypass).
+func (h *EventHandler) Publish(c *gin.Context) {
+	eventID, err := uuid.Parse(c.Param("event_id"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid event id")
+		return
+	}
+	userID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid session")
+		return
+	}
+	ownerID, err := h.svc.GetOrganizerID(c.Request.Context(), eventID)
+	if err != nil {
+		if errors.Is(err, ErrEventNotFound) {
+			writeError(c, http.StatusNotFound, "NOT_FOUND", "event not found")
+			return
+		}
+		writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		return
+	}
+	if c.GetString("role") != "admin" && ownerID != userID {
+		writeError(c, http.StatusForbidden, "FORBIDDEN", "not the organizer of this event")
+		return
+	}
+
+	resp, err := h.svc.Publish(c.Request.Context(), eventID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrEventNotDraft):
+			writeError(c, http.StatusConflict, "CONFLICT", "event is not in DRAFT status")
+		case errors.Is(err, ErrEventNotFound):
+			writeError(c, http.StatusNotFound, "NOT_FOUND", "event not found")
+		default:
+			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    resp,
+		"error":   nil,
+	})
+}
+
 // UploadMap handles POST /eo/events/:event_id/upload-map.
 //
 // Multipart field "file" (png/jpeg/webp, <= 5 MiB). The file is written to
@@ -266,8 +328,8 @@ func (h *EventHandler) UploadMap(c *gin.Context) {
 		return
 	}
 
-	dir := mapUploadDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	dir, err := mapUploadDir()
+	if err != nil {
 		writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "cannot prepare upload directory")
 		return
 	}

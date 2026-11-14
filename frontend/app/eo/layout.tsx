@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/stores/authStore';
+import { useRoleGuard } from '@/lib/hooks/useRoleGuard';
 
 const NAV_ITEMS = [
   {
@@ -23,11 +24,22 @@ export default function EOLayout({
   const pathname = usePathname() ?? '';
   const router = useRouter();
   const logout = useAuthStore((state) => state.logout);
+  // Admins may use the EO tools (backend allows admin on /eo write routes);
+  // customers and gate staff are bounced to their own home.
+  const checking = useRoleGuard('event_organizer', 'admin');
 
   const handleLogout = () => {
     logout();
     router.push('/auth/login');
   };
+
+  if (checking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#FAFAFA]">
+        <p className="text-sm text-[#4D4D4D]">Memuat...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#FAFAFA] text-[#171717] md:flex">

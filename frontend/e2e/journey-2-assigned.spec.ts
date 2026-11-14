@@ -15,13 +15,17 @@ test.describe('Journey 2: Assigned Seating (Flash Sale)', () => {
 
     await page.goto(`/customer/seat-map/${SECTION_ID}?eventId=${EVENT_ID}`);
 
-    await page
-      .getByRole('button', { name: /Kursi .* - AVAILABLE/ })
-      .first()
-      .click();
+    // Seats are labelled by lib/format.ts seatLabel(): row A = A1..A12.
+    // A1 is already CONFIRMED in the CI seed, so target the first AVAILABLE
+    // seat of row A instead of hard-coding A1 (which would be flaky).
+    const availableSeat = page.getByRole('button', {
+      name: /^Kursi A\d+ - AVAILABLE$/,
+    });
+    await expect(availableSeat.first()).toBeVisible();
+    await availableSeat.first().click();
     await page.getByRole('button', { name: /Split Pay/ }).click();
 
-    await expect(page.getByText(/Terpilih:/)).toContainText('1');
+    await expect(page.getByText(/Terpilih:/)).toContainText(/A\d+/);
 
     await page.getByRole('button', { name: /Kunci .* Kursi/ }).click();
 

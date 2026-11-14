@@ -131,6 +131,10 @@ type fakeRepo struct {
 	sumErr           error
 }
 
+func (f *fakeRepo) GetPlatformStats(context.Context) (*admin.PlatformStats, error) {
+	return &admin.PlatformStats{}, nil
+}
+
 func (f *fakeRepo) GetUserByID(_ context.Context, _ uuid.UUID) (*admin.AdminUser, error) {
 	return f.user, f.userErr
 }
