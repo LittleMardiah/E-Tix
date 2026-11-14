@@ -50,8 +50,11 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:15433/etix_flash_e2e?sslmode=disable
       REDIS_URL: redis://localhost:16379
       RABBITMQ_URL: amqp://guest:guest@localhost:5673/
-      JWT_PRIVATE_KEY_PATH: ${{ runner.temp }}/jwt/private.pem
-      JWT_PUBLIC_KEY_PATH: ${{ runner.temp }}/jwt/public.pem
+      # Absolute paths only: `runner.*` context is NOT allowed in job-level
+      # env (GitHub rejects it with "Unrecognized named-value: 'runner'"); it
+      # is only available inside step-level fields.
+      JWT_PRIVATE_KEY_PATH: /tmp/jwt/private.pem
+      JWT_PUBLIC_KEY_PATH: /tmp/jwt/public.pem
       PORT: "8080"
       TEST_MODE: "true"
       LOG_LEVEL: info
@@ -81,10 +84,10 @@ jobs:
       # Backend only accepts PKCS8 private key + PKIX public key paths.
       - name: Generate JWT keys
         run: |
-          mkdir -p "${{ runner.temp }}/jwt"
-          openssl genrsa -out "${{ runner.temp }}/jwt/private.pem" 2048
-          openssl rsa -in "${{ runner.temp }}/jwt/private.pem" -pubout -out "${{ runner.temp }}/jwt/public.pem"
-          ls -la "${{ runner.temp }}/jwt"
+          mkdir -p /tmp/jwt
+          openssl genrsa -out /tmp/jwt/private.pem 2048
+          openssl rsa -in /tmp/jwt/private.pem -pubout -out /tmp/jwt/public.pem
+          ls -la /tmp/jwt
 
       - name: Run migrations
         working-directory: backend
