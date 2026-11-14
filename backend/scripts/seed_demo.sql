@@ -73,7 +73,7 @@ INSERT INTO events (
   '18:00',
   'ON_SALE',
   'ZONED',
-  'https://placehold.co/1200x800/202020/FFFFFF?text=Venue+Map',
+  '/images/map-blackpink.jpg',
   1200,
   800,
   '[

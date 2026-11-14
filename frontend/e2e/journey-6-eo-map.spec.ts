@@ -28,10 +28,8 @@ test.describe('Journey 6: EO Custom Map Layout', () => {
 
     await expect(page.locator('polygon')).toBeVisible();
 
-    const dialogPromise = page.waitForEvent('dialog');
+    // Bagian 2: saving reports through an in-page toast, never window.alert.
     await page.getByRole('button', { name: 'Simpan Layout' }).click();
-    const dialog = await dialogPromise;
-    expect(dialog.message()).toContain('berhasil');
-    await dialog.accept();
+    await expect(page.getByText('Layout berhasil disimpan!')).toBeVisible();
   });
 });

@@ -61,6 +61,8 @@ export default function AdminForceRelease() {
   const [releasingId, setReleasingId] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [pendingLock, setPendingLock] = useState<StuckLock | null>(null);
+  const [toast, setToast] = useState('');
 
   const fetchLocks = useCallback(async (token: string) => {
     setLoading(true);
@@ -91,14 +93,22 @@ export default function AdminForceRelease() {
     saveAdmin2FAToken(token);
   };
 
-  const releaseLock = async (lock: StuckLock) => {
-    if (
-      !window.confirm(
-        `Release kursi untuk booking ${lock.booking_id}? Tindakan ini membatalkan booking terkunci.`
-      )
-    ) {
-      return;
-    }
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(''), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  const requestRelease = (lock: StuckLock) => {
+    setError('');
+    setMessage('');
+    setPendingLock(lock);
+  };
+
+  const confirmRelease = async () => {
+    const lock = pendingLock;
+    if (!lock) return;
+    setPendingLock(null);
 
     setReleasingId(lock.booking_id);
     setError('');
@@ -117,7 +127,9 @@ export default function AdminForceRelease() {
       setLocks((current) =>
         current.filter((item) => item.booking_id !== lock.booking_id)
       );
-      setMessage(`Kursi untuk booking ${lock.booking_id} berhasil dirilis.`);
+      const successText = `Kursi untuk booking ${lock.booking_id} berhasil dirilis.`;
+      setMessage(successText);
+      setToast(successText);
     } catch (err: unknown) {
       setError(getApiErrorMessage(err, 'Gagal force release. Periksa 2FA.'));
     } finally {
@@ -189,13 +201,53 @@ export default function AdminForceRelease() {
               </div>
               <Button
                 variant="outline"
-                onClick={() => void releaseLock(lock)}
+                onClick={() => requestRelease(lock)}
                 isLoading={releasingId === lock.booking_id}
               >
                 Release
               </Button>
             </Card>
           ))}
+        </div>
+      )}
+
+      {pendingLock && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="force-release-title"
+            className="w-full max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-6 shadow-2xl"
+          >
+            <h2 id="force-release-title" className="text-lg font-bold text-[#171717]">
+              Konfirmasi Force Release
+            </h2>
+            <p className="mt-2 text-sm text-[#4D4D4D]">
+              Kursi untuk booking <span className="font-mono">{pendingLock.booking_id}</span> akan
+              dirilis dan booking terkunci dibatalkan.
+            </p>
+            <p className="mt-2 text-sm text-[#4D4D4D]">
+              {pendingLock.section_name} &bull; Kursi: {pendingLock.seat_positions.join(", ")}
+            </p>
+            <p className="mt-2 text-sm text-[#4D4D4D]">
+              Alasan: <span className="font-medium text-[#171717]">{reason || "-"}</span>
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setPendingLock(null)}>
+                Batal
+              </Button>
+              <Button onClick={() => void confirmRelease()}>Ya, Release</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          role="status"
+          className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-xl border border-green-500/40 bg-green-500/15 px-4 py-3 text-sm text-green-800 shadow-xl"
+        >
+          {toast}
         </div>
       )}
     </div>

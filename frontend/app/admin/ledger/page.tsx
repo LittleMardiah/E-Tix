@@ -6,6 +6,8 @@ import { Alert } from '@/components/ui/Alert';
 import { formatRupiah } from '@/lib/format';
 
 const ADMIN_2FA_STORAGE_KEY = 'e-tix-flash:admin-2fa-token';
+// Matches the backend default page size ceiling (adminParsePagination: 1..100).
+const PAGE_SIZE = 20;
 
 function readAdmin2FAToken(): string {
   if (typeof window === 'undefined') return '';
@@ -81,8 +83,9 @@ export default function AdminLedger() {
   const [twoFA, setTwoFA] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
 
-  const fetchLedger = useCallback(async (token: string) => {
+  const fetchLedger = useCallback(async (token: string, pageNumber: number) => {
     setLoading(true);
     setError('');
     try {
@@ -90,10 +93,12 @@ export default function AdminLedger() {
         '/admin/ledger',
         {
           headers: token ? { 'X-Admin-2FA-Token': token } : undefined,
+          params: { page: pageNumber, limit: PAGE_SIZE },
         }
       );
       setEntries(response.data.data.entries ?? []);
       setSummary(response.data.data.summary);
+      setPage(pageNumber);
     } catch (err: unknown) {
       setError(getApiErrorMessage(err, 'Gagal memuat ledger. Periksa 2FA.'));
     } finally {
@@ -104,8 +109,13 @@ export default function AdminLedger() {
   useEffect(() => {
     const stored = readAdmin2FAToken();
     setTwoFA(stored);
-    void fetchLedger(stored);
+    void fetchLedger(stored, 1);
   }, [fetchLedger]);
+
+  // The response has no total count, so "more pages" is inferred from a full
+  // page. That is exact for every page except a boundary page that happens to
+  // be exactly full; Next then lands on an empty page and disables itself.
+  const hasNextPage = entries.length === PAGE_SIZE;
 
   const handleTokenChange = (token: string) => {
     setTwoFA(token);
@@ -136,7 +146,7 @@ export default function AdminLedger() {
         </div>
         <button
           type="button"
-          onClick={() => void fetchLedger(twoFA)}
+          onClick={() => void fetchLedger(twoFA, page)}
           disabled={loading}
           className="bg-[#D08080] text-[#171717] font-medium rounded-lg px-5 py-2.5 hover:bg-[#c06b6b] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
@@ -229,6 +239,28 @@ export default function AdminLedger() {
             </table>
           </div>
         )}
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#E2E8F0] px-4 py-3">
+          <p className="text-xs text-[#4D4D4D]">Halaman {page}</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void fetchLedger(twoFA, page - 1)}
+              disabled={loading || page <= 1}
+              className="rounded-lg border border-[#E2E8F0] px-4 py-2 text-sm font-medium text-[#171717] transition-colors hover:border-[#D08080] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Sebelumnya
+            </button>
+            <button
+              type="button"
+              onClick={() => void fetchLedger(twoFA, page + 1)}
+              disabled={loading || !hasNextPage}
+              className="rounded-lg border border-[#E2E8F0] px-4 py-2 text-sm font-medium text-[#171717] transition-colors hover:border-[#D08080] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Berikutnya
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
