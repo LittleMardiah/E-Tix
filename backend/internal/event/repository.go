@@ -21,15 +21,22 @@ type EventRepository interface {
 	// query. Used by EventService.List to avoid N+1 on catalog pages.
 	GetSectionsByEventIDs(ctx context.Context, eventIDs []uuid.UUID) (map[uuid.UUID][]Section, error)
 	UpdateEventLayout(ctx context.Context, id uuid.UUID, layoutImageURL string, width, height int, seatingMode string, layoutZones []byte) error
+	// UpdateLayoutImageURL persists only the uploaded map URL.
+	UpdateLayoutImageURL(ctx context.Context, id uuid.UUID, layoutImageURL string) error
+	// GetOrganizerID returns the owner of an event (used for EO authorization).
+	GetOrganizerID(ctx context.Context, eventID uuid.UUID) (uuid.UUID, error)
+	// InsertEvent creates a draft event owned by organizer_id.
+	InsertEvent(ctx context.Context, ev *Event) error
 }
 
 // ListFilter carries validated catalog list filters.
 type ListFilter struct {
-	Status string
-	Search string
-	SortBy string
-	Page   int
-	Limit  int
+	Status      string
+	Search      string
+	SortBy      string
+	OrganizerID uuid.UUID
+	Page        int
+	Limit       int
 }
 
 // DBPool is the minimal pgx surface used by PostgresEventRepository.
@@ -95,8 +102,12 @@ const eventColumnsQualified = `e.id, e.organizer_id, e.name, COALESCE(e.descript
 	e.seat_layout_version, e.created_at, e.updated_at, e.published_at`
 
 func buildListWhere(filter ListFilter) (string, []any) {
-	conds := make([]string, 0, 2)
-	args := make([]any, 0, 2)
+	conds := make([]string, 0, 3)
+	args := make([]any, 0, 3)
+	if filter.OrganizerID != uuid.Nil {
+		args = append(args, filter.OrganizerID)
+		conds = append(conds, fmt.Sprintf("organizer_id = $%d", len(args)))
+	}
 	if filter.Status != "" {
 		args = append(args, filter.Status)
 		conds = append(conds, fmt.Sprintf("status::text = $%d", len(args)))
@@ -313,6 +324,36 @@ func (r *PostgresEventRepository) GetSectionsByEventIDs(ctx context.Context, eve
 		return nil, fmt.Errorf("iterate sections: %w", err)
 	}
 	return out, nil
+}
+
+func (r *PostgresEventRepository) UpdateLayoutImageURL(ctx context.Context, id uuid.UUID, layoutImageURL string) error {
+	tag, err := r.db.Exec(ctx, `
+        UPDATE events
+        SET layout_image_url = $2,
+            updated_at = NOW()
+        WHERE id = $1`, id, layoutImageURL)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("event with id %s not found", id)
+	}
+	return nil
+}
+
+func (r *PostgresEventRepository) InsertEvent(ctx context.Context, ev *Event) error {
+	var endTime any
+	if ev.EventEndTime != "" {
+		endTime = ev.EventEndTime
+	}
+	return r.db.QueryRow(ctx, `
+        INSERT INTO events (organizer_id, name, description, venue_name, venue_address,
+            event_date, event_start_time, event_end_time, status, seating_mode)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING id, created_at, updated_at`,
+		ev.OrganizerID, ev.Name, ev.Description, ev.VenueName, ev.VenueAddress,
+		ev.EventDate, ev.EventStartTime, endTime, ev.Status, ev.SeatingMode,
+	).Scan(&ev.ID, &ev.CreatedAt, &ev.UpdatedAt)
 }
 
 func (r *PostgresEventRepository) UpdateEventLayout(ctx context.Context, id uuid.UUID, layoutImageURL string, width, height int, seatingMode string, layoutZones []byte) error {

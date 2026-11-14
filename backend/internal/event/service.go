@@ -16,6 +16,25 @@ import (
 // ErrEventNotFound is returned when the requested event does not exist.
 var ErrEventNotFound = errors.New("event not found")
 
+// ErrInvalidEventInput wraps validation failures for event creation.
+var ErrInvalidEventInput = errors.New("invalid event input")
+
+func invalidInput(msg string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidEventInput, msg)
+}
+
+// CreateEventRequest is the body for POST /eo/events.
+type CreateEventRequest struct {
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	VenueName      string `json:"venue_name"`
+	VenueAddress   string `json:"venue_address"`
+	EventDate      string `json:"event_date"`
+	EventStartTime string `json:"event_start_time"`
+	EventEndTime   string `json:"event_end_time"`
+	SeatingMode    string `json:"seating_mode"`
+}
+
 // EventService aggregates catalog reads over EventRepository.
 type EventService struct {
 	repo EventRepository
@@ -126,6 +145,90 @@ type UpdateLayoutRequest struct {
 	LayoutImageHeight int    `json:"layout_image_height"`
 	SeatingMode       string `json:"seating_mode"`
 	LayoutZones       string `json:"layout_zones"`
+}
+
+// Create inserts a DRAFT event owned by the caller and returns its detail.
+func (s *EventService) Create(ctx context.Context, organizerID uuid.UUID, req CreateEventRequest) (*EventDetailResponse, error) {
+	name := strings.TrimSpace(req.Name)
+	venueName := strings.TrimSpace(req.VenueName)
+	venueAddress := strings.TrimSpace(req.VenueAddress)
+	if name == "" {
+		return nil, invalidInput("name is required")
+	}
+	if venueName == "" {
+		return nil, invalidInput("venue_name is required")
+	}
+	if venueAddress == "" {
+		return nil, invalidInput("venue_address is required")
+	}
+
+	eventDate, err := time.Parse("2006-01-02", strings.TrimSpace(req.EventDate))
+	if err != nil {
+		return nil, invalidInput("event_date must be YYYY-MM-DD")
+	}
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	if eventDate.Before(today) {
+		return nil, invalidInput("event_date must not be in the past")
+	}
+
+	startTime, err := time.Parse("15:04", strings.TrimSpace(req.EventStartTime))
+	if err != nil {
+		return nil, invalidInput("event_start_time must be HH:MM")
+	}
+	endTime := ""
+	if strings.TrimSpace(req.EventEndTime) != "" {
+		parsedEnd, err := time.Parse("15:04", strings.TrimSpace(req.EventEndTime))
+		if err != nil {
+			return nil, invalidInput("event_end_time must be HH:MM")
+		}
+		if !parsedEnd.After(startTime) {
+			return nil, invalidInput("event_end_time must be after event_start_time")
+		}
+		endTime = parsedEnd.Format("15:04:05")
+	}
+
+	mode := strings.ToUpper(strings.TrimSpace(req.SeatingMode))
+	if mode == "" {
+		mode = "ZONED"
+	}
+	if mode != "ZONED" && mode != "ASSIGNED" {
+		return nil, invalidInput("seating_mode must be ZONED or ASSIGNED")
+	}
+
+	ev := &Event{
+		OrganizerID:    organizerID,
+		Name:           name,
+		Description:    strings.TrimSpace(req.Description),
+		VenueName:      venueName,
+		VenueAddress:   venueAddress,
+		EventDate:      eventDate.Format("2006-01-02"),
+		EventStartTime: startTime.Format("15:04:05"),
+		EventEndTime:   endTime,
+		Status:         "DRAFT",
+		SeatingMode:    mode,
+	}
+	if err := s.repo.InsertEvent(ctx, ev); err != nil {
+		return nil, fmt.Errorf("create event: %w", err)
+	}
+	return s.GetByID(ctx, ev.ID)
+}
+
+// GetOrganizerID returns the owner of an event.
+func (s *EventService) GetOrganizerID(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	organizerID, err := s.repo.GetOrganizerID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrEventNotFound
+		}
+		return uuid.Nil, fmt.Errorf("get organizer id: %w", err)
+	}
+	return organizerID, nil
+}
+
+// UpdateLayoutImageURL persists an uploaded map URL only (width/height and
+// zones are left untouched until the EO saves the editor).
+func (s *EventService) UpdateLayoutImageURL(ctx context.Context, id uuid.UUID, layoutImageURL string) error {
+	return s.repo.UpdateLayoutImageURL(ctx, id, layoutImageURL)
 }
 
 func (s *EventService) UpdateLayout(ctx context.Context, id uuid.UUID, req UpdateLayoutRequest) error {

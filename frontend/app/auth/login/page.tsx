@@ -1,7 +1,7 @@
 'use client';
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -16,8 +16,22 @@ const schema = z.object({
 
 type LoginValues = z.infer<typeof schema>;
 
-export default function Login() {
+const ROLE_HOME: Record<string, string> = {
+  event_organizer: '/eo/dashboard',
+  admin: '/admin/dashboard',
+  customer: '/customer/dashboard',
+};
+
+/** Only same-origin, absolute paths are accepted as post-login redirects. */
+function safeRedirect(value: string | null): string | null {
+  if (!value) return null;
+  if (!value.startsWith('/') || value.startsWith('//')) return null;
+  return value;
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const login = useAuthStore((state) => state.login);
   const [error, setError] = useState('');
   const {
@@ -30,7 +44,11 @@ export default function Login() {
     setError('');
     try {
       await login({ email: data.email, password: data.password });
-      router.push('/customer/dashboard');
+      // Zustand's set() is synchronous, so the role is available right after
+      // login() resolves. Read it from the store instead of the hook closure.
+      const role = useAuthStore.getState().user?.role ?? 'customer';
+      const redirect = safeRedirect(searchParams.get('redirect'));
+      router.push(redirect ?? ROLE_HOME[role] ?? '/customer/dashboard');
     } catch (err) {
       setError(getApiErrorMessage(err, 'Login failed'));
     }
@@ -127,5 +145,19 @@ export default function Login() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function Login() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[#FAFAFA]">
+          <p className="text-[#4D4D4D]">Memuat...</p>
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }

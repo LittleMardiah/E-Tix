@@ -13,14 +13,25 @@ const ZONES_JSON = JSON.stringify([
   },
 ]);
 
+// 1x1 transparent PNG: enough to exercise the multipart upload endpoint.
+const PNG_BUFFER = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
+
 test.describe('Journey 6: EO Custom Map Layout', () => {
   test('EO can upload layout and see live preview', async ({ page }) => {
     await page.goto(`/eo/events/${EVENT_ID}/layout`);
 
-    await page
-      .locator('input')
-      .nth(0)
-      .fill('https://placehold.co/1920x1080/202020/FFFFFF?text=My+Custom+Map');
+    // V10: the URL field was replaced by a real upload to
+    // POST /eo/events/:id/upload-map.
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'map.png',
+      mimeType: 'image/png',
+      buffer: PNG_BUFFER,
+    });
+    await expect(page.getByText('/uploads/maps/', { exact: false })).toBeVisible();
+
     await page.locator('input[type="number"]').nth(0).fill('1920');
     await page.locator('input[type="number"]').nth(1).fill('1080');
     await page.locator('select').selectOption('ZONED');

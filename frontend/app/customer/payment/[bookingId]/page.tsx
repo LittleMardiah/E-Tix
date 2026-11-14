@@ -67,6 +67,8 @@ function PaymentContent() {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [remaining, setRemaining] = useState<number | null>(null);
+  const [mockSubmitting, setMockSubmitting] = useState(false);
+  const [mockError, setMockError] = useState('');
 
   const prefilledRef = useRef(false);
 
@@ -161,6 +163,22 @@ function PaymentContent() {
     }
   };
 
+  // TEST_MODE only: the backend route does not exist outside it.
+  const mockEnabled = process.env.NEXT_PUBLIC_TEST_MODE === 'true';
+
+  const handleMockSuccess = async () => {
+    setMockSubmitting(true);
+    setMockError('');
+    try {
+      await apiClient.post('/webhook/payment/mock', { booking_id: bookingId });
+      router.push('/customer/my-tickets');
+    } catch (err) {
+      setMockError(getApiErrorMessage(err, 'Mock payment gagal.'));
+    } finally {
+      setMockSubmitting(false);
+    }
+  };
+
   if (result) {
     return (
       <div className="min-h-screen bg-[#FAFAFA]">
@@ -221,6 +239,25 @@ function PaymentContent() {
               >
                 Kembali ke Katalog
               </button>
+              {mockEnabled && (
+                <div className="pt-2 border-t border-[#E2E8F0]">
+                  {mockError && (
+                    <Alert variant="error" className="mb-3">
+                      {mockError}
+                    </Alert>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleMockSuccess}
+                    disabled={mockSubmitting}
+                    className="w-full text-xs font-medium text-[#8F8F8F] underline underline-offset-2 hover:text-[#171717] disabled:opacity-50"
+                  >
+                    {mockSubmitting
+                      ? 'Memproses mock payment...'
+                      : 'Simulate Payment Success (Mock)'}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -71,6 +71,28 @@ func (f *fakeEventRepo) GetSectionsByEventIDs(_ context.Context, _ []uuid.UUID) 
 	return f.byIDs, nil
 }
 
+func (f *fakeEventRepo) UpdateLayoutImageURL(_ context.Context, _ uuid.UUID, _ string) error {
+	return f.updateErr
+}
+
+func (f *fakeEventRepo) GetOrganizerID(_ context.Context, _ uuid.UUID) (uuid.UUID, error) {
+	if f.byIDErr != nil {
+		return uuid.Nil, f.byIDErr
+	}
+	if f.byID == nil {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	return f.byID.OrganizerID, nil
+}
+
+func (f *fakeEventRepo) InsertEvent(_ context.Context, ev *Event) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	ev.ID = uuid.New()
+	return nil
+}
+
 // testEvent builds an Event row.
 func testEvent(id uuid.UUID) Event {
 	layoutURL := "https://cdn.test/layout.png"

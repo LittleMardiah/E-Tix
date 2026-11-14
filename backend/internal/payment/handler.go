@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -309,6 +310,77 @@ func (h *PaymentHandler) BulkAssign(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    resp,
+		"error":   nil,
+		"meta":    paymentMeta(),
+	})
+}
+
+// MockWebhookRequest is the body for POST /webhook/payment/mock.
+type MockWebhookRequest struct {
+	BookingID string `json:"booking_id"`
+}
+
+// MockWebhook simulates a gateway settlement for every PENDING obligation of
+// a booking, without talking to Midtrans.
+//
+// SECURITY: the route is only registered when TEST_MODE=true (cmd/api/main.go),
+// and main.go refuses to boot with TEST_MODE in production. The payload is
+// passed through the same PaymentService.HandleWebhook path as a real
+// webhook, so status transitions stay identical.
+func (h *PaymentHandler) MockWebhook(c *gin.Context) {
+	var req MockWebhookRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+	bookingID, err := uuid.Parse(strings.TrimSpace(req.BookingID))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid booking_id")
+		return
+	}
+
+	obligations, err := h.repo.ListByBooking(c.Request.Context(), bookingID)
+	if err != nil {
+		h.logger.Error("mock webhook: list obligations failed", zap.Error(err))
+		writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		return
+	}
+
+	headers := map[string]string{"X-Gateway-Signature": "mock-signature"}
+	processed := 0
+	for i := range obligations {
+		obligation := obligations[i]
+		if obligation.Status != StatusPending ||
+			obligation.ExternalTransactionID == nil ||
+			*obligation.ExternalTransactionID == "" {
+			continue
+		}
+		payload, err := json.Marshal(WebhookPayload{
+			ExternalTransactionID: *obligation.ExternalTransactionID,
+			Status:                "SUCCESS",
+			Amount:                obligation.Amount,
+			Signature:             "mock-signature",
+		})
+		if err != nil {
+			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+			return
+		}
+		if err := h.svc.HandleWebhook(c.Request.Context(), payload, headers); err != nil {
+			h.logger.Error("mock webhook: handle failed", zap.Error(err))
+			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+			return
+		}
+		processed++
+	}
+
+	if processed == 0 {
+		writeError(c, http.StatusUnprocessableEntity, "NO_PENDING_PAYMENT", "no pending payment obligation for this booking")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    gin.H{"booking_id": bookingID.String(), "processed": processed},
 		"error":   nil,
 		"meta":    paymentMeta(),
 	})

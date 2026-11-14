@@ -330,6 +330,12 @@ func main() {
 	// Public webhook — auth via signature (adapter), no rate limit per API_CONTRACT §9.5.
 	router.POST("/webhook/payment", paymentHandler.HandleWebhook)
 
+	// Mock settlement for local demo/E2E only. Never registered outside
+	// TEST_MODE, and main.go already refuses TEST_MODE in production.
+	if cfg.TestMode == "true" {
+		router.POST("/webhook/payment/mock", paymentHandler.MockWebhook)
+	}
+
 	router.POST("/payments/bulk/assign",
 		auth.AuthMiddleware(jwtSvc, blacklistSvc),
 		auth.RateLimitMiddlewareScoped(rdb, 30, time.Minute, auth.RateLimitScopeUser),
@@ -391,6 +397,18 @@ func main() {
 	router.GET("/events/:event_id",
 		auth.RateLimitMiddlewareScoped(rdb, 100, time.Minute, auth.RateLimitScopeIP),
 		catalogHandler.GetByID)
+
+	// V10: EO event management (create + local map upload).
+	router.POST("/eo/events",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RBACMiddleware("event_organizer", "admin"),
+		auth.RateLimitMiddlewareScoped(rdb, 10, time.Minute, auth.RateLimitScopeUser),
+		catalogHandler.Create)
+	router.POST("/eo/events/:event_id/upload-map",
+		auth.AuthMiddleware(jwtSvc, blacklistSvc),
+		auth.RBACMiddleware("event_organizer", "admin"),
+		auth.RateLimitMiddlewareScoped(rdb, 20, time.Minute, auth.RateLimitScopeUser),
+		catalogHandler.UploadMap)
 
 	// FASE 10 Epic 5: EO custom map layout.
 	router.PUT("/eo/events/:event_id/layout",

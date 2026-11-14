@@ -93,6 +93,7 @@ export default function EOLayoutPage() {
   const [zonesJson, setZonesJson] = useState("[]");
   const [zonesList, setZonesList] = useState<ZoneData[]>([]);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Pan>({ x: 0, y: 0 });
@@ -200,6 +201,30 @@ export default function EOLayoutPage() {
     setZonesList(next);
     setZonesJson(JSON.stringify(next, null, 2));
   }, []);
+
+  const handleMapUpload = async (file: File) => {
+    if (!eventId) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      // axios 1.x drops the JSON content-type for FormData so the browser can
+      // attach the multipart boundary itself.
+      const response = await apiClient.post<{
+        data: { layout_image_url: string };
+      }>(`/eo/events/${eventId}/upload-map`, formData);
+      setImageUrl(response.data.data.layout_image_url);
+      setDimsTouched(false);
+      setToast({ kind: "success", text: "Peta berhasil diunggah." });
+    } catch (error) {
+      setToast({
+        kind: "error",
+        text: getApiErrorMessage(error, "Gagal mengunggah peta."),
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleSave = async () => {
     if (parseZones(zonesJson) === null) {
@@ -497,16 +522,28 @@ export default function EOLayoutPage() {
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
           <div className="space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
             <div>
-              <label className="mb-1 block text-sm" htmlFor="layout-image-url">
-                Image URL
+              <label className="mb-1 block text-sm" htmlFor="layout-image-file">
+                Upload Gambar Peta
               </label>
               <input
-                id="layout-image-url"
-                className="w-full rounded bg-zinc-800 p-2"
-                value={imageUrl}
-                onChange={(event) => setImageUrl(event.target.value)}
-                placeholder="/images/map-blackpink.jpg"
+                id="layout-image-file"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                disabled={uploading}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void handleMapUpload(file);
+                  event.target.value = "";
+                }}
+                className="w-full rounded bg-zinc-800 p-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-zinc-700 file:px-3 file:py-1 file:text-sm file:text-zinc-100"
               />
+              <p className="mt-1 text-xs text-zinc-400">
+                PNG / JPEG / WebP, maksimal 5MB.
+                {uploading ? " Mengunggah..." : ""}
+              </p>
+              {imageUrl && (
+                <p className="mt-1 break-all text-xs text-zinc-500">{imageUrl}</p>
+              )}
             </div>
             <div className="flex gap-4">
               <div className="flex-1">
@@ -858,11 +895,36 @@ export default function EOLayoutPage() {
                   <input
                     id="zone-color"
                     type="color"
-                    value={form.color}
+                    value={/^#[0-9a-fA-F]{6}$/.test(form.color) ? form.color : DEFAULT_ZONE_COLOR}
                     onChange={(event) =>
                       setForm((current) => ({ ...current, color: event.target.value }))
                     }
                     className="h-10 w-full rounded bg-zinc-800 p-1"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="mb-1 block text-sm" htmlFor="zone-color-hex">
+                    Hex Color
+                  </label>
+                  <input
+                    id="zone-color-hex"
+                    type="text"
+                    maxLength={7}
+                    spellCheck={false}
+                    placeholder="#FF0000"
+                    value={form.color}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, color: event.target.value }))
+                    }
+                    onBlur={() =>
+                      setForm((current) => ({
+                        ...current,
+                        color: /^#[0-9a-fA-F]{6}$/.test(current.color.trim())
+                          ? current.color.trim().toUpperCase()
+                          : DEFAULT_ZONE_COLOR,
+                      }))
+                    }
+                    className="w-full rounded bg-zinc-800 p-2 font-mono text-sm"
                   />
                 </div>
               </div>
