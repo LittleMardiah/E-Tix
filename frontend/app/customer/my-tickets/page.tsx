@@ -64,7 +64,7 @@ export default function MyTicketsPage() {
         <button
           type="button"
           onClick={() => void loadTickets()}
-          className="inline-flex h-10 items-center justify-center rounded-lg border border-[#E2E8F0] bg-white px-4 text-sm font-medium text-[#171717] transition-colors hover:bg-[#FAFAFA]"
+          className="inline-flex h-10 items-center justify-center rounded-lg border border-[#E2E8F0] bg-white px-4 text-sm font-medium text-[#171717] transition-all duration-200 hover:bg-[#FAFAFA]"
         >
           Muat Ulang
         </button>
@@ -79,7 +79,21 @@ export default function MyTicketsPage() {
       {loading ? (
         <p className="text-[#4D4D4D] py-10 text-center">Memuat tiket...</p>
       ) : tickets.length === 0 ? (
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 text-center">
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-10 text-center">
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            className="mx-auto mb-4 h-12 w-12 text-[#D08080]"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-12v.75m0 3v.75m0 3v.75m0 3V18M3.375 6h17.25c.621 0 1.125.504 1.125 1.125v13.5c0 .621-.504 1.125-1.125 1.125H3.375A1.125 1.125 0 0 1 2.25 20.625v-13.5c0-.621.504-1.125 1.125-1.125Z"
+            />
+          </svg>
           <p className="text-[#4D4D4D] mb-4">
             Belum ada tiket. Pesan tiket dari katalog event.
           </p>
@@ -95,7 +109,7 @@ export default function MyTicketsPage() {
           {tickets.map((ticket) => (
             <div
               key={ticket.id}
-              className="bg-white border border-[#E2E8F0] rounded-xl p-6 hover:border-[#D08080] transition-colors flex flex-col"
+              className="bg-white border border-[#E2E8F0] rounded-xl p-6 hover:border-[#D08080] hover:shadow-sm transition-all duration-200 flex flex-col"
             >
               <div className="flex items-start justify-between gap-3">
                 <h2 className="font-bold text-lg text-[#171717]">

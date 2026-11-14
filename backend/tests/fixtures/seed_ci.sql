@@ -44,6 +44,15 @@ VALUES
         '$2a$12$AiSz71ZSbWzUrspAsiuulOQ3URBfMNf2nWGoe4A7NlGhQUhN3rz8S',
         'admin',
         'ACTIVE'
+    ),
+    (
+        '88888888-8888-8888-8888-888888888888',
+        'gate@e-tix.local',
+        '+6281200000003',
+        'Gate Staff',
+        '$2a$12$AiSz71ZSbWzUrspAsiuulOQ3URBfMNf2nWGoe4A7NlGhQUhN3rz8S',
+        'gate_staff',
+        'ACTIVE'
     )
 ON CONFLICT (id) DO NOTHING;
 
@@ -193,5 +202,18 @@ VALUES (
     TRUE,
     'e2e-qr-secret-55555555-5555-5555-5555-555555555555',
     'E2EPIN5555'
+),
+-- Tiket khusus journey 4 (gate). Tiket 5555 dipakai journey 3 dan statusnya
+-- berubah jadi RESALE_PENDING, sedangkan gate hanya menerima CONFIRMED.
+(
+    '99999999-9999-9999-9999-999999999999',
+    '66666666-6666-6666-6666-666666666666',
+    '11111111-1111-1111-1111-111111111111',
+    '44444444-4444-4444-4444-444444444444',
+    5,
+    'CONFIRMED',
+    TRUE,
+    'e2e-qr-secret-99999999-9999-9999-9999-999999999999',
+    'E2EPIN9999'
 )
 ON CONFLICT (id) DO NOTHING;

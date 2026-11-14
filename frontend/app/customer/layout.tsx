@@ -25,15 +25,15 @@ export default function CustomerLayout({
 
   return (
     <div className="min-h-screen bg-[#FAFAFA]">
-      <nav className="h-16 border-b border-[#E2E8F0] bg-white px-6 flex items-center justify-between sticky top-0 z-50">
+      <nav className="h-16 border-b border-[#E2E8F0] bg-white px-4 sm:px-6 flex items-center justify-between gap-2 sticky top-0 z-50">
         <Link
           href="/customer/dashboard"
-          className="font-bold text-lg tracking-tight text-[#171717]"
+          className="font-bold text-base sm:text-lg tracking-tight text-[#171717] whitespace-nowrap"
         >
           E-Tix Flash
         </Link>
 
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3 sm:gap-6">
           {NAV_LINKS.map((link) => {
             const active =
               pathname === link.href || pathname.startsWith(`${link.href}/`);
@@ -42,7 +42,7 @@ export default function CustomerLayout({
                 key={link.href}
                 href={link.href}
                 aria-current={active ? 'page' : undefined}
-                className={`text-sm transition-colors ${
+                className={`whitespace-nowrap text-sm transition-colors ${
                   active
                     ? 'font-medium text-[#171717]'
                     : 'text-[#4D4D4D] hover:text-[#171717]'
@@ -57,7 +57,7 @@ export default function CustomerLayout({
         <button
           type="button"
           onClick={handleLogout}
-          className="text-sm font-medium text-[#4D4D4D] px-3 py-2 rounded-lg hover:text-[#171717] hover:bg-[#FAFAFA] transition-colors"
+          className="whitespace-nowrap text-sm font-medium text-[#4D4D4D] px-2 sm:px-3 py-2 rounded-lg hover:text-[#171717] hover:bg-[#FAFAFA] transition-all duration-200"
         >
           Logout
         </button>

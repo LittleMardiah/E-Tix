@@ -28,6 +28,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# runtime uploads (hasil upload map saat dev/E2E)
+/public/uploads/
+
 # local env files
 .env*.local
 

@@ -115,7 +115,7 @@ export default function CustomerDashboard() {
             <Link
               key={event.event_id}
               href={`/customer/events/${event.event_id}`}
-              className="group bg-white border border-[#E2E8F0] rounded-xl p-6 hover:border-[#D08080] transition-colors flex flex-col"
+              className="group bg-white border border-[#E2E8F0] rounded-xl p-6 hover:border-[#D08080] hover:-translate-y-1 hover:shadow-md transition-all duration-200 flex flex-col"
             >
               <div className="flex-1">
                 <h3 className="font-bold text-lg text-[#171717] mb-1">

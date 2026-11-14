@@ -41,9 +41,11 @@ const NO_REFRESH_ENDPOINTS = [
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  headers: { 
-    'Content-Type': 'application/json',
-    'ngrok-skip-browser-warning': 'true'
+  // No default Content-Type: axios sets application/json for object bodies and
+  // lets the browser add the multipart boundary for FormData. A hard-coded
+  // JSON header made every FormData upload arrive as the JSON body "{}".
+  headers: {
+    'ngrok-skip-browser-warning': 'true',
   },
   timeout: 15000,
 });

@@ -36,6 +36,7 @@ type ZoneForm = {
 };
 
 type ToastState = { kind: "success" | "error" | "info"; text: string } | null;
+type ZoneFieldErrors = { name?: string; price?: string; quota?: string };
 
 type LayoutDraft = {
   imageUrl: string;
@@ -102,6 +103,7 @@ export default function EOLayoutPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [form, setForm] = useState<ZoneForm>(EMPTY_FORM);
+  const [zoneErrors, setZoneErrors] = useState<ZoneFieldErrors>({});
 
   const [toast, setToast] = useState<ToastState>(null);
   const [draftFound, setDraftFound] = useState<LayoutDraft | null>(null);
@@ -388,6 +390,7 @@ export default function EOLayoutPage() {
     }
     setEditingIndex(null);
     setForm(EMPTY_FORM);
+    setZoneErrors({});
     setModalOpen(true);
   };
 
@@ -402,30 +405,28 @@ export default function EOLayoutPage() {
       type: zone.type ?? "STANDING",
       color: zone.color ?? DEFAULT_ZONE_COLOR,
     });
+    setZoneErrors({});
     setModalOpen(true);
   };
 
   const closeModal = () => {
     setModalOpen(false);
     setEditingIndex(null);
+    setZoneErrors({});
   };
 
   const submitZone = () => {
     const name = form.name.trim();
     const price = Number(form.price);
     const quota = Number(form.quota);
-    if (!name) {
-      setToast({ kind: "error", text: "Nama zona wajib diisi." });
-      return;
-    }
-    if (!Number.isFinite(price) || price < 0) {
-      setToast({ kind: "error", text: "Harga harus angka >= 0." });
-      return;
-    }
+    const errors: ZoneFieldErrors = {};
+    if (!name) errors.name = "Nama zona wajib diisi.";
+    if (!Number.isFinite(price) || price < 0) errors.price = "Harga harus angka >= 0.";
     if (!Number.isInteger(quota) || quota < 0) {
-      setToast({ kind: "error", text: "Kuota harus bilangan bulat >= 0." });
-      return;
+      errors.quota = "Kuota harus bilangan bulat >= 0.";
     }
+    setZoneErrors(errors);
+    if (Object.keys(errors).length > 0) return;
 
     if (editingIndex === null) {
       const zone: ZoneData = {
@@ -921,13 +922,23 @@ export default function EOLayoutPage() {
                 <input
                   id="zone-name"
                   value={form.name}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, name: event.target.value }))
-                  }
-                  className="w-full rounded bg-zinc-800 p-2"
+                  aria-invalid={zoneErrors.name ? true : undefined}
+                  aria-describedby={zoneErrors.name ? "zone-name-error" : undefined}
+                  onChange={(event) => {
+                    setForm((current) => ({ ...current, name: event.target.value }));
+                    setZoneErrors((current) => ({ ...current, name: undefined }));
+                  }}
+                  className={`w-full rounded bg-zinc-800 p-2 ${
+                    zoneErrors.name ? "ring-1 ring-rose-500" : ""
+                  }`}
                   placeholder="VIP"
                   autoFocus
                 />
+                {zoneErrors.name && (
+                  <p id="zone-name-error" role="alert" className="mt-1 text-xs text-rose-400">
+                    {zoneErrors.name}
+                  </p>
+                )}
               </div>
               <div className="flex gap-3">
                 <div className="flex-1">
@@ -939,11 +950,21 @@ export default function EOLayoutPage() {
                     type="number"
                     min={0}
                     value={form.price}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, price: event.target.value }))
-                    }
-                    className="w-full rounded bg-zinc-800 p-2"
+                    aria-invalid={zoneErrors.price ? true : undefined}
+                    aria-describedby={zoneErrors.price ? "zone-price-error" : undefined}
+                    onChange={(event) => {
+                      setForm((current) => ({ ...current, price: event.target.value }));
+                      setZoneErrors((current) => ({ ...current, price: undefined }));
+                    }}
+                    className={`w-full rounded bg-zinc-800 p-2 ${
+                      zoneErrors.price ? "ring-1 ring-rose-500" : ""
+                    }`}
                   />
+                  {zoneErrors.price && (
+                    <p id="zone-price-error" role="alert" className="mt-1 text-xs text-rose-400">
+                      {zoneErrors.price}
+                    </p>
+                  )}
                 </div>
                 <div className="flex-1">
                   <label className="mb-1 block text-sm" htmlFor="zone-quota">
@@ -954,11 +975,21 @@ export default function EOLayoutPage() {
                     type="number"
                     min={0}
                     value={form.quota}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, quota: event.target.value }))
-                    }
-                    className="w-full rounded bg-zinc-800 p-2"
+                    aria-invalid={zoneErrors.quota ? true : undefined}
+                    aria-describedby={zoneErrors.quota ? "zone-quota-error" : undefined}
+                    onChange={(event) => {
+                      setForm((current) => ({ ...current, quota: event.target.value }));
+                      setZoneErrors((current) => ({ ...current, quota: undefined }));
+                    }}
+                    className={`w-full rounded bg-zinc-800 p-2 ${
+                      zoneErrors.quota ? "ring-1 ring-rose-500" : ""
+                    }`}
                   />
+                  {zoneErrors.quota && (
+                    <p id="zone-quota-error" role="alert" className="mt-1 text-xs text-rose-400">
+                      {zoneErrors.quota}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex gap-3">

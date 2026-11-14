@@ -62,9 +62,13 @@ func (r *PostgresBookingRepository) GetSectionByID(ctx context.Context, sectionI
 }
 
 func (r *PostgresBookingRepository) GetTakenSeats(ctx context.Context, sectionID uuid.UUID) ([]int, error) {
+	// Zoned (general-admission) tickets have seat_position = NULL. They must be
+	// filtered in SQL: scanning NULL into int aborted the whole availability
+	// query, so one zoned purchase took the entire assigned seat map down.
 	rows, err := r.db.Query(ctx, `
 		SELECT seat_position FROM tickets
 		WHERE section_id = $1
+		AND seat_position IS NOT NULL
 		AND status IN ('CONFIRMED','LOCKED','PENDING_SPLIT_PAY','RESALE_PENDING')`,
 		sectionID)
 	if err != nil {

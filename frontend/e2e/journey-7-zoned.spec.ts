@@ -18,7 +18,14 @@ test.describe('Journey 7: Zoned Checkout (General Admission)', () => {
     await expect(page.getByText('125%')).toBeVisible();
     await page.getByRole('button', { name: 'Reset' }).click();
 
-    await page.locator('polygon').first().click();
+    // On desktop the detail panel sits to the right of the map and covers
+    // the polygon's centre, so click near its top-left (inside the
+    // axis-aligned VIP rectangle) instead of letting Playwright target
+    // the centre and get intercepted by the panel.
+    await page
+      .locator('polygon')
+      .first()
+      .click({ position: { x: 20, y: 20 } });
 
     await expect(page.getByText('VIP', { exact: true }).first()).toBeVisible();
     await expect(

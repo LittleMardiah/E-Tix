@@ -356,7 +356,7 @@ function SeatMapContent() {
             <p className="text-sm text-gray-600">
               Terpilih:{' '}
               <span className="font-semibold text-gray-900">
-                {selected.length ? selected.join(', ') : '-'}
+                {selected.length ? selected.map((position) => seatLabel(position)).join(', ') : '-'}
               </span>
             </p>
             {totalPrice !== null && selected.length > 0 && (

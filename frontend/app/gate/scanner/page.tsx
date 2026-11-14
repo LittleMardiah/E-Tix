@@ -34,11 +34,16 @@ const GATE_ID = "Gate A";
 // The API binds scanner_device_id to a UUID; the human-readable label is
 // kept separate so the request cannot fail field validation.
 const SCANNER_DEVICE_LABEL = "dev-1";
-const SCANNER_DEVICE_ID = "00000000-4000-8000-000000000001";
+// Must be a real 8-4-4-4-12 UUID: the previous value was missing the fourth
+// group (31 chars), so gin rejected every scan body with "invalid UUID length".
+const SCANNER_DEVICE_ID = "00000000-0000-4000-8000-000000000001";
 
 export default function GateScanner() {
   const router = useRouter();
   const [ticketId, setTicketId] = useState("");
+  // A dynamic QR encodes ticket UUID + HMAC signature, so the payload cannot be
+  // the same string as the ticket id input.
+  const [qrData, setQrData] = useState("");
   const [pin, setPin] = useState("");
   const [mode, setMode] = useState<ScanMode>("QR");
   const [result, setResult] = useState<ScanResult | null>(null);
@@ -59,7 +64,7 @@ export default function GateScanner() {
     };
 
     if (mode === "QR") {
-      payload.qr_data = ticketId.trim();
+      payload.qr_data = qrData.trim() || ticketId.trim();
     } else {
       payload.pin = pin.trim().toUpperCase();
     }
@@ -184,6 +189,27 @@ export default function GateScanner() {
                 className="w-full border border-[#E2E8F0] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#D08080] focus:border-transparent transition-all"
               />
             </div>
+            {mode === "QR" && (
+              <div>
+                <label
+                  htmlFor="qr-data"
+                  className="block text-sm font-medium text-[#171717] mb-1.5"
+                >
+                  QR Data (payload)
+                </label>
+                <input
+                  id="qr-data"
+                  value={qrData}
+                  onChange={(event) => setQrData(event.target.value)}
+                  placeholder="Tempel hasil pindai QR"
+                  autoComplete="off"
+                  className="w-full border border-[#E2E8F0] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#D08080] focus:border-transparent transition-all"
+                />
+                <p className="mt-1 text-[11px] text-[#4D4D4D]">
+                  Kosongkan untuk memakai Ticket ID sebagai payload.
+                </p>
+              </div>
+            )}
             {mode === "PIN" && (
               <div>
                 <label

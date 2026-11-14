@@ -56,7 +56,7 @@ func (h *ZonedHandler) CheckoutZoned(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInsufficientQuota):
-			writeError(c, http.StatusConflict, "CONFLICT", "insufficient zone quota")
+			writeError(c, http.StatusConflict, "CONFLICT", "Kuota Habis")
 		case errors.Is(err, ErrQuotaNotInitialized):
 			writeError(c, http.StatusConflict, "CONFLICT", "zone quota not initialized")
 		case errors.Is(err, ErrZoneNotFound):

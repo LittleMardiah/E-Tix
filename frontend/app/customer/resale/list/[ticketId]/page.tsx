@@ -75,7 +75,7 @@ export default function ResaleListPage() {
           <Input
             label="Harga Resale (Rp)"
             type="number"
-            min={1}
+            min={1000}
             step={1000}
             value={price}
             onChange={(event) => setPrice(event.target.value)}

@@ -19,11 +19,53 @@ export default function CreateEventPage() {
   const [endTime, setEndTime] = useState('');
   const [seatingMode, setSeatingMode] = useState('ZONED');
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+
+  const clearFieldError = (field: string) => {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
+
+  // Red ring is used instead of swapping border colours so the design-system
+  // border (#E2E8F0) stays intact and the error is still obvious.
+  const fieldClass = (field: string) =>
+    `${inputClass} ${fieldErrors[field] ? 'ring-1 ring-red-500' : ''}`;
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
+
+    // Mirrors EventService.Create (backend/internal/event/service.go:154):
+    // required fields, no past date, end time after start time.
+    const errors: Record<string, string> = {};
+    if (!name.trim()) errors.name = 'Nama event wajib diisi.';
+    if (!venueName.trim()) errors.venueName = 'Venue wajib diisi.';
+    if (!venueAddress.trim()) errors.venueAddress = 'Alamat wajib diisi.';
+    if (!eventDate) {
+      errors.eventDate = 'Tanggal wajib diisi.';
+    } else {
+      const chosen = new Date(`${eventDate}T00:00:00`);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (Number.isNaN(chosen.getTime())) {
+        errors.eventDate = 'Format tanggal tidak valid.';
+      } else if (chosen < today) {
+        errors.eventDate = 'Tanggal tidak boleh di masa lalu.';
+      }
+    }
+    if (!startTime) errors.startTime = 'Jam mulai wajib diisi.';
+    if (endTime && startTime && endTime <= startTime) {
+      errors.endTime = 'Jam selesai harus setelah jam mulai.';
+    }
+
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
     setSubmitting(true);
     try {
       const response = await apiClient.post<{ data: { event_id: string } }>(
@@ -69,9 +111,19 @@ export default function CreateEventPage() {
             id="event-name"
             required
             value={name}
-            onChange={(e) => setName(e.target.value)}
-            className={inputClass}
+            aria-invalid={fieldErrors.name ? true : undefined}
+            aria-describedby={fieldErrors.name ? 'event-name-error' : undefined}
+            onChange={(e) => {
+              setName(e.target.value);
+              clearFieldError('name');
+            }}
+            className={fieldClass('name')}
           />
+          {fieldErrors.name && (
+            <p id="event-name-error" role="alert" className="mt-1 text-xs text-red-600">
+              {fieldErrors.name}
+            </p>
+          )}
         </div>
         <div>
           <label
@@ -97,9 +149,19 @@ export default function CreateEventPage() {
               id="venue-name"
               required
               value={venueName}
-              onChange={(e) => setVenueName(e.target.value)}
-              className={inputClass}
+              aria-invalid={fieldErrors.venueName ? true : undefined}
+              aria-describedby={fieldErrors.venueName ? 'venue-name-error' : undefined}
+              onChange={(e) => {
+                setVenueName(e.target.value);
+                clearFieldError('venueName');
+              }}
+              className={fieldClass('venueName')}
             />
+            {fieldErrors.venueName && (
+              <p id="venue-name-error" role="alert" className="mt-1 text-xs text-red-600">
+                {fieldErrors.venueName}
+              </p>
+            )}
           </div>
           <div>
             <label htmlFor="venue-address" className="block text-sm font-medium mb-1.5">
@@ -109,9 +171,19 @@ export default function CreateEventPage() {
               id="venue-address"
               required
               value={venueAddress}
-              onChange={(e) => setVenueAddress(e.target.value)}
-              className={inputClass}
+              aria-invalid={fieldErrors.venueAddress ? true : undefined}
+              aria-describedby={fieldErrors.venueAddress ? 'venue-address-error' : undefined}
+              onChange={(e) => {
+                setVenueAddress(e.target.value);
+                clearFieldError('venueAddress');
+              }}
+              className={fieldClass('venueAddress')}
             />
+            {fieldErrors.venueAddress && (
+              <p id="venue-address-error" role="alert" className="mt-1 text-xs text-red-600">
+                {fieldErrors.venueAddress}
+              </p>
+            )}
           </div>
           <div>
             <label htmlFor="event-date" className="block text-sm font-medium mb-1.5">
@@ -122,9 +194,19 @@ export default function CreateEventPage() {
               type="date"
               required
               value={eventDate}
-              onChange={(e) => setEventDate(e.target.value)}
-              className={inputClass}
+              aria-invalid={fieldErrors.eventDate ? true : undefined}
+              aria-describedby={fieldErrors.eventDate ? 'event-date-error' : undefined}
+              onChange={(e) => {
+                setEventDate(e.target.value);
+                clearFieldError('eventDate');
+              }}
+              className={fieldClass('eventDate')}
             />
+            {fieldErrors.eventDate && (
+              <p id="event-date-error" role="alert" className="mt-1 text-xs text-red-600">
+                {fieldErrors.eventDate}
+              </p>
+            )}
           </div>
           <div>
             <label htmlFor="event-mode" className="block text-sm font-medium mb-1.5">
@@ -149,9 +231,20 @@ export default function CreateEventPage() {
               type="time"
               required
               value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-              className={inputClass}
+              aria-invalid={fieldErrors.startTime ? true : undefined}
+              aria-describedby={fieldErrors.startTime ? 'event-start-error' : undefined}
+              onChange={(e) => {
+                setStartTime(e.target.value);
+                clearFieldError('startTime');
+                clearFieldError('endTime');
+              }}
+              className={fieldClass('startTime')}
             />
+            {fieldErrors.startTime && (
+              <p id="event-start-error" role="alert" className="mt-1 text-xs text-red-600">
+                {fieldErrors.startTime}
+              </p>
+            )}
           </div>
           <div>
             <label htmlFor="event-end" className="block text-sm font-medium mb-1.5">
@@ -161,9 +254,19 @@ export default function CreateEventPage() {
               id="event-end"
               type="time"
               value={endTime}
-              onChange={(e) => setEndTime(e.target.value)}
-              className={inputClass}
+              aria-invalid={fieldErrors.endTime ? true : undefined}
+              aria-describedby={fieldErrors.endTime ? 'event-end-error' : undefined}
+              onChange={(e) => {
+                setEndTime(e.target.value);
+                clearFieldError('endTime');
+              }}
+              className={fieldClass('endTime')}
             />
+            {fieldErrors.endTime && (
+              <p id="event-end-error" role="alert" className="mt-1 text-xs text-red-600">
+                {fieldErrors.endTime}
+              </p>
+            )}
           </div>
         </div>
 
