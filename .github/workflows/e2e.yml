@@ -55,7 +55,6 @@ jobs:
       # is only available inside step-level fields.
       JWT_PRIVATE_KEY_PATH: /tmp/jwt/private.pem
       JWT_PUBLIC_KEY_PATH: /tmp/jwt/public.pem
-      PORT: "8080"
       TEST_MODE: "true"
       LOG_LEVEL: info
       ENV: test
@@ -127,6 +126,9 @@ jobs:
 
       - name: Start frontend
         working-directory: frontend
+        # Explicit: job-level env no longer leaks the backend port into `next start`.
+        env:
+          PORT: "3000"
         run: |
           nohup npm start > "$RUNNER_TEMP/frontend.log" 2>&1 &
           for i in $(seq 1 60); do
